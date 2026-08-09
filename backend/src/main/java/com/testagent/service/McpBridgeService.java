@@ -3,18 +3,17 @@ package com.testagent.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.dto.LocateResult;
+import com.testagent.mcp.McpClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Base64;
+import java.util.Map;
 
 /**
  * v2.1: MCP 桥接服务 — 多模态视觉识别。
- * 接收截图路径 + 自然语言描述，调用多模态 LLM，返回结构化位置 JSON。
+ * v2.2: 重构为通过 MCP 协议调用独立 MCP Server。
  * 不操作浏览器，只做视觉识别。
  */
 @Service
@@ -24,41 +23,25 @@ public class McpBridgeService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
-    private LlmService llmService;
-
-    private static final String SYSTEM_PROMPT = """
-        你是页面控件视觉识别专家。请看截图，找到用户描述的控件位置。
-        返回纯 JSON（不要 markdown 代码块），格式固定：
-        {"found": true/false, "bbox": [x1,y1,x2,y2], "click_center": {"x": 0, "y": 0}, "element_text": "", "confidence": 0.0}
-        - found: 是否找到目标控件
-        - bbox: 控件边界框坐标 [左上x, 左上y, 右下x, 右下y]
-        - click_center: 点击中心坐标
-        - element_text: 控件上的文字
-        - confidence: 置信度 0-1
-        如果找不到目标控件，found 设为 false，其他字段留空或为 0。
-        """;
+    private McpClient mcpClient;
 
     /**
-     * 多模态元素定位。
+     * v2.2: 通过 MCP 协议调用多模态元素定位。
      * @param imagePath 截图文件路径
      * @param elementDesc 元素自然语言描述，如"找到页面登录按钮"
      * @return LocateResult 定位结果
      */
     public LocateResult multimodalElementLocate(String imagePath, String elementDesc) {
-        if (!llmService.isConfigured()) {
-            return LocateResult.fail("LLM 未配置，无法调用多模态识别");
+        if (!mcpClient.isAvailable()) {
+            log.warn("MCP Server 不可用，视觉识别降级");
+            return LocateResult.fail("MCP Server 未启动");
         }
 
         try {
-            // 1. 读取图片 → base64
-            byte[] imageBytes = Files.readAllBytes(Path.of(imagePath));
-            String imageBase64 = Base64.getEncoder().encodeToString(imageBytes);
+            // 通过 MCP 协议调用 multimodal_element_locate 工具
+            String response = mcpClient.callTool("multimodal_element_locate",
+                    Map.of("image_path", imagePath, "element_desc", elementDesc));
 
-            // 2. 调多模态 LLM
-            String userText = "请在截图中找到以下控件: " + elementDesc;
-            String response = llmService.chatWithImage(SYSTEM_PROMPT, userText, imageBase64);
-
-            // 3. 解析 JSON
             return parseLocateResult(response);
 
         } catch (Exception e) {
@@ -69,7 +52,6 @@ public class McpBridgeService {
 
     private LocateResult parseLocateResult(String response) {
         try {
-            // 提取 JSON（可能被 markdown 包裹）
             String json = response.trim();
             if (json.startsWith("```")) {
                 int start = json.indexOf("{");

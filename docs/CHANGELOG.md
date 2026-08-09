@@ -4,6 +4,42 @@
 
 ---
 
+## v2.2 — 独立 MCP Server
+
+**日期**: 2026-08-09
+**基线**: v2.1
+**迭代主题**: 拆分独立 MCP Server，后端改为 MCP 客户端接入
+
+### 改动清单与目的
+
+#### MCP Server（Node.js，新建）
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `mcp-server/package.json` | 新建 | MCP Server 依赖配置（@modelcontextprotocol/sdk + openai） |
+| `mcp-server/index.js` | 新建 | MCP Server 实现（stdio 传输，暴露 multimodal_element_locate 工具） |
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `mcp/McpClient.java` | 新建 | Java MCP 客户端（ProcessBuilder + JSON-RPC 2.0 over stdio） |
+| `service/McpBridgeService.java` | 修改 | 从直调 LlmService 改为通过 McpClient 调用 MCP Server |
+| `application.yml` | 修改 | 新增 mcp.server 配置项 |
+
+### 架构变更
+```
+v2.1: McpBridgeService → LlmService.chatWithImage() → OpenAI API
+v2.2: McpBridgeService → McpClient → MCP Server (Node.js) → OpenAI API
+```
+
+### 验证
+- MCP Server npm install: 117 packages
+- 后端编译: `mvn compile` BUILD SUCCESS (82 source files, 10s)
+- 前端: 无改动
+
+---
+
 ## v2.1 — MCP 多模态桥接 + Agent 执行引擎
 
 **日期**: 2026-08-09

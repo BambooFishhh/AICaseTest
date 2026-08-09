@@ -1,0 +1,13 @@
+{
+  "name": "aicasetest-mcp-server",
+  "version": "1.0.0",
+  "description": "AICaseTest MCP Server - 多模态视觉识别服务",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "openai": "^4.40.0"
+  }
+}
