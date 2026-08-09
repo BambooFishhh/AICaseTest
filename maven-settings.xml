@@ -2,7 +2,7 @@
 <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 http://maven.apache.org/xsd/settings-1.0.0.xsd">
-    <localRepository>e:/java_project/20260801project/.m2-repo</localRepository>
+    <localRepository>e:/java_project/AICaseTest/.m2-repo</localRepository>
     <mirrors>
         <mirror>
             <id>aliyunmaven</id>

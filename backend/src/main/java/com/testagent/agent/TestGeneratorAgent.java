@@ -6,6 +6,7 @@ import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.BusinessRule;
 import com.testagent.analyzer.result.EndpointInfo;
 import com.testagent.dto.JsonHelper;
+import com.testagent.dto.PrdAnalysisResult;
 import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
 import com.testagent.service.LlmService;
@@ -83,6 +84,35 @@ public class TestGeneratorAgent {
             只返回 JSON 数组，不要包含其他文字。
             """;
 
+    // v1.10: PRD 驱动 system prompt（PRD 为主、代码为辅）
+    private static final String SYSTEM_PROMPT_PRD_DRIVEN = """
+            # 角色
+            你是资深测试工程师，以需求为源生成结构化、AI 可执行的测试用例。
+
+            # 任务
+            根据【需求上下文（PRD 解析结果）】为主，【代码上下文（状态机/接口/业务规则）】为辅，生成测试用例。
+
+            # 生成要求
+            ## 以需求为纲
+            - 遍历 requirements 数组，每个需求项至少生成 1 条正向用例 + 1 条异常用例
+            - 涉及数值/长度字段的，补充边界值用例（上界 + 下界）
+            - 优先级遵循需求项的 priority；未标注的按 P1
+            - module 取自 PRD 的 modules；type 取值 positive/negative/boundary/data
+
+            ## 代码信息用于补充（不作为用例来源，只增强可执行性）
+            - endpoints：用例 structuredSteps 的 target 用真实接口路径（如 POST /api/order/create）
+            - stateMachines：用例的 stateMachineRef 引用真实状态流转
+            - businessRules：补充为前置条件或异常场景
+
+            ## structuredSteps / testData / executionHints 要求
+            - 同 v1.4 质量标准（target 不能为空、expected 可验证、testData 含具体字段值）
+
+            # 输出格式（同 v1.4）
+            返回 JSON 数组，字段：title/module/type/priority/preconditions/steps/expectedResults/
+            structuredSteps/apiEndpoints/testData/executionHints/stateMachineRef
+            只返回 JSON 数组，不要包含其他文字。
+            """;
+
     // v1.4: few-shot 示例（1 正向 + 1 异常）
     private static final String FEW_SHOT_EXAMPLES = """
             # 示例（参考质量标准，不要原样复制）
@@ -135,6 +165,50 @@ public class TestGeneratorAgent {
     // v1.6: 支持 ProgressCallback 的重载，调用方可感知分模块生成进度
     public List<TestCase> generate(List<StateMachine> stateMachines, BackendResult backendResult,
                                    ProgressCallback progressCallback) {
+        // v1.10: 委托给 PRD 驱动重载（prdResult=null 时退化为原代码驱动逻辑）
+        return generate(null, stateMachines, backendResult, progressCallback);
+    }
+
+    // v1.10: PRD 驱动重载。prdResult 非空时以 PRD 为主生成；为空时退化为代码驱动
+    public List<TestCase> generate(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                   BackendResult backendResult, ProgressCallback progressCallback) {
+        List<TestCase> result = new ArrayList<>();
+
+        // v1.10: PRD 驱动分支
+        if (prdResult != null && !prdResult.isEmpty()) {
+            if (progressCallback != null) {
+                progressCallback.update("基于 PRD 生成用例...");
+            }
+            try {
+                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult);
+            } catch (Exception e) {
+                log.warn("PRD-driven generation failed, fallback to code-driven: {}", e.getMessage());
+                result = new ArrayList<>();
+            }
+        }
+
+        // 代码驱动分支（PRD 为空或 PRD 生成失败时）
+        if (result.isEmpty()) {
+            result = generateCodeDrivenCases(stateMachines, backendResult, progressCallback);
+        }
+
+        if (progressCallback != null) {
+            progressCallback.update("正在质量评分与去重...");
+        }
+        calculateQualityScores(result);
+        result = deduplicate(result);
+
+        int counter = 1;
+        for (TestCase tc : result) {
+            tc.setId(String.format("TC-%03d", counter++));
+            tc.setCreatedAt(LocalDateTime.now());
+        }
+        return result;
+    }
+
+    // v1.10: 原代码驱动生成逻辑（状态机/endpoint），从 generate 抽出供 PRD 失败时复用
+    private List<TestCase> generateCodeDrivenCases(List<StateMachine> stateMachines, BackendResult backendResult,
+                                                    ProgressCallback progressCallback) {
         List<TestCase> result = new ArrayList<>();
 
         if (stateMachines != null && !stateMachines.isEmpty()) {
@@ -166,22 +240,6 @@ public class TestGeneratorAgent {
                 progressCallback.update("无状态机，按接口生成用例...");
             }
             result = generateByEndpoints(backendResult);
-        }
-
-        if (progressCallback != null) {
-            progressCallback.update("正在质量评分与去重...");
-        }
-        // 质量评分（去重前计算，用于去重决策）
-        calculateQualityScores(result);
-
-        // 去重
-        result = deduplicate(result);
-
-        // 编号
-        int counter = 1;
-        for (TestCase tc : result) {
-            tc.setId(String.format("TC-%03d", counter++));
-            tc.setCreatedAt(LocalDateTime.now());
         }
         return result;
     }
@@ -231,6 +289,59 @@ public class TestGeneratorAgent {
         String response = llmService.chat(systemPrompt, userPrompt, 0.4);
         String json = extractJsonArray(response);
 
+        return parseTestCases(json);
+    }
+
+    // v1.10: PRD 驱动的 LLM 生成（PRD 为主、代码为辅）
+    private List<TestCase> generateByLlmWithPrd(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                                 BackendResult backendResult) throws Exception {
+        Map<String, Object> context = new LinkedHashMap<>();
+
+        // PRD 为主上下文
+        context.put("prd", objectMapper.convertValue(prdResult, Map.class));
+
+        // 代码侧为辅（精简，避免 token 超限）
+        List<Map<String, Object>> smList = new ArrayList<>();
+        if (stateMachines != null) {
+            for (StateMachine sm : stateMachines) {
+                Map<String, Object> smMap = new LinkedHashMap<>();
+                smMap.put("name", sm.getName());
+                smMap.put("states", JsonHelper.parseListMap(sm.getStates()));
+                smMap.put("transitions", JsonHelper.parseListMap(sm.getTransitions()));
+                smList.add(smMap);
+            }
+        }
+        context.put("stateMachines", smList);
+
+        List<Map<String, Object>> epList = new ArrayList<>();
+        if (backendResult != null && backendResult.getEndpoints() != null) {
+            for (EndpointInfo ep : backendResult.getEndpoints()) {
+                Map<String, Object> epMap = new LinkedHashMap<>();
+                epMap.put("method", ep.getMethod());
+                epMap.put("path", ep.getPath());
+                epMap.put("description", ep.getFunction());
+                epList.add(epMap);
+            }
+        }
+        context.put("endpoints", epList);
+
+        List<Map<String, Object>> ruleList = new ArrayList<>();
+        if (backendResult != null && backendResult.getBusinessRules() != null) {
+            for (BusinessRule br : backendResult.getBusinessRules()) {
+                Map<String, Object> brMap = new LinkedHashMap<>();
+                brMap.put("function", br.getFunction());
+                brMap.put("rule", br.getRule());
+                brMap.put("ruleType", br.getRuleType());
+                ruleList.add(brMap);
+            }
+        }
+        context.put("businessRules", ruleList);
+
+        String userPrompt = "上下文信息：\n" + objectMapper.writeValueAsString(context)
+                + "\n\n" + FEW_SHOT_EXAMPLES
+                + "\n\n请以 PRD 需求为纲生成测试用例，代码信息用于补充接口路径与前置状态。";
+        String response = llmService.chat(SYSTEM_PROMPT_PRD_DRIVEN, userPrompt, 0.4);
+        String json = extractJsonArray(response);
         return parseTestCases(json);
     }
 

@@ -35,6 +35,18 @@ public class Project {
     @Column(columnDefinition = "TEXT")
     private String settings = "{}";
 
+    // v1.10: PRD 内容（所有形式最终都解析为纯文本存这里）
+    @Column(name = "prd_content", columnDefinition = "TEXT")
+    private String prdContent;
+
+    // v1.10: PRD 来源类型：text / pdf / link
+    @Column(name = "prd_source_type", length = 32)
+    private String prdSourceType;
+
+    // v1.10: PRD 来源引用（文件名 / URL）
+    @Column(name = "prd_source_ref", length = 512)
+    private String prdSourceRef;
+
     // v1.6: 高可用增强 —— 错误详情与生成进度
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;

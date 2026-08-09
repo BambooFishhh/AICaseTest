@@ -43,6 +43,9 @@
       </div>
     </el-card>
 
+    <!-- v1.10: PRD 需求文档面板 -->
+    <PrdPanel v-if="project" :project-id="projectId" />
+
     <el-alert
       v-if="pollingMessage"
       :title="pollingMessage"
@@ -59,6 +62,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getProject } from '@/api/project'
+import PrdPanel from '@/components/PrdPanel.vue'
 import { triggerAnalysis } from '@/api/analysis'
 import { triggerGenerate } from '@/api/testcase'
 import { generateMindmap, downloadMindmapUrl } from '@/api/mindmap'

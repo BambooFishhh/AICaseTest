@@ -2,6 +2,7 @@ package com.testagent.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.testagent.agent.OrchestratorAgent;
 import com.testagent.agent.TestGeneratorAgent;
 import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.EndpointInfo;
@@ -73,33 +74,17 @@ public class TestCaseService {
     private TestGeneratorAgent testGeneratorAgent;
 
     @Autowired
+    private OrchestratorAgent orchestratorAgent;
+
+    @Autowired
     private ProjectRepository projectRepository;
 
     @Async("generationExecutor")
     public void runGenerate(String projectId, GenerateRequest req) {
         try {
             updateProjectStatus(projectId, "generating");
-            // v1.6: 实时进度反馈，updateProgress 自带事务立即提交，前端轮询可见
-            projectRepository.updateProgress(projectId, "正在解析状态机...");
-
-            List<StateMachine> stateMachines = stateMachineRepository.findByProjectId(projectId);
-
-            BackendResult backendResult = BackendResult.skipped();
-            Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findByProjectId(projectId);
-            if (analysisOpt.isPresent()) {
-                String backendResultJson = analysisOpt.get().getBackendResult();
-                if (backendResultJson != null && !backendResultJson.isBlank()
-                        && !backendResultJson.equals("{}")) {
-                    try {
-                        backendResult = objectMapper.readValue(backendResultJson, BackendResult.class);
-                    } catch (Exception e) {
-                        log.warn("Failed to parse backend result JSON for project {}", projectId, e);
-                    }
-                }
-            }
-
-            // v1.6: 传入进度回调，分模块生成时实时更新进度
-            List<TestCase> testCases = testGeneratorAgent.generate(stateMachines, backendResult,
+            // v1.10: 改由 OrchestratorAgent 编排（PrdAgent + 代码侧 → TestGeneratorAgent）
+            List<TestCase> testCases = orchestratorAgent.generate(projectId,
                     progress -> projectRepository.updateProgress(projectId, progress));
 
             projectRepository.updateProgress(projectId, "正在保存用例...");

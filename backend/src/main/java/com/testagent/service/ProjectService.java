@@ -1,5 +1,6 @@
 package com.testagent.service;
 
+import com.testagent.agent.PrdAgent;
 import com.testagent.common.BusinessException;
 import com.testagent.dto.CreateProjectRequest;
 import com.testagent.dto.GenerateRequest;
@@ -15,9 +16,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -46,6 +50,10 @@ public class ProjectService {
 
     @Autowired
     private TestCaseService testCaseService;
+
+    // v1.10: PRD 解析 Agent
+    @Autowired
+    private PrdAgent prdAgent;
 
     public List<ProjectDTO> listProjects() {
         return projectRepository.findAllByOrderByCreatedAtDesc().stream()
@@ -116,5 +124,68 @@ public class ProjectService {
         }
         projectRepository.updateStatus(id, "generating");
         testCaseService.runGenerate(id, req);
+    }
+
+    // ==================== v1.10: PRD 驱动相关 ====================
+
+    public Map<String, Object> getPrd(String projectId) {
+        Project p = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("prdContent", p.getPrdContent());
+        r.put("prdSourceType", p.getPrdSourceType());
+        r.put("prdSourceRef", p.getPrdSourceRef());
+        return r;
+    }
+
+    @Transactional
+    public ProjectDTO updatePrd(String projectId, String prdContent) {
+        Project p = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        p.setPrdContent(prdContent);
+        p.setPrdSourceType("text");
+        p.setPrdSourceRef(null);
+        projectRepository.save(p);
+        return ProjectDTO.from(p);
+    }
+
+    @Transactional
+    public ProjectDTO uploadPrdPdf(String projectId, MultipartFile file) {
+        Project p = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        String text;
+        try {
+            text = prdAgent.parsePdf(file);
+        } catch (Exception e) {
+            throw BusinessException.invalidParam("PDF 解析失败: " + e.getMessage());
+        }
+        p.setPrdContent(text);
+        p.setPrdSourceType("pdf");
+        p.setPrdSourceRef(file.getOriginalFilename());
+        projectRepository.save(p);
+        return ProjectDTO.from(p);
+    }
+
+    @Transactional
+    public ProjectDTO fetchPrdUrl(String projectId, String url) {
+        if (url == null || url.isBlank()) {
+            throw BusinessException.invalidParam("url 不能为空");
+        }
+        Project p = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        String text;
+        try {
+            text = prdAgent.fetchUrl(url);
+        } catch (Exception e) {
+            throw BusinessException.invalidParam("URL 抓取失败: " + e.getMessage());
+        }
+        if (text == null || text.isBlank()) {
+            throw BusinessException.invalidParam("URL 内容为空（可能是 SPA 或需认证）");
+        }
+        p.setPrdContent(text);
+        p.setPrdSourceType("link");
+        p.setPrdSourceRef(url);
+        projectRepository.save(p);
+        return ProjectDTO.from(p);
     }
 }

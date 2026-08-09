@@ -4,6 +4,52 @@
 
 ---
 
+## v1.10 — PRD 驱动的用例生成
+
+**日期**: 2026-08-09
+**基线**: v1.9
+**迭代主题**: 引入 PRD 作为主上下文 + 多 Agent 编排架构（PrdAgent + OrchestratorAgent）
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `entity/Project.java` | 新增 `prdContent`/`prdSourceType`/`prdSourceRef` 三个字段 | 持久化 PRD 内容与来源信息 |
+| `dto/ProjectDTO.java` | 透传 PRD 三个字段 | 前端可读写 PRD |
+| `dto/PrdAnalysisResult.java` | 新建 DTO：modules/requirements/businessRules/stateFlows/entities | PRD 结构化解析结果载体 |
+| `agent/PrdAgent.java` | 新建 PRD 解析 Agent：文本 LLM 结构化 + PDFBox 解析 PDF + Jsoup 抓取 URL | 三种 PRD 接入形式统一为结构化结果 |
+| `agent/OrchestratorAgent.java` | 新建编排 Agent：协调 PrdAgent + 代码侧（状态机/后端结果）→ TestGeneratorAgent | 显式编排替代隐式调用链；PRD 为空时退化为代码驱动 |
+| `agent/TestGeneratorAgent.java` | 新增 `SYSTEM_PROMPT_PRD_DRIVEN` + `generate(prdResult, stateMachines, backendResult, callback)` 重载 | PRD 为主上下文生成用例；PRD 为空时退化为原逻辑 |
+| `controller/ProjectController.java` | 新增 4 接口：`GET /prd`、`PUT /prd`、`POST /prd/upload`、`POST /prd/fetch` | PRD 查询/文本更新/PDF上传/URL抓取 |
+| `service/ProjectService.java` | 新增 `getPrd`/`updatePrd`/`uploadPrdPdf`/`fetchPrdUrl` | PRD 管理逻辑（PDF 调 PrdAgent.parsePdf，URL 调 PrdAgent.fetchUrl） |
+| `service/TestCaseService.java` | `runGenerate` 改由 `orchestratorAgent.generate()` 编排 | 从隐式调用链升级为显式 Agent 编排 |
+| `pom.xml` | 新增 PDFBox 3.0.1 + Jsoup 1.17.2 依赖 | PDF 解析与 URL 抓取支持 |
+
+#### 前端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `api/project.js` | 新增 `getPrd`/`updatePrd`/`uploadPrdPdf`/`fetchPrdUrl` | 四个 PRD 接口封装 |
+| `components/PrdPanel.vue` | 新建 PRD 面板：文本/Markdown 编辑器 + PDF 拖拽上传 + URL 抓取 + PRD 预览 + 来源标识 | 三种接入形式切换与交互 |
+| `views/ProjectDetail.vue` | 引入 PrdPanel 组件 | 项目详情页展示 PRD 面板 |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（3.2s）
+- 前端构建：`npm run build` 成功（16.04s），无 chunk 警告
+
+### 向后兼容
+- 历史项目无 PRD 字段，`prdContent` 为 null，生成时退化为代码驱动（v1.9 行为）
+- H2 `ddl-auto=update` 自动加列，无需迁移脚本
+- 既有 API 端点不变，新增 4 个 PRD 端点
+
+### 范围说明
+- In Scope：PRD 数据模型 + 三种接入形式 + PrdAgent 解析 + OrchestratorAgent 编排 + TestGeneratorAgent 改造 + 前端 PRD 面板
+- Out of Scope：前端代码分析 Agent（v1.11）、AI 执行引擎（v2.0）、需 OAuth 认证的 docs 接入、PRD 版本管理
+
+---
+
 ## v1.9 — 用例版本管理
 
 **日期**: 2026-08-09
