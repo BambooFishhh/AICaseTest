@@ -4,6 +4,40 @@
 
 ---
 
+## v1.4 — 生成质量增强II & 批量操作
+
+**日期**: 2026-08-09
+**基线**: v1.3
+**迭代主题**: LLM prompt 深度优化（具体字段值/边界值/few-shot）+ LLM 重试机制 + 批量操作
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `agent/TestGeneratorAgent.java` | systemPrompt 从单行拼接重构为结构化分段常量（角色/任务/数量引导/测试数据要求/structuredSteps要求/stateMachineRef要求/输出格式）；userPrompt 注入 few-shot 示例（1 正向+1 异常） | 让 LLM 生成有具体字段值（amount:-1）、边界值组合、完整结构化步骤的高质量用例 |
+| `service/LlmService.java` | `chat()` 重构为重试包装 + `callLlmApi()` 抽取；指数退避 1s→2s→4s，最多 3 次；400/401/403 不重试 | 网络抖动/限流时自动重试，减少不必要的规则回退 |
+| `controller/TestCaseController.java` | 新增 `DELETE /batch` 批量删除端点 | 支持批量删除用例 |
+| `dto/BatchDeleteRequest.java` | 新增 DTO | 批量删除请求体 |
+| `service/TestCaseService.java` | 新增 `batchDeleteTestCases()` | 批量删除逻辑 |
+| `controller/MindMapController.java` | `generateMindMap` 新增可选 `testcaseIds` 参数 | 支持只导出选中用例 |
+| `service/MindMapService.java` | `generateMindMap` 按 testcaseIds 过滤 | 批量导出选中用例 |
+
+#### 前端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `api/testcase.js` | 新增 `batchDeleteTestCases()` | 调用批量删除接口 |
+| `api/mindmap.js` | `generateMindmap` 新增 data 参数 | 支持传入 testcaseIds |
+| `views/TestCaseList.vue` | el-table 新增 selection 列 + `@selection-change`；header 新增批量删除/导出选中按钮（带数量提示）；新增 `selectedRows`/`handleBatchDelete`/`handleExportSelected` | 批量操作能力 |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（59 源文件）
+- 前端构建：`npm run build` 成功（16.35s）
+
+---
+
 ## v1.3 — 用例体验增强
 
 **日期**: 2026-08-09

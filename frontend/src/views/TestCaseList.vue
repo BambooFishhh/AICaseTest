@@ -3,6 +3,21 @@
     <div class="page-header">
       <h2>测试用例</h2>
       <div class="header-actions">
+        <el-button
+          type="danger"
+          :icon="Delete"
+          :disabled="selectedRows.length === 0"
+          @click="handleBatchDelete"
+        >
+          批量删除<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
+        </el-button>
+        <el-button
+          :icon="Download"
+          :disabled="selectedRows.length === 0"
+          @click="handleExportSelected"
+        >
+          导出选中<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
+        </el-button>
         <el-button type="primary" :loading="regenerating" @click="handleRegenerate">
           重新生成
         </el-button>
@@ -145,7 +160,9 @@
       style="width: 100%"
       highlight-current-row
       @row-click="handleRowClick"
+      @selection-change="handleSelectionChange"
     >
+      <el-table-column type="selection" width="45" />
       <el-table-column prop="id" label="编号" width="120" />
       <el-table-column prop="title" label="标题" min-width="200" />
       <el-table-column prop="module" label="模块" width="140" />
@@ -210,8 +227,8 @@
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search } from '@element-plus/icons-vue'
-import { listTestCases, triggerGenerate, deleteTestCase } from '@/api/testcase'
+import { Search, Delete, Download } from '@element-plus/icons-vue'
+import { listTestCases, triggerGenerate, deleteTestCase, batchDeleteTestCases } from '@/api/testcase'
 import { generateMindmap } from '@/api/mindmap'
 import { useProjectStore } from '@/stores/project'
 import TestCaseCard from '@/components/TestCaseCard.vue'
@@ -237,6 +254,13 @@ const filters = reactive({ module: '', type: '', priority: '', keyword: '' })
 
 const dialogVisible = ref(false)
 const currentTestCase = ref(null)
+
+// v1.4: 批量操作选中行
+const selectedRows = ref([])
+
+function handleSelectionChange(rows) {
+  selectedRows.value = rows
+}
 
 const moduleOptions = computed(() => {
   const set = new Set()
@@ -368,6 +392,40 @@ async function handleDeleteTestCase(testcaseId) {
 async function handleSaveTestCase() {
   dialogVisible.value = false
   await Promise.all([loadList(), loadAllForStats()])
+}
+
+// v1.4: 批量删除
+async function handleBatchDelete() {
+  const count = selectedRows.value.length
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除选中的 ${count} 条用例吗？此操作不可撤销。`,
+      '确认批量删除',
+      { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const ids = selectedRows.value.map((tc) => tc.id)
+    const res = await batchDeleteTestCases(projectId, ids)
+    ElMessage.success(`已删除 ${res.data} 条用例`)
+    selectedRows.value = []
+    await Promise.all([loadList(), loadAllForStats()])
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+}
+
+// v1.4: 导出选中用例为脑图
+async function handleExportSelected() {
+  const ids = selectedRows.value.map((tc) => tc.id)
+  try {
+    await generateMindmap(projectId, { testcaseIds: ids })
+    ElMessage.success('选中用例脑图生成成功')
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
 }
 
 async function handleRegenerate() {

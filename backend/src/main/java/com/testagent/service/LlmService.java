@@ -49,59 +49,92 @@ public class LlmService {
                 .build();
     }
 
+    // v1.4: 重试配置
+    private static final int MAX_RETRIES = 3;
+    private static final long[] RETRY_DELAYS_MS = {1000, 2000, 4000};
+
     public String chat(String systemPrompt, String userPrompt, double temperature) {
-        try {
-            List<Map<String, String>> messages = new ArrayList<>();
-            Map<String, String> systemMsg = new LinkedHashMap<>();
-            systemMsg.put("role", "system");
-            systemMsg.put("content", systemPrompt);
-            messages.add(systemMsg);
-
-            Map<String, String> userMsg = new LinkedHashMap<>();
-            userMsg.put("role", "user");
-            userMsg.put("content", userPrompt);
-            messages.add(userMsg);
-
-            Map<String, Object> requestBody = new LinkedHashMap<>();
-            requestBody.put("model", model);
-            requestBody.put("messages", messages);
-            requestBody.put("temperature", temperature);
-            requestBody.put("max_tokens", 8192);
-
-            String jsonBody = objectMapper.writeValueAsString(requestBody);
-
-            RequestBody body = RequestBody.create(jsonBody, MediaType.parse("application/json"));
-            Request request = new Request.Builder()
-                    .url(baseUrl + "/chat/completions")
-                    .addHeader("Authorization", "Bearer " + apiKey)
-                    .addHeader("Content-Type", "application/json")
-                    .post(body)
-                    .build();
-
-            try (Response response = httpClient.newCall(request).execute()) {
-                String responseBody = response.body() != null ? response.body().string() : "";
-                if (!response.isSuccessful()) {
-                    log.error("LLM API error: status={}, body={}", response.code(), responseBody);
-                    throw new BusinessException(50002,
-                            "LLM API调用失败: HTTP " + response.code(),
-                            HttpStatus.INTERNAL_SERVER_ERROR);
+        Exception lastException = null;
+        for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+                return callLlmApi(systemPrompt, userPrompt, temperature);
+            } catch (BusinessException e) {
+                // 400/401/403 等客户端错误不重试
+                if (e.getHttpStatus() == HttpStatus.BAD_REQUEST
+                        || e.getHttpStatus() == HttpStatus.UNAUTHORIZED
+                        || e.getHttpStatus() == HttpStatus.FORBIDDEN) {
+                    throw e;
                 }
-                JsonNode root = objectMapper.readTree(responseBody);
-                JsonNode contentNode = root.path("choices").path(0).path("message").path("content");
-                if (contentNode.isMissingNode() || contentNode.asText().isEmpty()) {
-                    throw new BusinessException(50002,
-                            "LLM返回内容为空",
-                            HttpStatus.INTERNAL_SERVER_ERROR);
-                }
-                return contentNode.asText();
+                lastException = e;
+                log.warn("LLM call attempt {} failed: {} (status={}), will retry",
+                        attempt + 1, e.getMessage(), e.getHttpStatus());
+            } catch (Exception e) {
+                lastException = e;
+                log.warn("LLM call attempt {} failed: {}, will retry",
+                        attempt + 1, e.getMessage());
             }
-        } catch (BusinessException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("LLM chat error", e);
-            throw new BusinessException(50002,
-                    "LLM调用异常: " + e.getMessage(),
-                    HttpStatus.INTERNAL_SERVER_ERROR);
+            if (attempt < MAX_RETRIES - 1) {
+                try {
+                    Thread.sleep(RETRY_DELAYS_MS[attempt]);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        throw new BusinessException(50002,
+                "LLM调用失败（已重试" + MAX_RETRIES + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
+                HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    private String callLlmApi(String systemPrompt, String userPrompt, double temperature) throws Exception {
+        List<Map<String, String>> messages = new ArrayList<>();
+        Map<String, String> systemMsg = new LinkedHashMap<>();
+        systemMsg.put("role", "system");
+        systemMsg.put("content", systemPrompt);
+        messages.add(systemMsg);
+
+        Map<String, String> userMsg = new LinkedHashMap<>();
+        userMsg.put("role", "user");
+        userMsg.put("content", userPrompt);
+        messages.add(userMsg);
+
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("messages", messages);
+        requestBody.put("temperature", temperature);
+        requestBody.put("max_tokens", 8192);
+
+        String jsonBody = objectMapper.writeValueAsString(requestBody);
+
+        RequestBody body = RequestBody.create(jsonBody, MediaType.parse("application/json"));
+        Request request = new Request.Builder()
+                .url(baseUrl + "/chat/completions")
+                .addHeader("Authorization", "Bearer " + apiKey)
+                .addHeader("Content-Type", "application/json")
+                .post(body)
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            String responseBody = response.body() != null ? response.body().string() : "";
+            if (!response.isSuccessful()) {
+                log.error("LLM API error: status={}, body={}", response.code(), responseBody);
+                HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
+                if (response.code() == 400) status = HttpStatus.BAD_REQUEST;
+                else if (response.code() == 401) status = HttpStatus.UNAUTHORIZED;
+                else if (response.code() == 403) status = HttpStatus.FORBIDDEN;
+                throw new BusinessException(50002,
+                        "LLM API调用失败: HTTP " + response.code(),
+                        status);
+            }
+            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode contentNode = root.path("choices").path(0).path("message").path("content");
+            if (contentNode.isMissingNode() || contentNode.asText().isEmpty()) {
+                throw new BusinessException(50002,
+                        "LLM返回内容为空",
+                        HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+            return contentNode.asText();
         }
     }
 

@@ -19,3 +19,7 @@ export function updateTestCase(projectId, tcId, data) {
 export function deleteTestCase(projectId, tcId) {
   return request.delete(`/projects/${projectId}/testcases/${tcId}`)
 }
+
+export function batchDeleteTestCases(projectId, ids) {
+  return request.delete(`/projects/${projectId}/testcases/batch`, { data: { ids } })
+}

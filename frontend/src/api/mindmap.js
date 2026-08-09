@@ -1,7 +1,7 @@
 import request from './request'
 
-export function generateMindmap(projectId) {
-  return request.post(`/projects/${projectId}/mindmap/generate`)
+export function generateMindmap(projectId, data) {
+  return request.post(`/projects/${projectId}/mindmap/generate`, data || {})
 }
 
 export function previewMindmap(projectId) {

@@ -1,6 +1,7 @@
 package com.testagent.controller;
 
 import com.testagent.common.ApiResponse;
+import com.testagent.dto.BatchDeleteRequest;
 import com.testagent.dto.TestCaseDTO;
 import com.testagent.dto.TestCaseListResponse;
 import com.testagent.dto.UpdateTestCaseRequest;
@@ -57,5 +58,13 @@ public class TestCaseController {
             @PathVariable String testcaseId) {
         testCaseService.deleteTestCase(projectId, testcaseId);
         return ApiResponse.success(null);
+    }
+
+    @DeleteMapping("/batch")
+    public ApiResponse<Integer> batchDeleteTestCases(
+            @PathVariable String projectId,
+            @RequestBody BatchDeleteRequest req) {
+        int deleted = testCaseService.batchDeleteTestCases(projectId, req.getIds());
+        return ApiResponse.success(deleted);
     }
 }

@@ -11,10 +11,13 @@ import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/projects/{projectId}/mindmap")
@@ -25,8 +28,12 @@ public class MindMapController {
     private MindMapService mindMapService;
 
     @PostMapping("/generate")
-    public ApiResponse<MindMapDTO> generateMindMap(@PathVariable String projectId) {
-        return ApiResponse.success(mindMapService.generateMindMap(projectId));
+    public ApiResponse<MindMapDTO> generateMindMap(
+            @PathVariable String projectId,
+            @RequestBody(required = false) Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<String> testcaseIds = body != null ? (List<String>) body.get("testcaseIds") : null;
+        return ApiResponse.success(mindMapService.generateMindMap(projectId, testcaseIds));
     }
 
     @GetMapping("/download")

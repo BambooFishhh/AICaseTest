@@ -50,13 +50,24 @@ public class MindMapService {
     @Autowired
     private ProjectRepository projectRepository;
 
-    public MindMapDTO generateMindMap(String projectId) {
+    public MindMapDTO generateMindMap(String projectId, List<String> testcaseIds) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
 
-        List<TestCase> testCases = testCaseRepository.findByProjectId(projectId);
-        if (testCases.isEmpty()) {
+        List<TestCase> allTestCases = testCaseRepository.findByProjectId(projectId);
+        if (allTestCases.isEmpty()) {
             throw BusinessException.invalidParam("项目中没有测试用例，请先生成测试用例");
+        }
+
+        // v1.4: 按 testcaseIds 过滤
+        List<TestCase> testCases = allTestCases;
+        if (testcaseIds != null && !testcaseIds.isEmpty()) {
+            testCases = allTestCases.stream()
+                    .filter(tc -> testcaseIds.contains(tc.getId()))
+                    .collect(Collectors.toList());
+            if (testCases.isEmpty()) {
+                throw BusinessException.invalidParam("选中的用例不存在");
+            }
         }
 
         String filePath;

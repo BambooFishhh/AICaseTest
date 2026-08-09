@@ -152,6 +152,19 @@ public class TestCaseService {
     }
 
     @Transactional
+    public int batchDeleteTestCases(String projectId, java.util.List<String> ids) {
+        List<TestCase> all = testCaseRepository.findByProjectId(projectId);
+        int count = 0;
+        for (TestCase tc : all) {
+            if (ids.contains(tc.getId())) {
+                testCaseRepository.delete(tc);
+                count++;
+            }
+        }
+        return count;
+    }
+
+    @Transactional
     public TestCaseDTO updateTestCase(String projectId, String testcaseId, UpdateTestCaseRequest req) {
         TestCase tc = findTestCase(projectId, testcaseId);
 

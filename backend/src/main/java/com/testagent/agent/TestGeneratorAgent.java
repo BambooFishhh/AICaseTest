@@ -28,6 +28,95 @@ public class TestGeneratorAgent {
     private static final Logger log = LoggerFactory.getLogger(TestGeneratorAgent.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // v1.4: 结构化分段 system prompt
+    private static final String SYSTEM_PROMPT = """
+            # 角色
+            你是资深测试工程师，擅长生成结构化、AI 可执行的测试用例。
+
+            # 任务
+            根据以下状态机和接口信息，为每个状态转换生成测试用例。
+
+            # 生成要求
+            ## 数量引导
+            - 正向用例（positive）：每个合法状态转换至少 1 条
+            - 异常用例（negative）：每个状态转换至少 1 条非法输入/非法转换
+            - 边界值用例（boundary）：涉及数值/长度字段的至少 2 条（上界+下界）
+            - 数据驱动用例（data）：多参数组合场景至少 1 条
+
+            ## 测试数据要求
+            - testData 必须包含具体字段值，不能为空对象 {}
+            - 数值字段：填入真实值和边界值（如 amount: 0, amount: -1, amount: 99999999）
+            - 字符串字段：填入正常值、空字符串、超长字符串（256字符）
+            - 枚举字段：填入合法值和非法枚举值
+            - 必填字段：测试缺失该字段的情况
+
+            ## structuredSteps 要求
+            - 每步的 target 必须是具体操作目标（如 "POST /api/order/create"），不能为空
+            - 每步的 expected 必须是可验证的具体结果，不能为空
+            - api_call 类型步骤的 data 必须包含该步骤的输入参数
+
+            ## stateMachineRef 要求
+            - transitions 数组必须包含本用例测试的状态转换
+            - forbiddenTransitions 仅在 negative 类型用例中填写
+
+            # 输出格式
+            返回 JSON 数组，字段说明：
+            - title: 用例标题（简洁，含测试目标）
+            - module: 所属模块
+            - type: positive/negative/boundary/data
+            - priority: P0/P1/P2/P3
+            - preconditions: 前置条件数组
+            - steps: 步骤简述数组
+            - expectedResults: 预期结果数组
+            - structuredSteps: [{order, action, target, expected, data, type}]
+            - apiEndpoints: [{method, path, description}]
+            - testData: {字段名: 值}
+            - executionHints: {approach, notes, prerequisites}
+            - stateMachineRef: {states, transitions, forbiddenTransitions}
+
+            只返回 JSON 数组，不要包含其他文字。
+            """;
+
+    // v1.4: few-shot 示例（1 正向 + 1 异常）
+    private static final String FEW_SHOT_EXAMPLES = """
+            # 示例（参考质量标准，不要原样复制）
+            [
+              {
+                "title": "创建订单-正常流程",
+                "module": "订单管理",
+                "type": "positive",
+                "priority": "P0",
+                "preconditions": ["用户已登录", "购物车有商品"],
+                "steps": ["调用创建订单接口", "验证返回订单号", "验证订单状态为待支付"],
+                "expectedResults": ["接口返回201和订单号", "订单状态=PENDING_PAYMENT"],
+                "structuredSteps": [
+                  {"order":1,"action":"创建订单","target":"POST /api/order/create","expected":"返回201和orderId","data":{"userId":"U001","items":[{"skuId":"SKU001","quantity":2}],"amount":99.90},"type":"api_call"},
+                  {"order":2,"action":"验证订单状态","target":"GET /api/order/{orderId}","expected":"status=PENDING_PAYMENT","data":{},"type":"state_assert"}
+                ],
+                "apiEndpoints": [{"method":"POST","path":"/api/order/create","description":"创建订单"}],
+                "testData": {"userId":"U001","amount":99.90},
+                "executionHints": {"approach":"api_call","notes":"先创建再查询验证状态","prerequisites":["用户已登录"]},
+                "stateMachineRef": {"states":[],"transitions":[{"from":"NONE","to":"PENDING_PAYMENT","trigger":"create"}],"forbiddenTransitions":[]}
+              },
+              {
+                "title": "创建订单-金额为负数",
+                "module": "订单管理",
+                "type": "negative",
+                "priority": "P1",
+                "preconditions": ["用户已登录"],
+                "steps": ["传入负数金额创建订单", "验证接口拒绝"],
+                "expectedResults": ["接口返回400","错误消息提示金额非法"],
+                "structuredSteps": [
+                  {"order":1,"action":"传入负数金额创建订单","target":"POST /api/order/create","expected":"返回400错误","data":{"userId":"U001","amount":-1},"type":"api_call"}
+                ],
+                "apiEndpoints": [{"method":"POST","path":"/api/order/create","description":"创建订单"}],
+                "testData": {"userId":"U001","amount":-1},
+                "executionHints": {"approach":"api_call","notes":"验证金额校验逻辑","prerequisites":["用户已登录"]},
+                "stateMachineRef": {"states":[],"transitions":[],"forbiddenTransitions":[{"from":"PENDING_PAYMENT","to":"NONE","reason":"金额非法不可创建"}]}
+              }
+            ]
+            """;
+
     @Autowired
     private LlmService llmService;
 
@@ -103,24 +192,17 @@ public class TestGeneratorAgent {
         }
         context.put("businessRules", ruleList);
 
-        String systemPrompt = "你是测试用例生成专家。根据提供的状态机信息和后端接口信息，生成全面的、AI可执行的测试用例。"
-                + "请返回JSON数组，每个测试用例包含："
-                + "title(标题), module(模块), type(类型: positive/negative/boundary/data), "
-                + "priority(优先级: P0/P1/P2/P3), "
-                + "preconditions(前置条件字符串数组), steps(测试步骤简短描述字符串数组), "
-                + "expectedResults(预期结果字符串数组), "
-                + "structuredSteps(结构化步骤数组,每步含 order序号/action动作/target操作目标如API路径/expected该步预期/data输入数据对象/type步骤类型: api_call|ui_action|state_assert|manual), "
-                + "apiEndpoints(关联的API端点数组,每项含 method/path/description), "
-                + "testData(测试数据键值对对象), "
-                + "executionHints(执行提示对象,含 approach: api_call|browser|manual, notes说明, prerequisites前置数组), "
-                + "stateMachineRef(状态机引用对象,含 states数组/transitions数组(每项from/to/trigger)/forbiddenTransitions数组(每项from/to/reason)). "
-                + "只返回JSON数组，不要包含其他文字。";
+        String systemPrompt = SYSTEM_PROMPT;
 
         String userPrompt;
         try {
-            userPrompt = "上下文信息：\n" + objectMapper.writeValueAsString(context);
+            userPrompt = "上下文信息：\n" + objectMapper.writeValueAsString(context)
+                    + "\n\n" + FEW_SHOT_EXAMPLES
+                    + "\n\n请基于上下文生成测试用例。";
         } catch (Exception e) {
-            userPrompt = "上下文信息：\n" + context.toString();
+            userPrompt = "上下文信息：\n" + context.toString()
+                    + "\n\n" + FEW_SHOT_EXAMPLES
+                    + "\n\n请基于上下文生成测试用例。";
         }
 
         String response = llmService.chat(systemPrompt, userPrompt, 0.4);
