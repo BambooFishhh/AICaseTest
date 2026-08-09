@@ -19,6 +19,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 /**
  * v2.0: 测试用例执行服务。
@@ -134,6 +136,7 @@ public class ExecutionService {
         int passed = 0, failed = 0, skipped = 0;
         String sessionId = null;
         String errorMessage = null;
+        List<String> recordingFrames = null;
 
         try {
             // 1. 启动浏览器
@@ -142,6 +145,15 @@ public class ExecutionService {
             // 2. 导航到目标页面
             if (targetUrl != null && !targetUrl.isBlank()) {
                 browserSkill.browserNavigate(sessionId, targetUrl);
+            }
+
+            // v2.4: 开始录屏
+            String recordingDir = "outputs/recordings/" + executionId;
+            try {
+                Files.createDirectories(Paths.get(recordingDir));
+                browserSkill.startRecording(sessionId, recordingDir);
+            } catch (Exception e) {
+                log.warn("Failed to start recording: {}", e.getMessage());
             }
 
             // 3. 解析 structuredSteps
@@ -187,6 +199,8 @@ public class ExecutionService {
             log.error("Agent execution {} failed", executionId, e);
             errorMessage = e.getMessage();
         } finally {
+            // v2.4: 停止录屏
+            try { recordingFrames = browserSkill.stopRecording(); } catch (Exception e) { log.warn("Failed to stop recording", e); }
             if (sessionId != null) {
                 try { browserSkill.closeSession(sessionId); } catch (Exception e) { log.warn("Failed to close session", e); }
             }
@@ -201,6 +215,11 @@ public class ExecutionService {
             finalRecord.setEndTime(LocalDateTime.now());
             finalRecord.setSummary(summary);
             finalRecord.setErrorMessage(errorMessage);
+            // v2.4: 保存录屏帧列表
+            if (recordingFrames != null) {
+                try { finalRecord.setRecordingFrames(objectMapper.writeValueAsString(recordingFrames)); }
+                catch (Exception e) { log.warn("Failed to serialize recording frames", e); }
+            }
             executionRecordRepository.save(finalRecord);
         }
 
@@ -229,6 +248,7 @@ public class ExecutionService {
         int passed = 0, failed = 0, skipped = 0;
         String sessionId = null;
         String errorMessage = null;
+        List<String> recordingFrames = null;
 
         try {
             // 1. 启动浏览器
@@ -237,6 +257,15 @@ public class ExecutionService {
             // 2. 导航到目标页面
             if (targetUrl != null && !targetUrl.isBlank()) {
                 browserSkill.browserNavigate(sessionId, targetUrl);
+            }
+
+            // v2.4: 开始录屏
+            String recordingDir = "outputs/recordings/" + executionId;
+            try {
+                Files.createDirectories(Paths.get(recordingDir));
+                browserSkill.startRecording(sessionId, recordingDir);
+            } catch (Exception e) {
+                log.warn("Failed to start recording: {}", e.getMessage());
             }
 
             // 3. 解析 structuredSteps
@@ -346,6 +375,8 @@ public class ExecutionService {
             log.error("Execution {} failed", executionId, e);
             errorMessage = e.getMessage();
         } finally {
+            // v2.4: 停止录屏
+            try { recordingFrames = browserSkill.stopRecording(); } catch (Exception e) { log.warn("Failed to stop recording", e); }
             // 关闭浏览器
             if (sessionId != null) {
                 try {
@@ -366,6 +397,11 @@ public class ExecutionService {
             finalRecord.setEndTime(LocalDateTime.now());
             finalRecord.setSummary(summary);
             finalRecord.setErrorMessage(errorMessage);
+            // v2.4: 保存录屏帧列表
+            if (recordingFrames != null) {
+                try { finalRecord.setRecordingFrames(objectMapper.writeValueAsString(recordingFrames)); }
+                catch (Exception e) { log.warn("Failed to serialize recording frames", e); }
+            }
             executionRecordRepository.save(finalRecord);
         }
 

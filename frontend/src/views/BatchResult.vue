@@ -8,11 +8,18 @@
     <!-- 批次概览 -->
     <el-card v-if="batch" class="overview-card">
       <template #header>
-        <span>批次概览</span>
-        <span v-if="isRunning" class="running-hint">
-          <el-icon class="is-loading"><Loading /></el-icon>
-          执行中，自动刷新...
-        </span>
+        <div class="card-header">
+          <div class="header-left">
+            <span>批次概览</span>
+            <span v-if="isRunning" class="running-hint">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              执行中，自动刷新...
+            </span>
+          </div>
+          <el-button type="primary" :icon="Download" @click="downloadReport">
+            下载批次报告
+          </el-button>
+        </div>
       </template>
       <el-row :gutter="16">
         <el-col :xs="24" :sm="12">
@@ -100,7 +107,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Loading, View } from '@element-plus/icons-vue'
+import { ArrowLeft, Loading, View, Download } from '@element-plus/icons-vue'
 import { getBatch } from '@/api/execution'
 
 const route = useRoute()
@@ -217,6 +224,10 @@ function goToExecution(executionId) {
   router.push(`/projects/${projectId}/executions/${executionId}`)
 }
 
+function downloadReport() {
+  window.open(`/api/batches/${batchId}/report`, '_blank')
+}
+
 function goBack() {
   router.push(`/projects/${projectId}/testcases`)
 }
@@ -247,6 +258,15 @@ onUnmounted(() => {
 }
 .overview-card {
   margin-bottom: 20px;
+}
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.header-left {
+  display: inline-flex;
+  align-items: center;
 }
 .running-hint {
   margin-left: 8px;

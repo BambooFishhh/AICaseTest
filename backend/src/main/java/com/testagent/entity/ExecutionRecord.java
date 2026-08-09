@@ -1,5 +1,6 @@
 package com.testagent.entity;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
@@ -47,4 +48,9 @@ public class ExecutionRecord {
 
     /** v2.1: 执行模式 programmatic / agent */
     private String mode;
+
+    /** v2.4: 录屏帧文件路径列表（JSON 数组字符串） */
+    @Column(length = 4096)
+    @Builder.Default
+    private String recordingFrames = "[]";
 }

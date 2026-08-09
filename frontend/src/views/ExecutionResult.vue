@@ -7,7 +7,14 @@
 
     <!-- 执行概览 -->
     <el-card v-if="execution" class="overview-card">
-      <template #header>执行概览</template>
+      <template #header>
+        <div class="card-header">
+          <span>执行概览</span>
+          <el-button type="primary" :icon="Download" @click="downloadReport">
+            下载报告
+          </el-button>
+        </div>
+      </template>
       <el-descriptions :column="2" border>
         <el-descriptions-item label="用例标题">
           {{ execution.testCaseTitle || '-' }}
@@ -101,14 +108,57 @@
     <el-card v-if="execution && steps.length === 0 && !loading" class="steps-card">
       <el-empty description="暂无步骤数据" :image-size="60" />
     </el-card>
+
+    <!-- 录屏播放器 -->
+    <el-card
+      v-if="recordingFrames && recordingFrames.length > 0"
+      class="recording-card"
+    >
+      <template #header>录屏回放</template>
+      <div class="recording-player">
+        <div class="frame-display">
+          <img
+            v-if="currentFrameUrl"
+            :src="currentFrameUrl"
+            :alt="`帧 ${currentFrameIndex + 1}`"
+            class="frame-image"
+          />
+        </div>
+        <div class="player-controls">
+          <el-button
+            :icon="isPlaying ? VideoPause : VideoPlay"
+            circle
+            type="primary"
+            @click="togglePlay"
+          />
+          <el-slider
+            v-model="currentFrameIndex"
+            :max="Math.max(0, recordingFrames.length - 1)"
+            :show-tooltip="false"
+            class="frame-slider"
+          />
+          <span class="frame-counter">
+            {{ currentFrameIndex + 1 }} / {{ recordingFrames.length }}
+          </span>
+        </div>
+      </div>
+    </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Loading } from '@element-plus/icons-vue'
+import {
+  ArrowLeft,
+  Loading,
+  Download,
+  VideoPlay,
+  VideoPause
+} from '@element-plus/icons-vue'
 import { getExecution, getExecutionSteps } from '@/api/execution'
+
+const RECORDING_BASE_URL = 'http://localhost:8000'
 
 const route = useRoute()
 const router = useRouter()
@@ -119,6 +169,82 @@ const loading = ref(true)
 const execution = ref(null)
 const steps = ref([])
 let pollTimer = null
+
+// 录屏播放相关状态
+const currentFrameIndex = ref(0)
+const isPlaying = ref(false)
+let playTimer = null
+
+// 录屏帧列表（兼容数组或 JSON 字符串）
+const recordingFrames = computed(() => {
+  const raw = execution.value?.recordingFrames
+  if (!raw) return []
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed : []
+    } catch (e) {
+      return []
+    }
+  }
+  return []
+})
+
+const currentFrameUrl = computed(() => {
+  const frame = recordingFrames.value[currentFrameIndex.value]
+  if (!frame) return ''
+  // 拼接后端 base URL，去掉开头的斜杠避免重复
+  const normalized = String(frame).replace(/^\//, '')
+  return `${RECORDING_BASE_URL}/${normalized}`
+})
+
+// 帧数变化时校正索引，避免越界
+watch(recordingFrames, (frames) => {
+  if (frames.length === 0) {
+    currentFrameIndex.value = 0
+    return
+  }
+  if (currentFrameIndex.value > frames.length - 1) {
+    currentFrameIndex.value = frames.length - 1
+  }
+})
+
+function togglePlay() {
+  if (isPlaying.value) {
+    pausePlay()
+  } else {
+    startPlay()
+  }
+}
+
+function startPlay() {
+  if (recordingFrames.value.length === 0) return
+  // 已到最后一帧则从头开始
+  if (currentFrameIndex.value >= recordingFrames.value.length - 1) {
+    currentFrameIndex.value = 0
+  }
+  isPlaying.value = true
+  playTimer = setInterval(() => {
+    if (currentFrameIndex.value < recordingFrames.value.length - 1) {
+      currentFrameIndex.value += 1
+    } else {
+      pausePlay()
+    }
+  }, 500)
+}
+
+function pausePlay() {
+  isPlaying.value = false
+  if (playTimer) {
+    clearInterval(playTimer)
+    playTimer = null
+  }
+}
+
+function downloadReport() {
+  window.open(`/api/executions/${executionId}/report`, '_blank')
+}
 
 // 状态标签颜色: passed=success, failed=danger, running=warning, pending=info
 const statusTagType = (status) => {
@@ -252,6 +378,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopPoll()
+  pausePlay()
 })
 </script>
 
@@ -270,6 +397,11 @@ onUnmounted(() => {
 }
 .overview-card {
   margin-bottom: 20px;
+}
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 .error-alert {
   margin-top: 12px;
@@ -358,5 +490,45 @@ onUnmounted(() => {
   padding: 4px 8px;
   border-radius: 3px;
   word-break: break-all;
+}
+.recording-card {
+  margin-bottom: 20px;
+}
+.recording-player {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.frame-display {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  background: #000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 200px;
+  overflow: hidden;
+}
+.frame-image {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+.player-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.frame-slider {
+  flex: 1;
+}
+.frame-counter {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 13px;
+  color: #606266;
+  white-space: nowrap;
+  min-width: 80px;
+  text-align: right;
 }
 </style>

@@ -4,7 +4,10 @@ import com.testagent.common.ApiResponse;
 import com.testagent.entity.ExecutionRecord;
 import com.testagent.entity.ExecutionStep;
 import com.testagent.service.ExecutionService;
+import com.testagent.service.ReportService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -20,6 +23,9 @@ public class ExecutionController {
 
     @Autowired
     private ExecutionService executionService;
+
+    @Autowired
+    private ReportService reportService;
 
     /**
      * 触发执行
@@ -71,5 +77,25 @@ public class ExecutionController {
     @GetMapping("/batches/{batchId}")
     public ApiResponse<Map<String, Object>> getBatch(@PathVariable String batchId) {
         return ApiResponse.success(executionService.getBatchStatus(batchId));
+    }
+
+    /** v2.4: 下载单次执行报告（自包含 HTML） */
+    @GetMapping("/executions/{executionId}/report")
+    public ResponseEntity<String> downloadReport(@PathVariable String executionId) {
+        String html = reportService.generateExecutionReport(executionId);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, "text/html; charset=UTF-8")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"execution_report.html\"")
+                .body(html);
+    }
+
+    /** v2.4: 下载批次执行报告（自包含 HTML） */
+    @GetMapping("/batches/{batchId}/report")
+    public ResponseEntity<String> downloadBatchReport(@PathVariable String batchId) {
+        String html = reportService.generateBatchReport(batchId);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, "text/html; charset=UTF-8")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"batch_report.html\"")
+                .body(html);
     }
 }

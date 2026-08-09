@@ -23,10 +23,16 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * v2.0: 浏览器操作 Skill
@@ -43,6 +49,13 @@ public class BrowserSkill {
 
     /** 截图输出根目录（项目根目录下） */
     private static final String SCREENSHOT_DIR = "outputs/screenshots";
+
+    /** v2.4: 录屏调度器 */
+    private ScheduledExecutorService recordingScheduler;
+    /** v2.4: 当前录屏帧文件路径列表 */
+    private final List<String> currentRecordingFrames = new CopyOnWriteArrayList<>();
+    /** v2.4: 录屏运行标志 */
+    private volatile boolean recording = false;
 
     /**
      * 启动浏览器会话。
@@ -204,5 +217,46 @@ public class BrowserSkill {
             default:
                 throw new IllegalArgumentException("不支持的选择器类型: " + selectorType);
         }
+    }
+
+    /**
+     * v2.4: 开始录屏。每 2 秒抓取一帧截图，最多 60 帧（约 2 分钟）。
+     * @param sessionId 浏览器会话 ID
+     * @param outputDir 帧文件输出目录
+     */
+    public void startRecording(String sessionId, String outputDir) {
+        currentRecordingFrames.clear();
+        recording = true;
+        recordingScheduler = Executors.newSingleThreadScheduledExecutor();
+        int[] frameNum = {0};
+        recordingScheduler.scheduleAtFixedRate(() -> {
+            if (!recording || frameNum[0] >= 60) {
+                recordingScheduler.shutdown();
+                return;
+            }
+            try {
+                WebDriver driver = sessions.get(sessionId);
+                if (driver != null) {
+                    String filename = String.format("frame_%03d.png", frameNum[0]++);
+                    Path path = Paths.get(outputDir, filename);
+                    File screenshot = ((TakesScreenshot) driver).getScreenshotAs(OutputType.FILE);
+                    Files.copy(screenshot.toPath(), path);
+                    currentRecordingFrames.add(path.toString().replace("\\", "/"));
+                }
+            } catch (Exception e) { /* 忽略单帧失败 */ }
+        }, 0, 2, TimeUnit.SECONDS);
+    }
+
+    /**
+     * v2.4: 停止录屏并返回所有帧文件路径列表。
+     * @return 帧文件路径列表
+     */
+    public List<String> stopRecording() {
+        recording = false;
+        if (recordingScheduler != null) {
+            recordingScheduler.shutdown();
+            try { recordingScheduler.awaitTermination(3, TimeUnit.SECONDS); } catch (Exception e) {}
+        }
+        return new ArrayList<>(currentRecordingFrames);
     }
 }

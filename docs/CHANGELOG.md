@@ -4,6 +4,38 @@
 
 ---
 
+## v2.4 — 执行报告 + 录屏
+
+**日期**: 2026-08-09
+**基线**: v2.3
+**迭代主题**: HTML 执行报告生成 + 浏览器录屏（周期截图+前端播放）
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `entity/ExecutionRecord.java` | 修改 | 新增 recordingFrames 字段（JSON 数组，存录屏帧路径） |
+| `skill/BrowserSkill.java` | 修改 | 新增 startRecording/stopRecording（每2s截图，最多60帧） |
+| `service/ExecutionService.java` | 修改 | 执行流程集成录屏（start→执行→stop→存帧） |
+| `service/ReportService.java` | 新建 | HTML 报告生成（单条+批次，内嵌base64截图） |
+| `controller/ExecutionController.java` | 修改 | 新增 2 个报告下载 API |
+| `repository/ExecutionRecordRepository.java` | 修改 | 新增 findByBatchId 方法 |
+
+#### 前端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `views/ExecutionResult.vue` | 修改 | 新增"下载报告"按钮 + 录屏播放器（播放/暂停/进度条） |
+| `views/BatchResult.vue` | 修改 | 新增"下载批次报告"按钮 |
+
+### 验证
+- 后端编译: `mvn compile` BUILD SUCCESS (9s)
+- 前端构建: `npm run build` 成功 (11.71s)
+
+---
+
 ## v2.3 — LLM 调用全量拆分到 MCP Server
 
 **日期**: 2026-08-09
