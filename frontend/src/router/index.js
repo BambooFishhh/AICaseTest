@@ -42,6 +42,12 @@ const routes = [
     meta: { title: '执行结果' }
   },
   {
+    path: '/projects/:id/batches/:batchId',
+    name: 'BatchResult',
+    component: () => import('@/views/BatchResult.vue'),
+    meta: { title: '批次执行结果' }
+  },
+  {
     path: '/projects/:id/state-machines',
     name: 'StateMachineOverview',
     component: () => import('@/views/StateMachineOverview.vue'),

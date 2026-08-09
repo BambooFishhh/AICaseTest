@@ -9,4 +9,7 @@ import java.util.List;
 @Repository
 public interface ExecutionRecordRepository extends JpaRepository<ExecutionRecord, String> {
     List<ExecutionRecord> findByProjectIdOrderByStartTimeDesc(String projectId);
+
+    /** v2.1: 按批次查询 */
+    List<ExecutionRecord> findByBatchIdOrderByStartTimeAsc(String batchId);
 }

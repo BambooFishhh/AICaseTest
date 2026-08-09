@@ -41,4 +41,10 @@ public class ExecutionRecord {
     private String summary;
 
     private String errorMessage;
+
+    /** v2.1: 批次 ID（单条执行时为 null） */
+    private String batchId;
+
+    /** v2.1: 执行模式 programmatic / agent */
+    private String mode;
 }

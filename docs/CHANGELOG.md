@@ -4,6 +4,55 @@
 
 ---
 
+## v2.1 — MCP 多模态桥接 + Agent 执行引擎
+
+**日期**: 2026-08-09
+**基线**: v2.0
+**迭代主题**: 多模态视觉识别 + LLM 驱动的 Agent 执行引擎 + 批量执行
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `service/LlmService.java` | 新增 `chatWithImage()` 多模态方法 | 发送图片+文本到 OpenAI Vision API |
+| `dto/LocateResult.java` | 新建 | MCP 返回结构（found/bbox/clickX/clickY/confidence） |
+| `service/McpBridgeService.java` | 新建 | MCP 多模态视觉识别服务（截图+描述→位置JSON） |
+| `agent/ExecutionAgent.java` | 新建 | LLM 驱动的 Agent 执行引擎（agentic loop + 两层兜底） |
+| `entity/ExecutionRecord.java` | 修改 | 新增 batchId + mode 字段 |
+| `repository/ExecutionRecordRepository.java` | 修改 | 新增 findByBatchId 查询 |
+| `service/ExecutionService.java` | 修改 | 新增 executeWithAgent + executeBatch + getBatchStatus |
+| `controller/ExecutionController.java` | 修改 | 新增 Agent 模式参数 + 批量执行 + 批次查询 API |
+
+#### 前端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `api/execution.js` | 修改 | 新增 executeBatch + getBatch + executeTestCase 支持 mode |
+| `components/TestCaseCard.vue` | 修改 | 执行对话框新增"执行模式"选择（Agent/程序化） |
+| `views/TestCaseList.vue` | 修改 | 新增"批量执行"按钮+URL对话框 |
+| `views/BatchResult.vue` | 新建 | 批次结果页（进度条+用例列表+轮询） |
+| `router/index.js` | 修改 | 新增 BatchResult 路由 |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（81 source files, 9.2s）
+- 前端构建：`npm run build` 成功（11.84s）
+
+### 核心架构
+```
+Agent 执行单步:
+  1. LLM 生成元素查找描述
+  2. Skill take_screenshot
+  3. MCP multimodal_element_locate（多模态视觉识别）
+  4. LLM 决策策略（visual_click / dom_click / skip）
+  5. 执行点击
+  6. LLM 判断是否生效 → 不生效则 LLM 决策兜底
+  7. 截图 + 组装证据
+```
+
+---
+
 ## v2.0 — Skill 工具层 + 执行数据模型
 
 **日期**: 2026-08-09

@@ -11,6 +11,15 @@
         >
           批量删除<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
         </el-button>
+        <!-- v2.1: 批量执行 -->
+        <el-button
+          type="success"
+          :icon="VideoPlay"
+          :disabled="selectedRows.length === 0"
+          @click="openBatchExecuteDialog"
+        >
+          批量执行<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
+        </el-button>
         <el-button
           :icon="Download"
           :disabled="selectedRows.length === 0"
@@ -304,6 +313,37 @@
       :current-test-case="currentTestCase"
       @rollback="handleVersionRollback"
     />
+
+    <!-- v2.1: 批量执行对话框 -->
+    <el-dialog
+      v-model="batchExecuteDialogVisible"
+      title="批量执行测试用例"
+      width="480px"
+    >
+      <el-form label-width="100px">
+        <el-form-item label="选中用例数">
+          <span>{{ selectedRows.length }} 条</span>
+        </el-form-item>
+        <el-form-item label="待测页面URL">
+          <el-input
+            v-model="batchTargetUrl"
+            placeholder="http://localhost:5173"
+            clearable
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchExecuteDialogVisible = false">取消</el-button>
+        <el-button
+          type="success"
+          :icon="VideoPlay"
+          :loading="batchExecuting"
+          @click="confirmBatchExecute"
+        >
+          确认执行
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -319,7 +359,8 @@ import {
   CopyDocument,
   Document,
   Check,
-  ArrowDown
+  ArrowDown,
+  VideoPlay
 } from '@element-plus/icons-vue'
 import {
   listTestCases,
@@ -333,6 +374,7 @@ import {
 } from '@/api/testcase'
 import { listProjects } from '@/api/project'
 import { generateMindmap } from '@/api/mindmap'
+import { executeBatch } from '@/api/execution'
 import { useProjectStore } from '@/stores/project'
 import TestCaseCard from '@/components/TestCaseCard.vue'
 import TestCaseVersionDrawer from '@/components/TestCaseVersionDrawer.vue'
@@ -691,6 +733,46 @@ function handleFilterByIds(ids) {
 const versionDrawerVisible = ref(false)
 function handleOpenVersions() {
   versionDrawerVisible.value = true
+}
+
+// v2.1: 批量执行
+const batchExecuteDialogVisible = ref(false)
+const batchTargetUrl = ref('http://localhost:5173')
+const batchExecuting = ref(false)
+
+function openBatchExecuteDialog() {
+  if (selectedRows.value.length === 0) {
+    ElMessage.warning('请先选择要执行的用例')
+    return
+  }
+  batchTargetUrl.value = 'http://localhost:5173'
+  batchExecuteDialogVisible.value = true
+}
+
+async function confirmBatchExecute() {
+  if (!batchTargetUrl.value || !batchTargetUrl.value.trim()) {
+    ElMessage.warning('请输入待测页面URL')
+    return
+  }
+  if (selectedRows.value.length === 0) {
+    ElMessage.warning('请先选择要执行的用例')
+    return
+  }
+  batchExecuting.value = true
+  try {
+    const caseIds = selectedRows.value.map((tc) => tc.id)
+    const res = await executeBatch(projectId, caseIds, batchTargetUrl.value.trim())
+    const batchId = res.data?.batchId
+    batchExecuteDialogVisible.value = false
+    ElMessage.success(`已启动批量执行，共 ${caseIds.length} 条用例`)
+    if (batchId) {
+      router.push(`/projects/${projectId}/batches/${batchId}`)
+    }
+  } catch (e) {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    batchExecuting.value = false
+  }
 }
 async function handleVersionRollback() {
   await Promise.all([loadList(), loadAllForStats()])

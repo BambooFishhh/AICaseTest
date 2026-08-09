@@ -143,6 +143,97 @@ public class LlmService {
         }
     }
 
+    // v2.1: 多模态调用（图片 + 文本）
+    public String chatWithImage(String systemPrompt, String userText, String imageBase64) {
+        Exception lastException = null;
+        for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+                return callLlmApiWithImage(systemPrompt, userText, imageBase64);
+            } catch (BusinessException e) {
+                if (e.getHttpStatus() == HttpStatus.BAD_REQUEST
+                        || e.getHttpStatus() == HttpStatus.UNAUTHORIZED
+                        || e.getHttpStatus() == HttpStatus.FORBIDDEN) {
+                    throw e;
+                }
+                lastException = e;
+                log.warn("LLM image call attempt {} failed: {}", attempt + 1, e.getMessage());
+            } catch (Exception e) {
+                lastException = e;
+                log.warn("LLM image call attempt {} failed: {}", attempt + 1, e.getMessage());
+            }
+            if (attempt < MAX_RETRIES - 1) {
+                try {
+                    Thread.sleep(RETRY_DELAYS_MS[attempt]);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        throw new BusinessException(50002,
+                "LLM多模态调用失败（已重试" + MAX_RETRIES + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
+                HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    @SuppressWarnings("unchecked")
+    private String callLlmApiWithImage(String systemPrompt, String userText, String imageBase64) throws Exception {
+        List<Map<String, Object>> messages = new ArrayList<>();
+
+        Map<String, Object> systemMsg = new LinkedHashMap<>();
+        systemMsg.put("role", "system");
+        systemMsg.put("content", systemPrompt);
+        messages.add(systemMsg);
+
+        // v2.1: user content 为数组（text + image_url）
+        Map<String, Object> userMsg = new LinkedHashMap<>();
+        userMsg.put("role", "user");
+        List<Map<String, Object>> content = new ArrayList<>();
+        Map<String, Object> textPart = new LinkedHashMap<>();
+        textPart.put("type", "text");
+        textPart.put("text", userText);
+        content.add(textPart);
+        Map<String, Object> imagePart = new LinkedHashMap<>();
+        imagePart.put("type", "image_url");
+        Map<String, String> imageUrl = new LinkedHashMap<>();
+        imageUrl.put("url", "data:image/png;base64," + imageBase64);
+        imagePart.put("image_url", imageUrl);
+        content.add(imagePart);
+        userMsg.put("content", content);
+        messages.add(userMsg);
+
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("messages", messages);
+        requestBody.put("temperature", 0.1);
+        requestBody.put("max_tokens", 1024);
+
+        String jsonBody = objectMapper.writeValueAsString(requestBody);
+
+        RequestBody body = RequestBody.create(jsonBody, MediaType.parse("application/json"));
+        Request request = new Request.Builder()
+                .url(baseUrl + "/chat/completions")
+                .addHeader("Authorization", "Bearer " + apiKey)
+                .addHeader("Content-Type", "application/json")
+                .post(body)
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            String responseBody = response.body() != null ? response.body().string() : "";
+            if (!response.isSuccessful()) {
+                log.error("LLM Vision API error: status={}, body={}", response.code(), responseBody);
+                throw new BusinessException(50002,
+                        "LLM Vision API调用失败: HTTP " + response.code(),
+                        HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode contentNode = root.path("choices").path(0).path("message").path("content");
+            if (contentNode.isMissingNode() || contentNode.asText().isEmpty()) {
+                throw new BusinessException(50002, "LLM返回内容为空", HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+            return contentNode.asText();
+        }
+    }
+
     public Map<String, Object> chatJson(String systemPrompt, String userPrompt, double temperature) {
         String response = chat(systemPrompt, userPrompt, temperature);
         String json = extractJsonObject(response);

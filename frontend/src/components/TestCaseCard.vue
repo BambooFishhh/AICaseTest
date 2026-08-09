@@ -432,6 +432,12 @@
           clearable
         />
       </el-form-item>
+      <el-form-item label="执行模式">
+        <el-radio-group v-model="executeMode">
+          <el-radio value="agent">Agent 模式</el-radio>
+          <el-radio value="programmatic">程序化模式</el-radio>
+        </el-radio-group>
+      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="executeDialogVisible = false">取消</el-button>
@@ -491,6 +497,8 @@ const editMode = ref(false)
 const executeDialogVisible = ref(false)
 const targetUrl = ref('http://localhost:5173')
 const executing = ref(false)
+// v2.1: 执行模式，默认 Agent 模式
+const executeMode = ref('agent')
 
 // 表单数据（编辑模式）
 const formData = reactive({
@@ -750,6 +758,7 @@ const goNext = () => emit('next')
 // v2.0 执行测试用例
 const openExecuteDialog = () => {
   targetUrl.value = 'http://localhost:5173'
+  executeMode.value = 'agent'
   executeDialogVisible.value = true
 }
 
@@ -764,7 +773,7 @@ const confirmExecute = async () => {
   }
   executing.value = true
   try {
-    const res = await executeTestCase(projectId, props.testCase.id, targetUrl.value.trim())
+    const res = await executeTestCase(projectId, props.testCase.id, targetUrl.value.trim(), executeMode.value)
     const eid = res.data?.executionId
     executeDialogVisible.value = false
     if (eid) {
