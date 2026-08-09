@@ -5,6 +5,7 @@ import com.testagent.dto.BatchDeleteRequest;
 import com.testagent.dto.CopyToRequest;
 import com.testagent.dto.ReviewRequest;
 import com.testagent.dto.TestCaseDTO;
+import com.testagent.dto.TestCaseVersionDTO;
 import com.testagent.dto.TestCaseListResponse;
 import com.testagent.dto.UpdateTestCaseRequest;
 import com.testagent.service.TestCaseService;
@@ -114,5 +115,32 @@ public class TestCaseController {
             @RequestBody ReviewRequest req) {
         return ApiResponse.success(testCaseService.batchUpdateReviewStatus(
                 projectId, req.getIds(), req.getStatus(), req.getReviewer()));
+    }
+
+    // v1.9: 用例版本列表
+    @GetMapping("/{testcaseId}/versions")
+    public ApiResponse<List<TestCaseVersionDTO>> listVersions(
+            @PathVariable String projectId,
+            @PathVariable String testcaseId) {
+        return ApiResponse.success(testCaseService.listVersions(projectId, testcaseId));
+    }
+
+    // v1.9: 用例版本详情（含快照）
+    @GetMapping("/{testcaseId}/versions/{versionId}")
+    public ApiResponse<TestCaseVersionDTO> getVersion(
+            @PathVariable String projectId,
+            @PathVariable String testcaseId,
+            @PathVariable String versionId) {
+        return ApiResponse.success(testCaseService.getVersion(projectId, testcaseId, versionId));
+    }
+
+    // v1.9: 回滚到指定版本
+    @PostMapping("/{testcaseId}/versions/{versionId}/rollback")
+    public ApiResponse<TestCaseDTO> rollbackToVersion(
+            @PathVariable String projectId,
+            @PathVariable String testcaseId,
+            @PathVariable String versionId) {
+        return ApiResponse.success(
+                testCaseService.rollbackToVersion(projectId, testcaseId, versionId));
     }
 }

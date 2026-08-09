@@ -69,3 +69,18 @@ export function reviewTestCases(projectId, ids, status, reviewer) {
     reviewer
   })
 }
+
+// v1.9: 用例版本列表
+export function listTestCaseVersions(projectId, testcaseId) {
+  return request.get(`/projects/${projectId}/testcases/${testcaseId}/versions`)
+}
+
+// v1.9: 用例版本详情（含快照）
+export function getTestCaseVersion(projectId, testcaseId, versionId) {
+  return request.get(`/projects/${projectId}/testcases/${testcaseId}/versions/${versionId}`)
+}
+
+// v1.9: 回滚到指定版本
+export function rollbackTestCaseVersion(projectId, testcaseId, versionId) {
+  return request.post(`/projects/${projectId}/testcases/${testcaseId}/versions/${versionId}/rollback`)
+}

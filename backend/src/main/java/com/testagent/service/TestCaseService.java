@@ -10,15 +10,18 @@ import com.testagent.dto.GenerateRequest;
 import com.testagent.dto.JsonHelper;
 import com.testagent.dto.TestCaseDTO;
 import com.testagent.dto.TestCaseListResponse;
+import com.testagent.dto.TestCaseVersionDTO;
 import com.testagent.dto.UpdateTestCaseRequest;
 import com.testagent.entity.CodeAnalysis;
 import com.testagent.entity.Project;
 import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
+import com.testagent.entity.TestCaseVersion;
 import com.testagent.repository.CodeAnalysisRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.TestCaseRepository;
+import com.testagent.repository.TestCaseVersionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,6 +48,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -55,6 +59,9 @@ public class TestCaseService {
 
     @Autowired
     private TestCaseRepository testCaseRepository;
+
+    @Autowired
+    private TestCaseVersionRepository testCaseVersionRepository;
 
     @Autowired
     private StateMachineRepository stateMachineRepository;
@@ -409,6 +416,8 @@ public class TestCaseService {
     @Transactional
     public TestCaseDTO updateTestCase(String projectId, String testcaseId, UpdateTestCaseRequest req) {
         TestCase tc = findTestCase(projectId, testcaseId);
+        // v1.9: 保存编辑前快照
+        createVersion(projectId, testcaseId, tc, "edit");
 
         if (req.getTitle() != null) {
             tc.setTitle(req.getTitle());
@@ -449,6 +458,96 @@ public class TestCaseService {
 
         testCaseRepository.save(tc);
         return TestCaseDTO.from(tc);
+    }
+
+    // ==================== v1.9: 用例版本管理 ====================
+
+    public List<TestCaseVersionDTO> listVersions(String projectId, String testcaseId) {
+        findTestCase(projectId, testcaseId);
+        return testCaseVersionRepository
+                .findByTestCaseIdOrderByVersionNoDesc(testcaseId)
+                .stream()
+                .map(TestCaseVersionDTO::listFrom)
+                .collect(Collectors.toList());
+    }
+
+    public TestCaseVersionDTO getVersion(String projectId, String testcaseId, String versionId) {
+        findTestCase(projectId, testcaseId);
+        TestCaseVersion v = testCaseVersionRepository
+                .findByIdAndTestCaseId(versionId, testcaseId)
+                .orElseThrow(() -> BusinessException.notFound("版本不存在: " + versionId));
+        return TestCaseVersionDTO.detailFrom(v);
+    }
+
+    @Transactional
+    public TestCaseDTO rollbackToVersion(String projectId, String testcaseId, String versionId) {
+        TestCase tc = findTestCase(projectId, testcaseId);
+        TestCaseVersion v = testCaseVersionRepository
+                .findByIdAndTestCaseId(versionId, testcaseId)
+                .orElseThrow(() -> BusinessException.notFound("版本不存在: " + versionId));
+
+        // v1.9: 回滚前先存当前内容为版本，使回滚可撤销
+        createVersion(projectId, testcaseId, tc, "rollback");
+
+        applySnapshotToTestCase(tc, JsonHelper.parseMap(v.getSnapshot()));
+        testCaseRepository.save(tc);
+        return TestCaseDTO.from(tc);
+    }
+
+    private void createVersion(String projectId, String testcaseId, TestCase tc, String action) {
+        TestCaseVersion v = new TestCaseVersion();
+        v.setId(UUID.randomUUID().toString().substring(0, 12));
+        v.setTestCaseId(testcaseId);
+        v.setProjectId(projectId);
+        v.setVersionNo((int) testCaseVersionRepository.countByTestCaseId(testcaseId) + 1);
+        v.setSnapshot(toSnapshotJson(tc));
+        v.setAction(action);
+        v.setCreatedAt(LocalDateTime.now());
+        testCaseVersionRepository.save(v);
+    }
+
+    private String toSnapshotJson(TestCase tc) {
+        Map<String, Object> snap = new LinkedHashMap<>();
+        snap.put("title", tc.getTitle());
+        snap.put("module", tc.getModule());
+        snap.put("type", tc.getType());
+        snap.put("priority", tc.getPriority());
+        snap.put("preconditions", JsonHelper.parseListString(tc.getPreconditions()));
+        snap.put("steps", JsonHelper.parseListString(tc.getSteps()));
+        snap.put("expectedResults", JsonHelper.parseListString(tc.getExpectedResults()));
+        snap.put("structuredSteps", JsonHelper.parseListMap(tc.getStructuredSteps()));
+        snap.put("apiEndpoints", JsonHelper.parseListMap(tc.getApiEndpoints()));
+        snap.put("testData", JsonHelper.parseMap(tc.getTestData()));
+        snap.put("executionHints", JsonHelper.parseMap(tc.getExecutionHints()));
+        snap.put("stateMachineRef", JsonHelper.parseMap(tc.getStateMachineRef()));
+        snap.put("executionStatus", tc.getExecutionStatus());
+        snap.put("reviewStatus", tc.getReviewStatus());
+        snap.put("qualityScore", tc.getQualityScore());
+        return toJson(snap);
+    }
+
+    private void applySnapshotToTestCase(TestCase tc, Map<String, Object> snap) {
+        if (snap.containsKey("title")) tc.setTitle(asString(snap.get("title")));
+        if (snap.containsKey("module")) tc.setModule(asString(snap.get("module")));
+        if (snap.containsKey("type")) tc.setType(asString(snap.get("type")));
+        if (snap.containsKey("priority")) tc.setPriority(asString(snap.get("priority")));
+        if (snap.containsKey("preconditions")) tc.setPreconditions(toJson(snap.get("preconditions")));
+        if (snap.containsKey("steps")) tc.setSteps(toJson(snap.get("steps")));
+        if (snap.containsKey("expectedResults")) tc.setExpectedResults(toJson(snap.get("expectedResults")));
+        if (snap.containsKey("structuredSteps")) tc.setStructuredSteps(toJson(snap.get("structuredSteps")));
+        if (snap.containsKey("apiEndpoints")) tc.setApiEndpoints(toJson(snap.get("apiEndpoints")));
+        if (snap.containsKey("testData")) tc.setTestData(toJson(snap.get("testData")));
+        if (snap.containsKey("executionHints")) tc.setExecutionHints(toJson(snap.get("executionHints")));
+        if (snap.containsKey("stateMachineRef")) tc.setStateMachineRef(toJson(snap.get("stateMachineRef")));
+        if (snap.containsKey("executionStatus")) tc.setExecutionStatus(asString(snap.get("executionStatus")));
+        if (snap.containsKey("reviewStatus")) tc.setReviewStatus(asString(snap.get("reviewStatus")));
+        if (snap.containsKey("qualityScore") && snap.get("qualityScore") != null) {
+            tc.setQualityScore(((Number) snap.get("qualityScore")).intValue());
+        }
+    }
+
+    private String asString(Object o) {
+        return o == null ? null : String.valueOf(o);
     }
 
     private TestCase findTestCase(String projectId, String testcaseId) {

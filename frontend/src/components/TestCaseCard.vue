@@ -399,6 +399,7 @@
           <el-button v-if="editable" type="primary" :icon="EditPen" @click="enterEditMode">
             编辑
           </el-button>
+          <el-button :icon="Clock" @click="emit('versions')">历史版本</el-button>
           <el-button @click="goPrev" :disabled="!canGoPrev">上一条</el-button>
           <el-button @click="goNext" :disabled="!canGoNext">下一条</el-button>
         </template>
@@ -416,7 +417,7 @@
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, EditPen, Check } from '@element-plus/icons-vue'
+import { Plus, Delete, EditPen, Check, Clock } from '@element-plus/icons-vue'
 import StateMachineViewer from './StateMachineViewer.vue'
 
 const props = defineProps({
@@ -442,7 +443,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['save', 'close', 'delete', 'prev', 'next'])
+const emit = defineEmits(['save', 'close', 'delete', 'prev', 'next', 'versions'])
 
 // 编辑模式状态
 const editMode = ref(false)

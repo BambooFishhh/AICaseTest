@@ -4,6 +4,48 @@
 
 ---
 
+## v1.9 — 用例版本管理
+
+**日期**: 2026-08-09
+**基线**: v1.8
+**迭代主题**: 用例编辑版本快照 + 历史版本列表 + 字段级对比 + 一键回滚
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `entity/TestCaseVersion.java` | 新建版本快照实体（id/testCaseId/projectId/versionNo/snapshot/action/createdAt） | 持久化用例历史快照 |
+| `repository/TestCaseVersionRepository.java` | 新建版本仓库（按用例倒序查、计数、按 id+testCaseId 查） | 版本查询支持 |
+| `dto/TestCaseVersionDTO.java` | 新建 DTO（list/detail 双视图，detail 含 snapshot） | 列表精简、详情含快照 |
+| `controller/TestCaseController.java` | 新增 3 接口：`GET /{tcId}/versions`、`GET /{tcId}/versions/{vId}`、`POST /{tcId}/versions/{vId}/rollback` | 版本列表/详情/回滚入口 |
+| `service/TestCaseService.java` | 注入版本仓库；`updateTestCase` 前置存 edit 快照；新增 `listVersions`/`getVersion`/`rollbackToVersion`（回滚前存 rollback 快照）/`createVersion`/`toSnapshotJson`/`applySnapshotToTestCase` | 编辑前留档、回滚可撤销 |
+
+#### 前端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `api/testcase.js` | 新增 `listTestCaseVersions`/`getTestCaseVersion`/`rollbackTestCaseVersion` | 三个版本接口封装 |
+| `components/TestCaseVersionDrawer.vue` | 新建版本抽屉：版本列表 + 查看快照 + 与当前用例字段级 diff + 回滚（二次确认） | 历史版本查看/对比/回滚交互 |
+| `components/TestCaseCard.vue` | footer 新增"历史版本"按钮（Clock 图标）+ emit `versions` | 详情内打开版本抽屉 |
+| `views/TestCaseList.vue` | 引入抽屉组件 + `versionDrawerVisible` + `handleOpenVersions` + `handleVersionRollback`（回滚后刷新列表与当前用例） | 接入抽屉并同步回滚结果 |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（10.2s）
+- 前端构建：`npm run build` 成功（11.93s），TestCaseList 16KB→20KB，无 chunk 警告
+
+### 向后兼容
+- 新增 `test_case_versions` 表，H2 `ddl-auto=update` 自动建表
+- 历史用例（v1.9 前数据）无版本记录时列表为空，展示"暂无历史版本"
+- `updateTestCase` 行为不变，仅额外写入版本，对调用方透明
+
+### 范围说明
+- In Scope：编辑/回滚触发的用例级版本快照
+- Out of Scope：重新生成全量覆盖前的项目级快照（已有 v1.3 确认 + v1.7 导出备份兜底，留待后续）
+
+---
+
 ## v1.8 — 用例评审状态流转
 
 **日期**: 2026-08-09

@@ -292,8 +292,18 @@
         @delete="handleDeleteTestCase"
         @prev="handlePrev"
         @next="handleNext"
+        @versions="handleOpenVersions"
       />
     </el-dialog>
+
+    <!-- v1.9: 历史版本抽屉 -->
+    <TestCaseVersionDrawer
+      v-model:visible="versionDrawerVisible"
+      :project-id="projectId"
+      :testcase-id="currentTestCase?.id"
+      :current-test-case="currentTestCase"
+      @rollback="handleVersionRollback"
+    />
   </div>
 </template>
 
@@ -325,6 +335,7 @@ import { listProjects } from '@/api/project'
 import { generateMindmap } from '@/api/mindmap'
 import { useProjectStore } from '@/stores/project'
 import TestCaseCard from '@/components/TestCaseCard.vue'
+import TestCaseVersionDrawer from '@/components/TestCaseVersionDrawer.vue'
 import CoverageMatrix from '@/components/CoverageMatrix.vue'
 import { getCoverageMatrix } from '@/api/coverage'
 
@@ -673,6 +684,25 @@ function handleFilterByIds(ids) {
   if (ids.length > 0) {
     filters.keyword = ids[0]
     handleFilter()
+  }
+}
+
+// v1.9: 历史版本抽屉
+const versionDrawerVisible = ref(false)
+function handleOpenVersions() {
+  versionDrawerVisible.value = true
+}
+async function handleVersionRollback() {
+  await Promise.all([loadList(), loadAllForStats()])
+  // 同步当前用例对象，使对话框内显示回滚后内容
+  if (currentTestCase.value?.id) {
+    try {
+      const res = await listTestCases(projectId, { page: 1, pageSize: 9999 })
+      const updated = (res.data?.testCases || []).find((tc) => tc.id === currentTestCase.value.id)
+      if (updated) currentTestCase.value = updated
+    } catch {
+      // 忽略，列表已刷新
+    }
   }
 }
 
