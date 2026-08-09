@@ -4,6 +4,40 @@
 
 ---
 
+## v1.5 — 可视化增强
+
+**日期**: 2026-08-09
+**基线**: v1.4
+**迭代主题**: 覆盖率矩阵可视化 + 状态机覆盖图 + 前端 chunk 拆分
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `controller/CoverageController.java` | 新增 `GET /coverage/matrix` 接口 | 返回每个状态转换的覆盖详情（covered + testCaseIds） |
+| `service/CoverageService.java` | 新增 `getCoverageMatrix()` | 遍历状态机 transitions 与用例 stateMachineRef 匹配，计算覆盖状态 |
+
+#### 前端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `components/CoverageMatrix.vue` | 新增组件：覆盖率矩阵表格 | 每行一个转换，显示覆盖状态（✓/✗），未覆盖行红色高亮，可点击关联用例跳转 |
+| `components/StateMachineViewer.vue` | 新增 `coverageData` prop；`buildEdges()` 根据覆盖状态着色（绿=已覆盖/红虚线=未覆盖） | 图上直观标注覆盖状态 |
+| `views/StateMachineOverview.vue` | 新增页面：状态机覆盖图 | 独立路由展示状态机图+覆盖标注+统计摘要 |
+| `views/TestCaseList.vue` | 引入 CoverageMatrix 组件；新增 coverageMatrix 状态和 loadCoverageMatrix | 在用例列表页展示覆盖率矩阵 |
+| `api/coverage.js` | 新增 `getCoverageMatrix()` | 调用矩阵接口 |
+| `router/index.js` | 新增 `/projects/:id/state-machines` 路由 | 状态机覆盖图页面入口 |
+| `vite.config.js` | 新增 `build.rollupOptions.output.manualChunks`（echarts/elementPlus/vendor 分离）+ `chunkSizeWarningLimit: 1100` | 解决单 chunk 2.2MB 问题，首屏仅需 index+vendor（185KB） |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（61 源文件）
+- 前端构建：`npm run build` 成功（13.71s），无 chunk 警告
+- chunk 效果：index.js 26KB + vendor 159KB + echarts 1035KB + elementPlus 1074KB（按需懒加载）
+
+---
+
 ## v1.4 — 生成质量增强II & 批量操作
 
 **日期**: 2026-08-09

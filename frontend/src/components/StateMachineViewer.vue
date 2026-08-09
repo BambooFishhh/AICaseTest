@@ -23,6 +23,11 @@ const props = defineProps({
   forbiddenTransitions: {
     type: Array,
     default: () => []
+  },
+  // v1.5: 覆盖数据，用于标注边和节点的覆盖状态
+  coverageData: {
+    type: Object,
+    default: null
   }
 })
 
@@ -91,6 +96,17 @@ const buildNodes = () => {
   })
 }
 
+// v1.5: 检查转换是否被覆盖
+const isCovered = (tran) => {
+  if (!props.coverageData) return null
+  const sm = props.coverageData.stateMachines?.[0]
+  if (!sm) return null
+  const match = (sm.transitions || []).find(t =>
+    t.from === tran.from && t.to === tran.to
+  )
+  return match ? match.covered : null
+}
+
 // 构建正常转移边
 const buildEdges = () => {
   if (!props.transitions || props.transitions.length === 0) return []
@@ -98,14 +114,16 @@ const buildEdges = () => {
     const label = [tran.trigger, tran.condition]
       .filter(Boolean)
       .join(' / ')
+    const covered = isCovered(tran)
     return {
       source: tran.from,
       target: tran.to,
       symbol: ['none', 'arrow'],
       symbolSize: [0, 10],
       lineStyle: {
-        color: '#909399',
+        color: covered === false ? '#F56C6C' : (covered === true ? '#67C23A' : '#909399'),
         width: 2,
+        type: covered === false ? 'dashed' : 'solid',
         curveness: 0.2
       },
       label: {
@@ -236,7 +254,7 @@ onBeforeUnmount(() => {
 })
 
 watch(
-  () => [props.states, props.transitions, props.forbiddenTransitions],
+  () => [props.states, props.transitions, props.forbiddenTransitions, props.coverageData],
   () => {
     nextTick(() => renderChart())
   },

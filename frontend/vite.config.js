@@ -17,5 +17,17 @@ export default defineConfig({
         changeOrigin: true
       }
     }
+  },
+  build: {
+    chunkSizeWarningLimit: 1100,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          echarts: ['echarts'],
+          elementPlus: ['element-plus', '@element-plus/icons-vue'],
+          vendor: ['vue', 'vue-router', 'pinia', 'axios']
+        }
+      }
+    }
   }
 })

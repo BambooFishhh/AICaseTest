@@ -145,6 +145,13 @@
       </el-row>
     </el-card>
 
+    <!-- v1.5: 覆盖率矩阵 -->
+    <CoverageMatrix
+      v-if="coverageMatrix"
+      :matrix="coverageMatrix"
+      @filter-by-ids="handleFilterByIds"
+    />
+
     <el-alert
       v-if="pollingMessage"
       :title="pollingMessage"
@@ -232,6 +239,8 @@ import { listTestCases, triggerGenerate, deleteTestCase, batchDeleteTestCases } 
 import { generateMindmap } from '@/api/mindmap'
 import { useProjectStore } from '@/stores/project'
 import TestCaseCard from '@/components/TestCaseCard.vue'
+import CoverageMatrix from '@/components/CoverageMatrix.vue'
+import { getCoverageMatrix } from '@/api/coverage'
 
 const route = useRoute()
 const router = useRouter()
@@ -257,6 +266,18 @@ const currentTestCase = ref(null)
 
 // v1.4: 批量操作选中行
 const selectedRows = ref([])
+
+// v1.5: 覆盖率矩阵
+const coverageMatrix = ref(null)
+
+async function loadCoverageMatrix() {
+  try {
+    const res = await getCoverageMatrix(projectId)
+    coverageMatrix.value = res.data
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+}
 
 function handleSelectionChange(rows) {
   selectedRows.value = rows
@@ -428,6 +449,17 @@ async function handleExportSelected() {
   }
 }
 
+// v1.5: 按用例ID筛选（从覆盖率矩阵跳转）
+function handleFilterByIds(ids) {
+  // 加载全部用例后在内存中按 ids 筛选
+  const all = allTestCases.value.filter((tc) => ids.includes(tc.id))
+  // 设置 keyword 为第一个 id 来触发筛选
+  if (ids.length > 0) {
+    filters.keyword = ids[0]
+    handleFilter()
+  }
+}
+
 async function handleRegenerate() {
   try {
     await ElMessageBox.confirm(
@@ -449,7 +481,7 @@ async function handleRegenerate() {
       if (status === 'completed') {
         ElMessage.success('用例生成完成')
         page.value = 1
-        await Promise.all([loadList(), loadAllForStats()])
+        await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
       } else if (status === 'failed') {
         ElMessage.error('用例生成失败')
       }
@@ -470,7 +502,7 @@ async function handleGenerateMindmap() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadList(), loadAllForStats()])
+  await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
 })
 
 onUnmounted(() => {

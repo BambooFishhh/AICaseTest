@@ -36,6 +36,12 @@ const routes = [
     meta: { title: '测试用例' }
   },
   {
+    path: '/projects/:id/state-machines',
+    name: 'StateMachineOverview',
+    component: () => import('@/views/StateMachineOverview.vue'),
+    meta: { title: '状态机覆盖图' }
+  },
+  {
     path: '/projects/:id/mindmap',
     name: 'MindMapPreview',
     component: () => import('@/views/MindMapPreview.vue'),
