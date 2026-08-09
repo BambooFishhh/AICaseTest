@@ -43,6 +43,21 @@ public class TestCase {
 
     private double confidence = 0.0;
 
+    @Column(name = "structured_steps", columnDefinition = "TEXT")
+    private String structuredSteps = "[]";
+
+    @Column(name = "api_endpoints", columnDefinition = "TEXT")
+    private String apiEndpoints = "[]";
+
+    @Column(name = "test_data", columnDefinition = "TEXT")
+    private String testData = "{}";
+
+    @Column(name = "execution_hints", columnDefinition = "TEXT")
+    private String executionHints = "{}";
+
+    @Column(name = "execution_status")
+    private String executionStatus = "not_executed";
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 }

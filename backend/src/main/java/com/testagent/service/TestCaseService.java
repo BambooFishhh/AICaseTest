@@ -153,6 +153,21 @@ public class TestCaseService {
         if (req.getExpectedResults() != null) {
             tc.setExpectedResults(toJson(req.getExpectedResults()));
         }
+        if (req.getStructuredSteps() != null) {
+            tc.setStructuredSteps(toJson(req.getStructuredSteps()));
+        }
+        if (req.getApiEndpoints() != null) {
+            tc.setApiEndpoints(toJson(req.getApiEndpoints()));
+        }
+        if (req.getTestData() != null) {
+            tc.setTestData(toJson(req.getTestData()));
+        }
+        if (req.getExecutionHints() != null) {
+            tc.setExecutionHints(toJson(req.getExecutionHints()));
+        }
+        if (req.getExecutionStatus() != null) {
+            tc.setExecutionStatus(req.getExecutionStatus());
+        }
 
         testCaseRepository.save(tc);
         return TestCaseDTO.from(tc);

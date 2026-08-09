@@ -3,6 +3,7 @@ package com.testagent.dto;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 @Data
 public class UpdateTestCaseRequest {
@@ -20,4 +21,14 @@ public class UpdateTestCaseRequest {
     private List<String> steps;
 
     private List<String> expectedResults;
+
+    private List<Map<String, Object>> structuredSteps;
+
+    private List<Map<String, Object>> apiEndpoints;
+
+    private Map<String, Object> testData;
+
+    private Map<String, Object> executionHints;
+
+    private String executionStatus;
 }

@@ -32,6 +32,16 @@ public class TestCaseDTO {
 
     private Map<String, Object> stateMachineRef;
 
+    private List<Map<String, Object>> structuredSteps;
+
+    private List<Map<String, Object>> apiEndpoints;
+
+    private Map<String, Object> testData;
+
+    private Map<String, Object> executionHints;
+
+    private String executionStatus;
+
     private String source;
 
     private Double confidence;
@@ -53,6 +63,11 @@ public class TestCaseDTO {
                 .steps(JsonHelper.parseListString(entity.getSteps()))
                 .expectedResults(JsonHelper.parseListString(entity.getExpectedResults()))
                 .stateMachineRef(JsonHelper.parseMap(entity.getStateMachineRef()))
+                .structuredSteps(JsonHelper.parseListMap(entity.getStructuredSteps()))
+                .apiEndpoints(JsonHelper.parseListMap(entity.getApiEndpoints()))
+                .testData(JsonHelper.parseMap(entity.getTestData()))
+                .executionHints(JsonHelper.parseMap(entity.getExecutionHints()))
+                .executionStatus(entity.getExecutionStatus())
                 .source(entity.getSource())
                 .confidence(entity.getConfidence())
                 .createdAt(entity.getCreatedAt())

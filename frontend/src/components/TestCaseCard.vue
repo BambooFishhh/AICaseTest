@@ -39,6 +39,11 @@
           />
           <span v-else>-</span>
         </el-descriptions-item>
+        <el-descriptions-item label="执行状态">
+          <el-tag :type="getExecutionStatusTagType(testCase.executionStatus)" size="small">
+            {{ getExecutionStatusLabel(testCase.executionStatus) }}
+          </el-tag>
+        </el-descriptions-item>
       </el-descriptions>
 
       <el-divider content-position="left">前置条件</el-divider>
@@ -50,7 +55,42 @@
       <el-empty v-else description="无前置条件" :image-size="60" />
 
       <el-divider content-position="left">测试步骤</el-divider>
-      <ol v-if="testCase.steps && testCase.steps.length" class="numbered-list">
+      <!-- 结构化步骤（v1.1） -->
+      <div v-if="hasStructuredSteps" class="structured-steps">
+        <div
+          v-for="step in testCase.structuredSteps"
+          :key="'sstep-' + step.order"
+          class="step-card"
+        >
+          <div class="step-header">
+            <el-tag size="small" type="info">{{ step.order }}</el-tag>
+            <span class="step-action">{{ step.action }}</span>
+            <el-tag
+              v-if="step.type"
+              :type="getStepTypeTagType(step.type)"
+              size="small"
+            >
+              {{ getStepTypeLabel(step.type) }}
+            </el-tag>
+          </div>
+          <div class="step-body">
+            <div v-if="step.target" class="step-row">
+              <span class="step-label">目标:</span>
+              <code>{{ step.target }}</code>
+            </div>
+            <div v-if="step.expected" class="step-row">
+              <span class="step-label">预期:</span>
+              <span>{{ step.expected }}</span>
+            </div>
+            <div v-if="hasStepData(step.data)" class="step-row">
+              <span class="step-label">数据:</span>
+              <code>{{ JSON.stringify(step.data) }}</code>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- 回退：纯文本步骤 -->
+      <ol v-else-if="testCase.steps && testCase.steps.length" class="numbered-list">
         <li v-for="(step, idx) in testCase.steps" :key="'step-' + idx">
           {{ step }}
         </li>
@@ -67,6 +107,52 @@
         </li>
       </ol>
       <el-empty v-else description="无预期结果" :image-size="60" />
+
+      <!-- 关联接口（v1.1） -->
+      <template v-if="hasApiEndpoints">
+        <el-divider content-position="left">关联接口</el-divider>
+        <div class="api-endpoints">
+          <el-tag
+            v-for="(ep, i) in testCase.apiEndpoints"
+            :key="'api-' + i"
+            :type="getMethodTagType(ep.method)"
+            class="api-tag"
+          >
+            <strong>{{ ep.method }}</strong> {{ ep.path }}
+          </el-tag>
+        </div>
+      </template>
+
+      <!-- 执行提示（v1.1） -->
+      <template v-if="hasExecutionHints">
+        <el-divider content-position="left">执行提示</el-divider>
+        <el-alert
+          :type="getApproachAlertType(testCase.executionHints.approach)"
+          :closable="false"
+          show-icon
+        >
+          <template #title>
+            推荐执行方式: {{ getApproachLabel(testCase.executionHints.approach) }}
+          </template>
+          <div v-if="testCase.executionHints.notes" class="hint-notes">
+            {{ testCase.executionHints.notes }}
+          </div>
+        </el-alert>
+      </template>
+
+      <!-- 测试数据（v1.1） -->
+      <template v-if="hasTestData">
+        <el-divider content-position="left">测试数据</el-divider>
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item
+            v-for="(val, key) in testCase.testData"
+            :key="'td-' + key"
+            :label="key"
+          >
+            {{ typeof val === 'object' ? JSON.stringify(val) : val }}
+          </el-descriptions-item>
+        </el-descriptions>
+      </template>
 
       <el-divider content-position="left">状态机引用</el-divider>
       <div v-if="hasStateMachineRef" class="state-machine-ref">
@@ -367,6 +453,99 @@ const getConfidenceStatus = (confidence) => {
   return 'exception'
 }
 
+// ========== v1.1 结构化字段计算属性 ==========
+const hasStructuredSteps = computed(() =>
+  Array.isArray(props.testCase?.structuredSteps) &&
+  props.testCase.structuredSteps.length > 0
+)
+const hasApiEndpoints = computed(() =>
+  Array.isArray(props.testCase?.apiEndpoints) &&
+  props.testCase.apiEndpoints.length > 0
+)
+const hasExecutionHints = computed(() => {
+  const h = props.testCase?.executionHints
+  return h && typeof h === 'object' && h.approach
+})
+const hasTestData = computed(() => {
+  const d = props.testCase?.testData
+  return d && typeof d === 'object' && Object.keys(d).length > 0
+})
+
+// 步骤是否有数据
+const hasStepData = (data) => {
+  return data && typeof data === 'object' && Object.keys(data).length > 0
+}
+
+// ========== v1.1 辅助方法 ==========
+// 步骤类型标签文案
+const getStepTypeLabel = (type) => {
+  const map = {
+    api_call: '接口调用',
+    ui_action: '界面操作',
+    state_assert: '状态断言',
+    manual: '人工'
+  }
+  return map[type] || type || '-'
+}
+// 步骤类型标签颜色
+const getStepTypeTagType = (type) => {
+  const map = {
+    api_call: 'success',
+    ui_action: 'warning',
+    state_assert: 'primary',
+    manual: 'info'
+  }
+  return map[type] || 'info'
+}
+// HTTP method 标签颜色
+const getMethodTagType = (method) => {
+  const m = (method || '').toUpperCase()
+  if (m === 'GET') return 'success'
+  if (m === 'POST') return 'warning'
+  if (m === 'PUT' || m === 'DELETE') return 'danger'
+  return 'info'
+}
+// 执行方式标签文案
+const getApproachLabel = (approach) => {
+  const map = {
+    api_call: '接口调用',
+    browser: '浏览器操作',
+    manual: '人工执行'
+  }
+  return map[approach] || approach || '-'
+}
+// 执行方式 alert 类型
+const getApproachAlertType = (approach) => {
+  const map = {
+    api_call: 'success',
+    browser: 'warning',
+    manual: 'info'
+  }
+  return map[approach] || 'info'
+}
+// 执行状态标签文案
+const getExecutionStatusLabel = (status) => {
+  const map = {
+    not_executed: '未执行',
+    running: '执行中',
+    passed: '通过',
+    failed: '失败',
+    blocked: '阻塞'
+  }
+  return map[status] || '未执行'
+}
+// 执行状态标签颜色
+const getExecutionStatusTagType = (status) => {
+  const map = {
+    passed: 'success',
+    failed: 'danger',
+    running: 'warning',
+    blocked: 'info',
+    not_executed: 'info'
+  }
+  return map[status] || 'info'
+}
+
 // 进入编辑模式：克隆 props 数据到表单
 const enterEditMode = () => {
   const tc = props.testCase || {}
@@ -489,5 +668,66 @@ watch(
   border: 1px solid #ebeef5;
   border-radius: 4px;
   padding: 8px;
+}
+
+/* v1.1 结构化步骤样式 */
+.structured-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.step-card {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #fafafa;
+}
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.step-action {
+  font-weight: 600;
+  color: #303133;
+  flex: 1;
+}
+.step-body {
+  padding-left: 4px;
+}
+.step-row {
+  margin-bottom: 4px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.step-row .step-label {
+  color: #909399;
+  margin-right: 6px;
+}
+.step-row code {
+  background: #f0f0f0;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  color: #e63946;
+}
+
+/* v1.1 关联接口样式 */
+.api-endpoints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.api-tag {
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+/* v1.1 执行提示样式 */
+.hint-notes {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #606266;
 }
 </style>
