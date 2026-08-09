@@ -4,6 +4,35 @@
 
 ---
 
+## v1.12 — VueAnalyzer LLM 增强
+
+**日期**: 2026-08-09
+**基线**: v1.11
+**迭代主题**: 正则先提取 + LLM 补充，提升前端分析覆盖率
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `service/LlmService.java` | 新增 `isConfigured()` 方法 | 供 VueAnalyzer 判断是否可调用 LLM |
+| `analyzer/VueAnalyzer.java` | 注入 LlmService + 新增 enhanceWithLlm/collectSourceSnippets/parseAndMergeSupplements/parseFields/parseSelectors 5 个方法 | 正则提取后用 LLM 补充遗漏内容（非 Element Plus 组件、Composition API 状态、动态路由等） |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（2.2s）
+
+### 向后兼容
+- LLM 未配置 API Key 时跳过增强步骤，行为同 v1.11
+- LLM 调用失败时降级为纯正则结果
+- FrontendResult 数据模型不变，前端无改动
+
+### 范围说明
+- In Scope：VueAnalyzer LLM 补充逻辑（正则结果 + 源码摘要 → LLM → 合并去重）
+- Out of Scope：前端 UI 变更、非 Vue 框架支持、AST 解析
+
+---
+
 ## v1.11 — 前端代码分析 Agent
 
 **日期**: 2026-08-09

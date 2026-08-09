@@ -49,6 +49,11 @@ public class LlmService {
                 .build();
     }
 
+    // v1.12: 供 VueAnalyzer 等组件判断是否可调用 LLM
+    public boolean isConfigured() {
+        return apiKey != null && !apiKey.isBlank();
+    }
+
     // v1.4: 重试配置
     private static final int MAX_RETRIES = 3;
     private static final long[] RETRY_DELAYS_MS = {1000, 2000, 4000};

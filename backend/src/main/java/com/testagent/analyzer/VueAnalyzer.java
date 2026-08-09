@@ -1,6 +1,12 @@
 package com.testagent.analyzer;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.analyzer.result.FrontendResult;
+import com.testagent.service.LlmService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -9,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -16,6 +23,11 @@ import java.util.regex.Pattern;
 
 @Component
 public class VueAnalyzer {
+
+    private static final Logger log = LoggerFactory.getLogger(VueAnalyzer.class);
+
+    @Autowired
+    private LlmService llmService;
 
     private static final Pattern VUE_VERSION_PATTERN =
             Pattern.compile("\"vue\"\\s*:\\s*\"([^\"]+)\"");
@@ -42,6 +54,15 @@ public class VueAnalyzer {
         List<Map<String, Object>> componentStates = extractComponentStates(dir);
         List<Map<String, Object>> domSelectors = extractDomSelectors(dir);
         List<Map<String, Object>> pageFlows = extractPageFlows(dir);
+
+        // v1.12: LLM 补充正则遗漏的内容
+        if (llmService.isConfigured()) {
+            try {
+                enhanceWithLlm(forms, componentStates, domSelectors, pageFlows, dir);
+            } catch (Exception e) {
+                log.warn("LLM enhancement failed, using regex-only results: {}", e.getMessage());
+            }
+        }
 
         return FrontendResult.builder()
                 .techStack(techStack)
@@ -784,5 +805,235 @@ public class VueAnalyzer {
             }
         }
         return map;
+    }
+
+    // ==================== v1.12 LLM 增强方法 ====================
+
+    // v1.12: 用 LLM 补充正则遗漏的前端分析结果
+    private void enhanceWithLlm(List<Map<String, Object>> forms,
+                                List<Map<String, Object>> componentStates,
+                                List<Map<String, Object>> domSelectors,
+                                List<Map<String, Object>> pageFlows,
+                                File dir) {
+        // 1. 收集 .vue 文件源码摘要
+        String sourceSnippets = collectSourceSnippets(dir);
+        if (sourceSnippets.isBlank()) return;
+
+        // 2. 构建 prompt
+        String systemPrompt = "你是前端代码分析专家。正则已提取了部分结果，请你阅读源码，补充正则遗漏的内容。\n"
+            + "只返回正则没提取到的，不要重复已有结果。\n"
+            + "返回纯 JSON（不要 markdown 代码块）：\n"
+            + "{\"supplementalForms\":[{\"component\":\"\",\"fields\":[{\"name\":\"\",\"type\":\"\",\"label\":\"\",\"required\":false,\"rules\":[]}],\"file\":\"\"}],"
+            + "\"supplementalStates\":[{\"component\":\"\",\"type\":\"\",\"stateVar\":\"\",\"trigger\":\"\",\"file\":\"\"}],"
+            + "\"supplementalSelectors\":[{\"component\":\"\",\"selectors\":[{\"type\":\"\",\"value\":\"\",\"element\":\"\"}],\"file\":\"\"}],"
+            + "\"supplementalFlows\":[{\"from\":\"\",\"to\":\"\",\"trigger\":\"\",\"component\":\"\",\"file\":\"\"}]}";
+
+        // 构建正则已有结果的摘要
+        StringBuilder regexSummary = new StringBuilder();
+        regexSummary.append("正则已提取结果：\n");
+        regexSummary.append("forms: ").append(forms.size()).append(" 个\n");
+        // 列出已有 component 名，让 LLM 知道哪些已提取
+        forms.forEach(f -> regexSummary.append("  - ").append(f.get("component")).append("\n"));
+        regexSummary.append("componentStates: ").append(componentStates.size()).append(" 个\n");
+        componentStates.forEach(s -> regexSummary.append("  - ").append(s.get("component")).append(":").append(s.get("type")).append("\n"));
+        regexSummary.append("domSelectors: ").append(domSelectors.size()).append(" 个\n");
+        domSelectors.forEach(s -> regexSummary.append("  - ").append(s.get("component")).append("\n"));
+        regexSummary.append("pageFlows: ").append(pageFlows.size()).append(" 个\n");
+
+        String userPrompt = regexSummary.toString() + "\n源码摘要：\n" + sourceSnippets
+            + "\n\n请分析源码，补充正则遗漏的表单字段、组件交互状态、DOM选择器、页面跳转。只返回补充内容，不要重复已有的。";
+
+        // 3. 调 LLM
+        String response = llmService.chat(systemPrompt, userPrompt, 0.3);
+
+        // 4. 解析 JSON 并合并
+        parseAndMergeSupplements(response, forms, componentStates, domSelectors, pageFlows);
+    }
+
+    // v1.12: 收集 .vue 文件源码摘要，每文件截断 1500 字符，总计上限 12000 字符
+    private String collectSourceSnippets(File dir) {
+        List<File> vueFiles = new ArrayList<>();
+        collectVueFiles(dir, vueFiles);
+
+        StringBuilder sb = new StringBuilder();
+        int totalChars = 0;
+        int maxTotal = 12000;
+
+        for (File file : vueFiles) {
+            if (totalChars >= maxTotal) break;
+            try {
+                String content = readFile(file);
+                String component = file.getName().replace(".vue", "");
+
+                // 截取 template 部分（最多 800 字符）
+                int templateStart = content.indexOf("<template>");
+                int templateEnd = content.indexOf("</template>");
+                String template = "";
+                if (templateStart >= 0 && templateEnd > templateStart) {
+                    template = content.substring(templateStart, Math.min(templateEnd + 11, templateStart + 811));
+                }
+
+                // 截取 script 部分（最多 700 字符）
+                int scriptStart = content.indexOf("<script");
+                int scriptEnd = content.indexOf("</script>");
+                String script = "";
+                if (scriptStart >= 0 && scriptEnd > scriptStart) {
+                    script = content.substring(scriptStart, Math.min(scriptEnd + 9, scriptStart + 709));
+                }
+
+                String snippet = "=== " + component + ".vue ===\n" + template + "\n" + script + "\n\n";
+                if (totalChars + snippet.length() > maxTotal) {
+                    snippet = snippet.substring(0, maxTotal - totalChars);
+                }
+                sb.append(snippet);
+                totalChars += snippet.length();
+            } catch (Exception e) {
+                // 跳过读取失败的文件
+            }
+        }
+        return sb.toString();
+    }
+
+    // v1.12: 解析 LLM 返回的补充结果并合并到正则结果中
+    @SuppressWarnings("unchecked")
+    private void parseAndMergeSupplements(String response,
+                                           List<Map<String, Object>> forms,
+                                           List<Map<String, Object>> componentStates,
+                                           List<Map<String, Object>> domSelectors,
+                                           List<Map<String, Object>> pageFlows) {
+        // 提取 JSON（可能被包在 markdown 代码块中）
+        String json = response.trim();
+        if (json.startsWith("```")) {
+            int start = json.indexOf("{");
+            int end = json.lastIndexOf("}");
+            if (start >= 0 && end > start) {
+                json = json.substring(start, end + 1);
+            }
+        }
+
+        JsonNode root;
+        try {
+            root = new ObjectMapper().readTree(json);
+        } catch (Exception e) {
+            log.warn("Failed to parse LLM supplement JSON: {}", e.getMessage());
+            return;
+        }
+
+        // 合并 forms（按 component 去重）
+        if (root.has("supplementalForms") && root.get("supplementalForms").isArray()) {
+            for (JsonNode node : root.get("supplementalForms")) {
+                String component = node.path("component").asText("");
+                if (component.isEmpty()) continue;
+                // 检查是否已存在
+                boolean exists = forms.stream()
+                    .anyMatch(f -> component.equals(f.get("component")));
+                if (!exists) {
+                    Map<String, Object> form = new LinkedHashMap<>();
+                    form.put("component", component);
+                    form.put("fields", parseFields(node.path("fields")));
+                    form.put("file", node.path("file").asText(""));
+                    forms.add(form);
+                    log.info("LLM supplemented form: {}", component);
+                }
+            }
+        }
+
+        // 合并 componentStates（按 component + type 去重）
+        if (root.has("supplementalStates") && root.get("supplementalStates").isArray()) {
+            for (JsonNode node : root.get("supplementalStates")) {
+                String component = node.path("component").asText("");
+                String type = node.path("type").asText("");
+                if (component.isEmpty() || type.isEmpty()) continue;
+                boolean exists = componentStates.stream()
+                    .anyMatch(s -> component.equals(s.get("component")) && type.equals(s.get("type")));
+                if (!exists) {
+                    Map<String, Object> state = new LinkedHashMap<>();
+                    state.put("component", component);
+                    state.put("type", type);
+                    state.put("stateVar", node.path("stateVar").asText(""));
+                    state.put("trigger", node.path("trigger").asText(""));
+                    state.put("file", node.path("file").asText(""));
+                    componentStates.add(state);
+                    log.info("LLM supplemented state: {} ({})", component, type);
+                }
+            }
+        }
+
+        // 合并 domSelectors（按 component 去重）
+        if (root.has("supplementalSelectors") && root.get("supplementalSelectors").isArray()) {
+            for (JsonNode node : root.get("supplementalSelectors")) {
+                String component = node.path("component").asText("");
+                if (component.isEmpty()) continue;
+                boolean exists = domSelectors.stream()
+                    .anyMatch(s -> component.equals(s.get("component")));
+                if (!exists) {
+                    Map<String, Object> sel = new LinkedHashMap<>();
+                    sel.put("component", component);
+                    sel.put("selectors", parseSelectors(node.path("selectors")));
+                    sel.put("file", node.path("file").asText(""));
+                    domSelectors.add(sel);
+                    log.info("LLM supplemented selectors: {}", component);
+                }
+            }
+        }
+
+        // 合并 pageFlows（按 from + to 去重）
+        if (root.has("supplementalFlows") && root.get("supplementalFlows").isArray()) {
+            for (JsonNode node : root.get("supplementalFlows")) {
+                String from = node.path("from").asText("");
+                String to = node.path("to").asText("");
+                if (from.isEmpty() || to.isEmpty()) continue;
+                boolean exists = pageFlows.stream()
+                    .anyMatch(f -> from.equals(f.get("from")) && to.equals(f.get("to")));
+                if (!exists) {
+                    Map<String, Object> flow = new LinkedHashMap<>();
+                    flow.put("from", from);
+                    flow.put("to", to);
+                    flow.put("trigger", node.path("trigger").asText(""));
+                    flow.put("component", node.path("component").asText(""));
+                    flow.put("file", node.path("file").asText(""));
+                    pageFlows.add(flow);
+                    log.info("LLM supplemented flow: {} -> {}", from, to);
+                }
+            }
+        }
+    }
+
+    // v1.12: 解析 LLM 返回的 fields 数组
+    private List<Map<String, Object>> parseFields(JsonNode fieldsNode) {
+        List<Map<String, Object>> fields = new ArrayList<>();
+        if (fieldsNode != null && fieldsNode.isArray()) {
+            for (JsonNode f : fieldsNode) {
+                Map<String, Object> field = new LinkedHashMap<>();
+                field.put("name", f.path("name").asText(""));
+                field.put("type", f.path("type").asText("input"));
+                field.put("label", f.path("label").asText(""));
+                field.put("required", f.path("required").asBoolean(false));
+                List<String> rules = new ArrayList<>();
+                if (f.has("rules") && f.get("rules").isArray()) {
+                    for (JsonNode r : f.get("rules")) {
+                        rules.add(r.asText());
+                    }
+                }
+                field.put("rules", rules);
+                fields.add(field);
+            }
+        }
+        return fields;
+    }
+
+    // v1.12: 解析 LLM 返回的 selectors 数组
+    private List<Map<String, Object>> parseSelectors(JsonNode selectorsNode) {
+        List<Map<String, Object>> selectors = new ArrayList<>();
+        if (selectorsNode != null && selectorsNode.isArray()) {
+            for (JsonNode s : selectorsNode) {
+                Map<String, Object> sel = new LinkedHashMap<>();
+                sel.put("type", s.path("type").asText(""));
+                sel.put("value", s.path("value").asText(""));
+                sel.put("element", s.path("element").asText(""));
+                selectors.add(sel);
+            }
+        }
+        return selectors;
     }
 }
