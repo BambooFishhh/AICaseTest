@@ -4,6 +4,35 @@
 
 ---
 
+## v1.3 — 用例体验增强
+
+**日期**: 2026-08-09
+**基线**: v1.2
+**迭代主题**: 提升用例日常使用体验——搜索、安全确认、结构化步骤可编辑、上下条导航、单个删除
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `controller/TestCaseController.java` | 新增 `DELETE /{testcaseId}` 接口；`listTestCases` 新增 `keyword` 参数 | 支持删除单个用例、关键字搜索 |
+| `service/TestCaseService.java` | 新增 `deleteTestCase()`；`listTestCases` 新增 keyword 模糊过滤（标题/模块） | 删除能力 + 搜索过滤 |
+
+#### 前端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `api/testcase.js` | 新增 `deleteTestCase()` API | 调用删除接口 |
+| `views/TestCaseList.vue` | 重新生成增加 `ElMessageBox.confirm` 确认；筛选区新增搜索输入框（keyword）；对话框新增 `canGoPrev/canGoNext` props 传递 + `@delete/@prev/@next` 事件监听；新增 `currentIndex`/`handlePrev`/`handleNext`/`handleDeleteTestCase` | 防误操作丢失数据、搜索用例、导航与删除 |
+| `components/TestCaseCard.vue` | 新增 `canGoPrev/canGoNext` props + `delete/prev/next` emits；编辑模式新增结构化步骤编辑器（增删改 action/target/expected/type）；对话框 footer 新增删除按钮 + 上一条/下一条按钮；`handleSave` 提交 structuredSteps | 结构化步骤可编辑、删除用例、详情内导航 |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（58 源文件）
+- 前端构建：`npm run build` 成功（17.91s）
+
+---
+
 ## v1.2 — 用例生成质量增强
 
 **日期**: 2026-08-09

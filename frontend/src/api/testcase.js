@@ -15,3 +15,7 @@ export function getTestCase(projectId, tcId) {
 export function updateTestCase(projectId, tcId, data) {
   return request.put(`/projects/${projectId}/testcases/${tcId}`, data)
 }
+
+export function deleteTestCase(projectId, tcId) {
+  return request.delete(`/projects/${projectId}/testcases/${tcId}`)
+}

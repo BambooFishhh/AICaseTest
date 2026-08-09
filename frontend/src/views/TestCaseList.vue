@@ -76,7 +76,7 @@
 
     <el-card class="filter-card">
       <el-row :gutter="16">
-        <el-col :xs="24" :sm="8">
+        <el-col :xs="24" :sm="6">
           <el-select
             v-model="filters.module"
             placeholder="模块筛选"
@@ -87,7 +87,7 @@
             <el-option v-for="m in moduleOptions" :key="m" :label="m" :value="m" />
           </el-select>
         </el-col>
-        <el-col :xs="24" :sm="8">
+        <el-col :xs="24" :sm="6">
           <el-select
             v-model="filters.type"
             placeholder="类型筛选"
@@ -101,7 +101,7 @@
             <el-option label="数据" value="data" />
           </el-select>
         </el-col>
-        <el-col :xs="24" :sm="8">
+        <el-col :xs="24" :sm="6">
           <el-select
             v-model="filters.priority"
             placeholder="优先级筛选"
@@ -113,6 +113,19 @@
             <el-option label="P2" value="P2" />
             <el-option label="P3" value="P3" />
           </el-select>
+        </el-col>
+        <el-col :xs="24" :sm="6">
+          <el-input
+            v-model="filters.keyword"
+            placeholder="搜索用例标题/模块"
+            clearable
+            @keyup.enter="handleFilter"
+            @clear="handleFilter"
+          >
+            <template #append>
+              <el-button :icon="Search" @click="handleFilter" />
+            </template>
+          </el-input>
         </el-col>
       </el-row>
     </el-card>
@@ -181,8 +194,13 @@
         v-if="currentTestCase"
         :test-case="currentTestCase"
         :editable="true"
+        :can-go-prev="currentIndex > 0"
+        :can-go-next="currentIndex < testCases.length - 1"
         @save="handleSaveTestCase"
         @close="dialogVisible = false"
+        @delete="handleDeleteTestCase"
+        @prev="handlePrev"
+        @next="handleNext"
       />
     </el-dialog>
   </div>
@@ -191,8 +209,9 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { listTestCases, triggerGenerate } from '@/api/testcase'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search } from '@element-plus/icons-vue'
+import { listTestCases, triggerGenerate, deleteTestCase } from '@/api/testcase'
 import { generateMindmap } from '@/api/mindmap'
 import { useProjectStore } from '@/stores/project'
 import TestCaseCard from '@/components/TestCaseCard.vue'
@@ -214,7 +233,7 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 
-const filters = reactive({ module: '', type: '', priority: '' })
+const filters = reactive({ module: '', type: '', priority: '', keyword: '' })
 
 const dialogVisible = ref(false)
 const currentTestCase = ref(null)
@@ -279,6 +298,7 @@ async function loadList() {
     const params = { page: page.value, pageSize: pageSize.value }
     if (filters.module) params.module = filters.module
     if (filters.type) params.type = filters.type
+    if (filters.keyword) params.keyword = filters.keyword
     const res = await listTestCases(projectId, params)
     const data = res.data || {}
     testCases.value = data.testCases || []
@@ -317,12 +337,49 @@ function handleRowClick(row) {
   dialogVisible.value = true
 }
 
+const currentIndex = computed(() => {
+  if (!currentTestCase.value) return -1
+  return testCases.value.findIndex((tc) => tc.id === currentTestCase.value.id)
+})
+
+function handlePrev() {
+  if (currentIndex.value > 0) {
+    currentTestCase.value = testCases.value[currentIndex.value - 1]
+  }
+}
+
+function handleNext() {
+  if (currentIndex.value < testCases.value.length - 1) {
+    currentTestCase.value = testCases.value[currentIndex.value + 1]
+  }
+}
+
+async function handleDeleteTestCase(testcaseId) {
+  try {
+    await deleteTestCase(projectId, testcaseId)
+    ElMessage.success('用例已删除')
+    dialogVisible.value = false
+    await Promise.all([loadList(), loadAllForStats()])
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+}
+
 async function handleSaveTestCase() {
   dialogVisible.value = false
   await Promise.all([loadList(), loadAllForStats()])
 }
 
 async function handleRegenerate() {
+  try {
+    await ElMessageBox.confirm(
+      '即将重新生成测试用例，当前所有用例（含人工修改）将被覆盖删除。确定要继续吗？',
+      '确认重新生成',
+      { confirmButtonText: '确定生成', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
   try {
     await triggerGenerate(projectId, {})
     ElMessage.success('用例生成已启动')
@@ -339,7 +396,7 @@ async function handleRegenerate() {
         ElMessage.error('用例生成失败')
       }
     })
-  } catch (e) {
+  } catch {
     // 错误已由响应拦截器统一提示
   }
 }

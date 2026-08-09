@@ -97,7 +97,7 @@ public class TestCaseService {
     }
 
     public TestCaseListResponse listTestCases(String projectId, int page, int pageSize,
-                                               String type, String module) {
+                                               String type, String module, String keyword) {
         List<TestCase> all = testCaseRepository.findByProjectId(projectId);
 
         if (type != null && !type.isBlank()) {
@@ -108,6 +108,13 @@ public class TestCaseService {
         if (module != null && !module.isBlank()) {
             all = all.stream()
                     .filter(tc -> module.equals(tc.getModule()))
+                    .collect(Collectors.toList());
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.toLowerCase();
+            all = all.stream()
+                    .filter(tc -> (tc.getTitle() != null && tc.getTitle().toLowerCase().contains(kw))
+                            || (tc.getModule() != null && tc.getModule().toLowerCase().contains(kw)))
                     .collect(Collectors.toList());
         }
 
@@ -136,6 +143,12 @@ public class TestCaseService {
     public TestCaseDTO getTestCase(String projectId, String testcaseId) {
         TestCase tc = findTestCase(projectId, testcaseId);
         return TestCaseDTO.from(tc);
+    }
+
+    @Transactional
+    public void deleteTestCase(String projectId, String testcaseId) {
+        TestCase tc = findTestCase(projectId, testcaseId);
+        testCaseRepository.delete(tc);
     }
 
     @Transactional

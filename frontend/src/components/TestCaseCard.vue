@@ -336,6 +336,58 @@
         >
           添加预期结果
         </el-button>
+
+        <el-divider content-position="left">结构化步骤（可执行）</el-divider>
+        <div
+          v-for="(step, idx) in formData.structuredSteps"
+          :key="'ss-' + idx"
+          class="edit-structured-step"
+        >
+          <div class="step-edit-header">
+            <span class="step-edit-index">步骤 {{ idx + 1 }}</span>
+            <el-button
+              type="danger"
+              :icon="Delete"
+              circle
+              size="small"
+              @click="removeStructuredStep(idx)"
+            />
+          </div>
+          <el-row :gutter="12">
+            <el-col :span="6">
+              <el-select v-model="step.type" placeholder="步骤类型" size="small" style="width: 100%">
+                <el-option label="接口调用" value="api_call" />
+                <el-option label="界面操作" value="ui_action" />
+                <el-option label="状态断言" value="state_assert" />
+                <el-option label="人工" value="manual" />
+              </el-select>
+            </el-col>
+            <el-col :span="18">
+              <el-input v-model="step.action" placeholder="动作描述" size="small" />
+            </el-col>
+          </el-row>
+          <el-input
+            v-model="step.target"
+            placeholder="操作目标，如 POST /api/order/create"
+            size="small"
+            class="step-edit-input"
+          />
+          <el-input
+            v-model="step.expected"
+            placeholder="预期结果"
+            size="small"
+            class="step-edit-input"
+          />
+        </div>
+        <el-button
+          type="primary"
+          plain
+          :icon="Plus"
+          size="small"
+          @click="addStructuredStep"
+        >
+          添加结构化步骤
+        </el-button>
       </el-form>
     </div>
 
@@ -343,9 +395,12 @@
       <div class="dialog-footer">
         <template v-if="!editMode">
           <el-button @click="handleClose">关闭</el-button>
+          <el-button type="danger" :icon="Delete" @click="handleDelete">删除</el-button>
           <el-button v-if="editable" type="primary" :icon="EditPen" @click="enterEditMode">
             编辑
           </el-button>
+          <el-button @click="goPrev" :disabled="!canGoPrev">上一条</el-button>
+          <el-button @click="goNext" :disabled="!canGoNext">下一条</el-button>
         </template>
         <template v-else>
           <el-button @click="cancelEdit">取消</el-button>
@@ -360,7 +415,7 @@
 
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, EditPen, Check } from '@element-plus/icons-vue'
 import StateMachineViewer from './StateMachineViewer.vue'
 
@@ -376,10 +431,18 @@ const props = defineProps({
   visible: {
     type: Boolean,
     default: false
+  },
+  canGoPrev: {
+    type: Boolean,
+    default: false
+  },
+  canGoNext: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['save', 'close'])
+const emit = defineEmits(['save', 'close', 'delete', 'prev', 'next'])
 
 // 编辑模式状态
 const editMode = ref(false)
@@ -394,6 +457,7 @@ const formData = reactive({
   preconditions: [],
   steps: [],
   expectedResults: [],
+  structuredSteps: [],
   stateMachineRef: null,
   source: '',
   confidence: 0
@@ -577,6 +641,9 @@ const enterEditMode = () => {
   formData.expectedResults = Array.isArray(tc.expectedResults)
     ? [...tc.expectedResults]
     : []
+  formData.structuredSteps = Array.isArray(tc.structuredSteps)
+    ? tc.structuredSteps.map((s) => ({ ...s, data: s.data || {} }))
+    : []
   formData.stateMachineRef = tc.stateMachineRef || null
   formData.source = tc.source || ''
   formData.confidence = typeof tc.confidence === 'number' ? tc.confidence : 0
@@ -599,6 +666,42 @@ const removeItem = (field, idx) => {
   formData[field].splice(idx, 1)
 }
 
+// v1.3 结构化步骤编辑
+const addStructuredStep = () => {
+  formData.structuredSteps.push({
+    order: formData.structuredSteps.length + 1,
+    action: '',
+    target: '',
+    expected: '',
+    data: {},
+    type: 'api_call'
+  })
+}
+const removeStructuredStep = (idx) => {
+  formData.structuredSteps.splice(idx, 1)
+  formData.structuredSteps.forEach((s, i) => {
+    s.order = i + 1
+  })
+}
+
+// v1.3 删除
+const handleDelete = async () => {
+  try {
+    await ElMessageBox.confirm('确定要删除该用例吗？此操作不可撤销。', '确认删除', {
+      confirmButtonText: '确定删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    emit('delete', props.testCase.id)
+  } catch {
+    // 取消
+  }
+}
+
+// v1.3 导航
+const goPrev = () => emit('prev')
+const goNext = () => emit('next')
+
 // 保存：同步置信度并发射事件
 const handleSave = () => {
   if (!formData.title) {
@@ -616,6 +719,7 @@ const handleSave = () => {
     preconditions: formData.preconditions.filter((s) => s.trim() !== ''),
     steps: formData.steps.filter((s) => s.trim() !== ''),
     expectedResults: formData.expectedResults.filter((s) => s.trim() !== ''),
+    structuredSteps: formData.structuredSteps.filter((s) => s.action.trim() !== ''),
     stateMachineRef: formData.stateMachineRef,
     source: formData.source,
     confidence: formData.confidence
@@ -677,6 +781,28 @@ watch(
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+/* v1.3 结构化步骤编辑 */
+.edit-structured-step {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: #fafafa;
+}
+.step-edit-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.step-edit-index {
+  font-weight: 600;
+  color: #409eff;
+}
+.step-edit-input {
+  margin-top: 6px;
 }
 
 .state-machine-ref {
