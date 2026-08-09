@@ -118,8 +118,17 @@ public class TestCaseService {
     }
 
     public TestCaseListResponse listTestCases(String projectId, int page, int pageSize,
-                                               String type, String module, String keyword) {
+                                               String type, String module, String keyword,
+                                               String reviewStatus) {
         List<TestCase> all = testCaseRepository.findByProjectId(projectId);
+
+        // v1.8: 评审状态筛选（历史数据 null 视为 draft）
+        if (reviewStatus != null && !reviewStatus.isBlank()) {
+            all = all.stream()
+                    .filter(tc -> reviewStatus.equals(
+                            tc.getReviewStatus() == null ? "draft" : tc.getReviewStatus()))
+                    .collect(Collectors.toList());
+        }
 
         if (type != null && !type.isBlank()) {
             all = all.stream()
@@ -363,6 +372,38 @@ public class TestCaseService {
         }
         String s = child.toString();
         return (s == null || s.isEmpty() || "null".equals(s)) ? defaultValue : s;
+    }
+
+    // ==================== v1.8: 评审状态流转 ====================
+
+    private static final Set<String> VALID_REVIEW_STATUSES =
+            Set.of("draft", "reviewed", "approved", "rejected");
+
+    @Transactional
+    public Map<String, Object> batchUpdateReviewStatus(String projectId, List<String> ids,
+                                                         String status, String reviewer) {
+        if (status == null || !VALID_REVIEW_STATUSES.contains(status)) {
+            throw BusinessException.invalidParam("非法的评审状态: " + status);
+        }
+        if (ids == null || ids.isEmpty()) {
+            throw BusinessException.invalidParam("ids 不能为空");
+        }
+        List<TestCase> all = testCaseRepository.findByProjectId(projectId);
+        int updated = 0;
+        for (TestCase tc : all) {
+            if (ids.contains(tc.getId())) {
+                tc.setReviewStatus(status);
+                testCaseRepository.save(tc);
+                updated++;
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("updated", updated);
+        result.put("status", status);
+        if (reviewer != null && !reviewer.isBlank()) {
+            result.put("reviewer", reviewer);
+        }
+        return result;
     }
 
     @Transactional

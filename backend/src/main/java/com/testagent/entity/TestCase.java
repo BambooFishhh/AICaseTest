@@ -58,6 +58,10 @@ public class TestCase {
     @Column(name = "execution_status")
     private String executionStatus = "not_executed";
 
+    // v1.8: 评审状态 draft/reviewed/approved/rejected
+    @Column(name = "review_status")
+    private String reviewStatus = "draft";
+
     @Column(name = "quality_score")
     private Integer qualityScore = 0;
 

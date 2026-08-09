@@ -31,6 +31,21 @@
         >
           复制到<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
         </el-button>
+        <!-- v1.8: 批量评审下拉 -->
+        <el-dropdown @command="handleReviewCommand" :disabled="selectedRows.length === 0">
+          <el-button :icon="Check">
+            批量评审<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="reviewed">标记为已评审</el-dropdown-item>
+              <el-dropdown-item command="approved">标记为已批准</el-dropdown-item>
+              <el-dropdown-item command="rejected">标记为已拒绝</el-dropdown-item>
+              <el-dropdown-item command="draft">重置为草稿</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <input
           ref="importFileInput"
           type="file"
@@ -149,6 +164,21 @@
             <el-option label="P3" value="P3" />
           </el-select>
         </el-col>
+        <!-- v1.8: 评审状态筛选 -->
+        <el-col :xs="24" :sm="6">
+          <el-select
+            v-model="filters.reviewStatus"
+            placeholder="评审状态筛选"
+            clearable
+            style="width: 100%"
+            @change="handleFilter"
+          >
+            <el-option label="草稿" value="draft" />
+            <el-option label="已评审" value="reviewed" />
+            <el-option label="已批准" value="approved" />
+            <el-option label="已拒绝" value="rejected" />
+          </el-select>
+        </el-col>
         <el-col :xs="24" :sm="6">
           <el-input
             v-model="filters.keyword"
@@ -223,6 +253,14 @@
           <span v-else class="text-muted">未评分</span>
         </template>
       </el-table-column>
+      <!-- v1.8: 评审状态列 -->
+      <el-table-column label="评审" width="100">
+        <template #default="{ row }">
+          <el-tag :type="reviewTagType(row.reviewStatus)" size="small">
+            {{ reviewText(row.reviewStatus) }}
+          </el-tag>
+        </template>
+      </el-table-column>
     </el-table>
 
     <el-pagination
@@ -269,7 +307,9 @@ import {
   Download,
   Upload,
   CopyDocument,
-  Document
+  Document,
+  Check,
+  ArrowDown
 } from '@element-plus/icons-vue'
 import {
   listTestCases,
@@ -278,7 +318,8 @@ import {
   batchDeleteTestCases,
   exportTestCases,
   importTestCases,
-  copyToProject
+  copyToProject,
+  reviewTestCases
 } from '@/api/testcase'
 import { listProjects } from '@/api/project'
 import { generateMindmap } from '@/api/mindmap'
@@ -310,7 +351,7 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 
-const filters = reactive({ module: '', type: '', priority: '', keyword: '' })
+const filters = reactive({ module: '', type: '', priority: '', keyword: '', reviewStatus: '' })
 
 const dialogVisible = ref(false)
 const currentTestCase = ref(null)
@@ -378,6 +419,43 @@ function priorityTagType(priority) {
   return 'info'
 }
 
+// v1.8: 评审状态标签
+function reviewTagType(status) {
+  return (
+    { draft: 'info', reviewed: 'warning', approved: 'success', rejected: 'danger' }[status] ||
+    'info'
+  )
+}
+function reviewText(status) {
+  return (
+    { draft: '草稿', reviewed: '已评审', approved: '已批准', rejected: '已拒绝' }[status] ||
+    status ||
+    '草稿'
+  )
+}
+
+// v1.8: 批量改评审状态
+async function handleReviewCommand(command) {
+  const ids = selectedRows.value.map((tc) => tc.id)
+  const text = { reviewed: '已评审', approved: '已批准', rejected: '已拒绝', draft: '草稿' }[command]
+  try {
+    await ElMessageBox.confirm(
+      `确定将选中的 ${ids.length} 条用例标记为「${text}」吗？`,
+      '确认批量评审',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const res = await reviewTestCases(projectId, ids, command, null)
+    ElMessage.success(`已更新 ${res.data.updated} 条用例状态为「${text}」`)
+    await Promise.all([loadList(), loadAllForStats()])
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+}
+
 // v1.2 覆盖率与质量颜色
 function coverageColor(rate) {
   if (rate >= 0.8) return '#67c23a'
@@ -397,6 +475,7 @@ async function loadList() {
     if (filters.module) params.module = filters.module
     if (filters.type) params.type = filters.type
     if (filters.keyword) params.keyword = filters.keyword
+    if (filters.reviewStatus) params.reviewStatus = filters.reviewStatus
     const res = await listTestCases(projectId, params)
     const data = res.data || {}
     testCases.value = data.testCases || []

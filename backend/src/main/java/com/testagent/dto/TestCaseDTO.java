@@ -42,6 +42,9 @@ public class TestCaseDTO {
 
     private String executionStatus;
 
+    // v1.8: 评审状态（draft/reviewed/approved/rejected）
+    private String reviewStatus;
+
     private Integer qualityScore;
 
     private String source;
@@ -70,6 +73,8 @@ public class TestCaseDTO {
                 .testData(JsonHelper.parseMap(entity.getTestData()))
                 .executionHints(JsonHelper.parseMap(entity.getExecutionHints()))
                 .executionStatus(entity.getExecutionStatus())
+                // v1.8: 历史数据 reviewStatus 为 null 时兜底为 draft
+                .reviewStatus(entity.getReviewStatus() == null ? "draft" : entity.getReviewStatus())
                 .qualityScore(entity.getQualityScore())
                 .source(entity.getSource())
                 .confidence(entity.getConfidence())

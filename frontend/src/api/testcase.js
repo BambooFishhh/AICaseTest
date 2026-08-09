@@ -60,3 +60,12 @@ export function copyToProject(projectId, ids, targetProjectId) {
     targetProjectId
   })
 }
+
+// v1.8: 批量改评审状态
+export function reviewTestCases(projectId, ids, status, reviewer) {
+  return request.post(`/projects/${projectId}/testcases/review`, {
+    ids,
+    status,
+    reviewer
+  })
+}

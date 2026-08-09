@@ -4,6 +4,41 @@
 
 ---
 
+## v1.8 — 用例评审状态流转
+
+**日期**: 2026-08-09
+**基线**: v1.7
+**迭代主题**: 用例评审状态（draft/reviewed/approved/rejected）+ 批量改状态 + 状态筛选
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `entity/TestCase.java` | 新增 `reviewStatus` 字段（默认 draft） | 持久化评审状态 |
+| `dto/TestCaseDTO.java` | 新增 `reviewStatus` 字段；`from()` 对 null 兜底为 draft | 透传评审状态，历史数据兼容 |
+| `dto/ReviewRequest.java` | 新建 DTO：ids + status + reviewer | 批量改评审状态请求体 |
+| `controller/TestCaseController.java` | `listTestCases` 新增 `reviewStatus` 筛选参数；新增 `POST /testcases/review` 批量改状态接口 | 状态筛选 + 批量评审入口 |
+| `service/TestCaseService.java` | `listTestCases` 增加 reviewStatus 筛选（null 视为 draft）；新增 `batchUpdateReviewStatus`（校验合法状态、按 ids 更新） | 评审状态过滤与批量更新逻辑 |
+
+#### 前端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `api/testcase.js` | 新增 `reviewTestCases(projectId, ids, status, reviewer)` | 批量评审接口封装 |
+| `views/TestCaseList.vue` | 表格新增"评审"列（彩色 tag）；筛选区新增评审状态下拉；header 新增批量评审下拉菜单（已评审/已批准/已拒绝/重置草稿）；新增 `reviewTagType`/`reviewText`/`handleReviewCommand`；filters 加 reviewStatus；loadList 传参 | 评审状态可视化展示、筛选、批量操作 |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（2.45s）
+- 前端构建：`npm run build` 成功（12.85s），TestCaseList 14KB→16.08KB，无 chunk 警告
+
+### 向后兼容
+- 历史用例 reviewStatus 为 null，DTO 兜底为 draft，前端展示为"草稿"
+- 全部为新增字段与接口，不破坏既有功能
+
+---
+
 ## v1.7 — 导入导出与协作增强
 
 **日期**: 2026-08-09

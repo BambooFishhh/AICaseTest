@@ -3,6 +3,7 @@ package com.testagent.controller;
 import com.testagent.common.ApiResponse;
 import com.testagent.dto.BatchDeleteRequest;
 import com.testagent.dto.CopyToRequest;
+import com.testagent.dto.ReviewRequest;
 import com.testagent.dto.TestCaseDTO;
 import com.testagent.dto.TestCaseListResponse;
 import com.testagent.dto.UpdateTestCaseRequest;
@@ -43,9 +44,10 @@ public class TestCaseController {
             @RequestParam(defaultValue = "20") int pageSize,
             @RequestParam(required = false) String type,
             @RequestParam(required = false) String module,
-            @RequestParam(required = false) String keyword) {
-        return ApiResponse.success(
-                testCaseService.listTestCases(projectId, page, pageSize, type, module, keyword));
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String reviewStatus) {
+        return ApiResponse.success(testCaseService.listTestCases(
+                projectId, page, pageSize, type, module, keyword, reviewStatus));
     }
 
     @GetMapping("/{testcaseId}")
@@ -103,5 +105,14 @@ public class TestCaseController {
             @RequestBody CopyToRequest req) {
         return ApiResponse.success(
                 testCaseService.copyToProject(projectId, req.getIds(), req.getTargetProjectId()));
+    }
+
+    // v1.8: 批量改评审状态
+    @PostMapping("/review")
+    public ApiResponse<Map<String, Object>> reviewTestCases(
+            @PathVariable String projectId,
+            @RequestBody ReviewRequest req) {
+        return ApiResponse.success(testCaseService.batchUpdateReviewStatus(
+                projectId, req.getIds(), req.getStatus(), req.getReviewer()));
     }
 }
