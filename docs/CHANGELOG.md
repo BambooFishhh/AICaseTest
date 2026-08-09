@@ -4,6 +4,31 @@
 
 ---
 
+## v2.7 — Playwright MCP Server + PlaywrightRecordSkill
+
+**日期**: 2026-08-09
+**基线**: v2.6
+**迭代主题**: 自建 Playwright MCP Server（9个工具）+ PlaywrightRecordSkill 封装 + 真正视频录屏
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `playwright-mcp-server/package.json` | 新建 | MCP Server 依赖配置（@modelcontextprotocol/sdk + playwright） |
+| `playwright-mcp-server/index.js` | 新建 | Playwright MCP Server（9个工具：launch/navigate/screenshot/visualClick/domClick/pageStatus/videoGetPath/videoSave/close） |
+| `skill/PlaywrightRecordSkill.java` | 新建 | Java 端封装，方法签名与 BrowserSkill 对齐，截图标注复用 Graphics2D |
+| `mcp/McpClientManager.java` | 修改 | 注册 "playwright" Server |
+| `resources/application.yml` | 修改 | 添加 playwright Server 配置 |
+
+### 验证
+- npm install: 成功（96 packages）
+- 后端编译: `mvn compile` BUILD SUCCESS (85 source files)
+- 前端: 无改动，跳过构建验证
+
+---
+
 ## v2.6 — MCP Client 多 Server 架构
 
 **日期**: 2026-08-09

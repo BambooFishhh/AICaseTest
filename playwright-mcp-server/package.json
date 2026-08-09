@@ -1,0 +1,13 @@
+{
+  "name": "aicasetest-playwright-mcp-server",
+  "version": "1.0.0",
+  "description": "AICaseTest Playwright MCP Server - 浏览器操作+视频录屏",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "playwright": "^1.62.0"
+  }
+}

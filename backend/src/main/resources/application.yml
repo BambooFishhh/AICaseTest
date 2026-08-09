@@ -28,6 +28,9 @@ mcp:
     llm:
       node-path: ${MCP_NODE_PATH:node}
       script-path: mcp-server/index.js
+    playwright:
+      node-path: ${MCP_NODE_PATH:node}
+      script-path: playwright-mcp-server/index.js
 logging:
   level:
     com.testagent: INFO

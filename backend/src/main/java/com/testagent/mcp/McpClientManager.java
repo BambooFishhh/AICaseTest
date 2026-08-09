@@ -39,6 +39,13 @@ public class McpClientManager {
     @Value("${llm.model:gpt-4o}")
     private String llmModel;
 
+    // v2.7: Playwright MCP Server 配置
+    @Value("${mcp.servers.playwright.node-path:node}")
+    private String playwrightNodePath;
+
+    @Value("${mcp.servers.playwright.script-path:playwright-mcp-server/index.js}")
+    private String playwrightScriptPath;
+
     @PostConstruct
     public void start() {
         // 创建并启动 "llm" Server
@@ -51,7 +58,12 @@ public class McpClientManager {
         llmConn.start();
         connections.put("llm", llmConn);
 
-        // v2.7 将在此处创建 "playwright" Server
+        // v2.7: 创建并启动 "playwright" Server
+        McpConnection playwrightConn = new McpConnection("playwright",
+                playwrightNodePath, playwrightScriptPath, null, new HashMap<>());
+        playwrightConn.start();
+        connections.put("playwright", playwrightConn);
+
         log.info("McpClientManager 启动完成，已注册 {} 个 Server", connections.size());
     }
 
