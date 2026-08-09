@@ -28,6 +28,12 @@ public class TestGeneratorAgent {
     private static final Logger log = LoggerFactory.getLogger(TestGeneratorAgent.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // v1.6: 进度回调接口，供调用方感知分模块生成进度
+    @FunctionalInterface
+    public interface ProgressCallback {
+        void update(String message);
+    }
+
     // v1.4: 结构化分段 system prompt
     private static final String SYSTEM_PROMPT = """
             # 角色
@@ -123,10 +129,21 @@ public class TestGeneratorAgent {
     // ==================== 主生成流程（v1.2 分模块生成） ====================
 
     public List<TestCase> generate(List<StateMachine> stateMachines, BackendResult backendResult) {
+        return generate(stateMachines, backendResult, null);
+    }
+
+    // v1.6: 支持 ProgressCallback 的重载，调用方可感知分模块生成进度
+    public List<TestCase> generate(List<StateMachine> stateMachines, BackendResult backendResult,
+                                   ProgressCallback progressCallback) {
         List<TestCase> result = new ArrayList<>();
 
         if (stateMachines != null && !stateMachines.isEmpty()) {
-            for (StateMachine sm : stateMachines) {
+            int total = stateMachines.size();
+            for (int i = 0; i < total; i++) {
+                StateMachine sm = stateMachines.get(i);
+                if (progressCallback != null) {
+                    progressCallback.update(String.format("正在生成第 %d/%d 个模块: %s", i + 1, total, sm.getName()));
+                }
                 List<TestCase> moduleCases;
                 try {
                     moduleCases = generateByLlmForStateMachine(sm, backendResult);
@@ -145,9 +162,15 @@ public class TestGeneratorAgent {
 
         // 无状态机时按 endpoints 生成
         if (result.isEmpty() && backendResult != null && backendResult.getEndpoints() != null) {
+            if (progressCallback != null) {
+                progressCallback.update("无状态机，按接口生成用例...");
+            }
             result = generateByEndpoints(backendResult);
         }
 
+        if (progressCallback != null) {
+            progressCallback.update("正在质量评分与去重...");
+        }
         // 质量评分（去重前计算，用于去重决策）
         calculateQualityScores(result);
 

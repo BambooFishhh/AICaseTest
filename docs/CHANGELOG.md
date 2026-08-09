@@ -4,6 +4,42 @@
 
 ---
 
+## v1.6 — 高可用增强
+
+**日期**: 2026-08-09
+**基线**: v1.5
+**迭代主题**: 错误详情存储与返回 + 生成进度反馈 + 并发提示优化 + 日志结构化
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `entity/Project.java` | 新增 `errorMessage`(TEXT) + `progress` 字段 | 持久化生成失败原因和实时进度 |
+| `dto/ProjectDTO.java` | 透传 `errorMessage` + `progress` | 前端轮询可读取 |
+| `repository/ProjectRepository.java` | 新增 `updateProgress` + `updateStatusWithError`，均带 `@Transactional` | 进度更新即时提交对前端可见；失败时原子更新 status+errorMessage 并清空 progress |
+| `agent/TestGeneratorAgent.java` | 新增 `ProgressCallback` 函数式接口 + `generate(states, result, callback)` 重载；原方法委托新方法传 null | 分模块生成时实时回调进度，不破坏既有调用 |
+| `service/TestCaseService.java` | `runGenerate` 增加进度更新（解析/分模块/保存各阶段）+ 失败存储 errorMessage；`updateProjectStatus` 在 generating/completed 时清除残留 errorMessage | 进度反馈、错误可追溯、重新生成成功后旧错误不残留 |
+| `service/ProjectService.java` | `triggerGenerate` 对 `generating` 状态给出明确并发提示"正在生成中，请等待当前任务完成" | 避免用户重复触发生成 |
+| `resources/logback-spring.xml` | 新增：结构化 JSON 日志配置（LogstashEncoder，含 app 字段） | 便于日志聚合、检索与问题排查 |
+| `pom.xml` | 新增 logstash-logback-encoder 7.4 依赖 | 结构化日志输出支持 |
+
+#### 前端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `stores/project.js` | 新增 `progressMessage` ref；轮询时实时同步 `project.progress`，终态时清空；回调第三参数显式传整个 project | 进度信息跨组件可读，组件可拿到 errorMessage |
+| `views/TestCaseList.vue` | 新增 `generationError` ref + `progressText` computed（优先 store 实时进度，兜底本地提示）；轮询回调读取 `project.errorMessage` 展示；模板新增 error 类型 alert；开始生成时清除上次错误 | 实时展示"正在生成第 X/Y 个模块: xxx"进度 + 失败时展示具体错误详情 |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（61 源文件，15.5s）
+- 前端构建：`npm run build` 成功（12.13s），无 chunk 警告
+- 进度反馈：生成过程中前端轮询每 3s 可见"正在生成第 N/M 个模块: 状态机名"
+- 错误详情：生成失败时前端展示后端 errorMessage（如 LLM 调用异常原因）
+
+---
+
 ## v1.5 — 可视化增强
 
 **日期**: 2026-08-09

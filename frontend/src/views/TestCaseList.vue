@@ -153,9 +153,18 @@
     />
 
     <el-alert
-      v-if="pollingMessage"
-      :title="pollingMessage"
+      v-if="progressText"
+      :title="progressText"
       type="info"
+      :closable="false"
+      show-icon
+      class="polling-alert"
+    />
+    <!-- v1.6: 生成失败时展示具体错误详情 -->
+    <el-alert
+      v-if="generationError"
+      :title="`生成失败: ${generationError}`"
+      type="error"
       :closable="false"
       show-icon
       class="polling-alert"
@@ -251,6 +260,12 @@ const loading = ref(false)
 const regenerating = ref(false)
 const generatingMap = ref(false)
 const pollingMessage = ref('')
+// v1.6: 生成失败时的错误详情（来自后端 errorMessage）
+const generationError = ref('')
+// v1.6: 优先展示后端实时进度，兜底显示本地初始提示
+const progressText = computed(
+  () => projectStore.progressMessage || pollingMessage.value
+)
 
 const testCases = ref([])
 const allTestCases = ref([])
@@ -473,9 +488,11 @@ async function handleRegenerate() {
   try {
     await triggerGenerate(projectId, {})
     ElMessage.success('用例生成已启动')
+    // v1.6: 开始生成时清除上次错误详情
+    generationError.value = ''
     pollingMessage.value = '正在生成测试用例，请稍候...'
     regenerating.value = true
-    projectStore.startPolling(projectId, async (status) => {
+    projectStore.startPolling(projectId, async (status, prevStatus, project) => {
       pollingMessage.value = ''
       regenerating.value = false
       if (status === 'completed') {
@@ -483,6 +500,8 @@ async function handleRegenerate() {
         page.value = 1
         await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
       } else if (status === 'failed') {
+        // v1.6: 展示后端返回的具体错误详情
+        generationError.value = project?.errorMessage || '未知错误'
         ElMessage.error('用例生成失败')
       }
     })

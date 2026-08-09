@@ -107,7 +107,11 @@ public class ProjectService {
         Project project = projectRepository.findById(id)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + id));
         String status = project.getStatus();
+        // v1.6: 针对 generating 给出明确的并发提示，避免用户重复触发
         if (!"analyzed".equals(status) && !"completed".equals(status)) {
+            if ("generating".equals(status)) {
+                throw BusinessException.invalidState("正在生成中，请等待当前任务完成");
+            }
             throw BusinessException.invalidState("项目当前状态不允许生成测试用例: " + status);
         }
         projectRepository.updateStatus(id, "generating");

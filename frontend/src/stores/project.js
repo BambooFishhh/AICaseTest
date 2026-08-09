@@ -9,6 +9,8 @@ export const useProjectStore = defineStore('project', () => {
   const currentProject = ref(null)
   const pollingTimer = ref(null)
   const loading = ref(false)
+  // v1.6: 实时生成进度信息，供组件展示（如 "正在生成第 2/5 个模块: 订单状态机"）
+  const progressMessage = ref('')
 
   // 拉取项目详情并设置 currentProject
   async function fetchProject(id) {
@@ -24,22 +26,29 @@ export const useProjectStore = defineStore('project', () => {
 
   // 开始轮询项目状态，每 3 秒一次
   // 当状态进入 analyzed/completed/failed 时停止
+  // v1.6: 轮询时实时更新 progressMessage，终态时清空
   function startPolling(id, onStatusChange) {
     stopPolling()
     const poll = async () => {
       try {
         const res = await getProject(id)
         const prevStatus = currentProject.value?.status
-        currentProject.value = res.data
-        const nextStatus = res.data?.status
+        const project = res.data
+        currentProject.value = project
+        const nextStatus = project?.status
+        // v1.6: 实时同步进度信息；终态时清空
+        progressMessage.value = project?.progress || ''
         if (typeof onStatusChange === 'function') {
-          onStatusChange(nextStatus, prevStatus, res.data)
+          // 第三个参数传整个 project，组件可读取 errorMessage
+          onStatusChange(nextStatus, prevStatus, project)
         }
         if (nextStatus && TERMINAL_STATUSES.includes(nextStatus)) {
+          progressMessage.value = ''
           stopPolling()
         }
       } catch (err) {
         // 轮询出错时停止，避免持续报错
+        progressMessage.value = ''
         stopPolling()
         if (typeof onStatusChange === 'function') {
           onStatusChange('failed', currentProject.value?.status, null, err)
@@ -63,6 +72,7 @@ export const useProjectStore = defineStore('project', () => {
   function reset() {
     stopPolling()
     currentProject.value = null
+    progressMessage.value = ''
     loading.value = false
   }
 
@@ -70,6 +80,7 @@ export const useProjectStore = defineStore('project', () => {
     currentProject,
     loading,
     pollingTimer,
+    progressMessage,
     fetchProject,
     startPolling,
     stopPolling,

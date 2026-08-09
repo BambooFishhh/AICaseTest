@@ -35,6 +35,13 @@ public class Project {
     @Column(columnDefinition = "TEXT")
     private String settings = "{}";
 
+    // v1.6: 高可用增强 —— 错误详情与生成进度
+    @Column(name = "error_message", columnDefinition = "TEXT")
+    private String errorMessage;
+
+    @Column(name = "progress")
+    private String progress;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

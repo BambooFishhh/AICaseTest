@@ -60,6 +60,8 @@ public class TestCaseService {
     public void runGenerate(String projectId, GenerateRequest req) {
         try {
             updateProjectStatus(projectId, "generating");
+            // v1.6: 实时进度反馈，updateProgress 自带事务立即提交，前端轮询可见
+            projectRepository.updateProgress(projectId, "正在解析状态机...");
 
             List<StateMachine> stateMachines = stateMachineRepository.findByProjectId(projectId);
 
@@ -77,8 +79,11 @@ public class TestCaseService {
                 }
             }
 
-            List<TestCase> testCases = testGeneratorAgent.generate(stateMachines, backendResult);
+            // v1.6: 传入进度回调，分模块生成时实时更新进度
+            List<TestCase> testCases = testGeneratorAgent.generate(stateMachines, backendResult,
+                    progress -> projectRepository.updateProgress(projectId, progress));
 
+            projectRepository.updateProgress(projectId, "正在保存用例...");
             testCaseRepository.deleteAll(testCaseRepository.findByProjectId(projectId));
 
             for (TestCase tc : testCases) {
@@ -86,13 +91,17 @@ public class TestCaseService {
                 testCaseRepository.save(tc);
             }
 
+            // v1.6: 完成时清除进度
+            projectRepository.updateProgress(projectId, null);
             updateProjectStatus(projectId, "completed");
             log.info("Test case generation completed for project {}: {} cases",
                     projectId, testCases.size());
 
         } catch (Exception e) {
             log.error("Test case generation failed for project {}", projectId, e);
-            updateProjectStatus(projectId, "failed");
+            // v1.6: 失败时存储错误详情，前端可展示具体失败原因
+            String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            projectRepository.updateStatusWithError(projectId, "failed", errorMsg);
         }
     }
 
@@ -220,6 +229,10 @@ public class TestCaseService {
     private void updateProjectStatus(String projectId, String status) {
         projectRepository.findById(projectId).ifPresent(project -> {
             project.setStatus(status);
+            // v1.6: 进入 generating/completed 时清除上次失败的错误详情，避免残留误导用户
+            if ("generating".equals(status) || "completed".equals(status)) {
+                project.setErrorMessage(null);
+            }
             projectRepository.save(project);
         });
     }
