@@ -23,14 +23,14 @@ import javax.imageio.ImageIO;
 
 /**
  * v2.7: 基于 Playwright MCP 的浏览器操作 Skill。
- * 方法签名与 BrowserSkill 对齐，为 v2.8 执行链路切换做准备。
+ * 方法签名与原 BrowserSkill 对齐，v2.8 切换执行链路，v2.9 移除 Selenium。
  *
  * 特点：
  * - 通过 MCP 协议调用 playwright-mcp-server
  * - 真正的视频录屏（Playwright recordVideo，WebM 格式）
  * - 截图标注复用 Graphics2D（红圈+十字准星+坐标文本）
  *
- * 过渡期与 BrowserSkill 共存，v2.8 切换执行链路，v2.9 清理 Selenium。
+ * v2.9 起 BrowserSkill(Selenium) 已移除，本类为唯一浏览器操作实现。
  */
 @Component
 public class PlaywrightRecordSkill {

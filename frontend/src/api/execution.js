@@ -25,3 +25,8 @@ export function getExecutions(projectId) {
 export function getExecutionSteps(eid) {
   return request.get(`/executions/${eid}/steps`)
 }
+
+// v2.9: 执行录屏视频 URL（WebM，文件流直接用作 <video :src>）
+export function getExecutionVideoUrl(eid) {
+  return `/api/executions/${eid}/video`
+}

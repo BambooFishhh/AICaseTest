@@ -111,11 +111,30 @@
 
     <!-- 录屏播放器 -->
     <el-card
-      v-if="recordingFrames && recordingFrames.length > 0"
+      v-if="hasRecording"
       class="recording-card"
     >
-      <template #header>录屏回放</template>
-      <div class="recording-player">
+      <template #header>
+        录屏回放
+        <el-tag v-if="recordingVideoUrl" size="small" type="success" class="recording-tag">WebM 视频</el-tag>
+        <el-tag v-else size="small" type="info" class="recording-tag">图片帧</el-tag>
+      </template>
+
+      <!-- 视频模式（优先，v2.9） -->
+      <div v-if="recordingVideoUrl" class="video-player">
+        <video
+          :src="recordingVideoUrl"
+          controls
+          autoplay
+          class="video-element"
+        />
+        <div class="video-controls">
+          <el-button :icon="Download" @click="downloadVideo">下载视频</el-button>
+        </div>
+      </div>
+
+      <!-- 图片轮播模式（回退，兼容 v2.4~v2.5 历史记录） -->
+      <div v-else class="recording-player">
         <div class="frame-display">
           <img
             v-if="currentFrameUrl"
@@ -156,7 +175,7 @@ import {
   VideoPlay,
   VideoPause
 } from '@element-plus/icons-vue'
-import { getExecution, getExecutionSteps } from '@/api/execution'
+import { getExecution, getExecutionSteps, getExecutionVideoUrl } from '@/api/execution'
 
 const RECORDING_BASE_URL = 'http://localhost:8000'
 
@@ -198,6 +217,23 @@ const currentFrameUrl = computed(() => {
   const normalized = String(frame).replace(/^\//, '')
   return `${RECORDING_BASE_URL}/${normalized}`
 })
+
+// v2.9: 视频录屏 URL（优先使用 WebM 视频，无视频时为空串回退到图片轮播）
+const recordingVideoUrl = computed(() => {
+  return execution.value?.recordingVideoPath
+    ? getExecutionVideoUrl(executionId)
+    : ''
+})
+
+// 是否有任何形式的录屏（视频或图片帧）
+const hasRecording = computed(() => {
+  return !!recordingVideoUrl.value || recordingFrames.value.length > 0
+})
+
+// v2.9: 下载视频
+function downloadVideo() {
+  window.open(recordingVideoUrl.value, '_blank')
+}
 
 // 帧数变化时校正索引，避免越界
 watch(recordingFrames, (frames) => {
@@ -493,6 +529,24 @@ onUnmounted(() => {
 }
 .recording-card {
   margin-bottom: 20px;
+}
+.recording-tag {
+  margin-left: 8px;
+}
+.video-player {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.video-element {
+  width: 100%;
+  max-height: 480px;
+  background: #000;
+  border-radius: 4px;
+}
+.video-controls {
+  display: flex;
+  justify-content: flex-end;
 }
 .recording-player {
   display: flex;

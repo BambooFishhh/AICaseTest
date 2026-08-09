@@ -4,6 +4,40 @@
 
 ---
 
+## v2.9 — Selenium 清理 + 录屏回放升级为视频播放
+
+**日期**: 2026-08-09
+**基线**: v2.8
+**迭代主题**: 清理 Selenium 死代码与依赖；前端录屏回放从图片轮播升级为 WebM 视频播放
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `skill/BrowserSkill.java` | 删除 | Selenium 浏览器操作 Skill（v2.8 已被 PlaywrightRecordSkill 完全替代，成为死代码） |
+| `pom.xml` | 修改 | 移除 `selenium-java` + `webdrivermanager` 两个依赖块 |
+| `skill/PlaywrightRecordSkill.java` | 修改 | 类注释更新（去掉"过渡期共存"说明，标注为唯一浏览器操作实现） |
+
+#### 前端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `api/execution.js` | 修改 | 新增 `getExecutionVideoUrl(eid)` 辅助函数（返回视频下载 API URL） |
+| `views/ExecutionResult.vue` | 修改 | 录屏回放升级为双模式：优先 `<video>` 播放 WebM（v2.8+ 新记录），回退图片轮播（兼容 v2.4~v2.5 历史记录）；新增 `recordingVideoUrl`/`hasRecording` computed + `downloadVideo` 方法 + 视频播放器样式 |
+
+### 验证
+- 后端编译: `mvn compile` BUILD SUCCESS (84 source files，较 v2.8 减少 1)
+- 前端构建: `npm run build` 成功（ExecutionResult chunk 7.41 kB）
+- Grep 确认无 selenium 残留引用（仅注释保留历史说明）
+
+### 说明
+- `ExecutionRecord.recordingFrames` 字段保留，兼容历史记录的图片轮播回放
+- 视频播放器使用原生 `<video controls autoplay>`，支持播放/暂停/进度条/全屏 + 下载按钮
+
+---
+
 ## v2.8 — 执行链路切换（Selenium → Playwright）
 
 **日期**: 2026-08-09
