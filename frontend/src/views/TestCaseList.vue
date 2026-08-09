@@ -18,6 +18,26 @@
         >
           导出选中<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
         </el-button>
+        <!-- v1.7: 导入导出与协作 -->
+        <el-button :icon="Download" @click="handleExportJson">
+          导出JSON<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
+        </el-button>
+        <el-button :icon="Document" @click="handleExportCsv">导出CSV</el-button>
+        <el-button :icon="Upload" @click="triggerImportFile">导入JSON</el-button>
+        <el-button
+          :icon="CopyDocument"
+          :disabled="selectedRows.length === 0"
+          @click="handleCopyTo"
+        >
+          复制到<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
+        </el-button>
+        <input
+          ref="importFileInput"
+          type="file"
+          accept=".json,application/json"
+          style="display: none"
+          @change="handleImportFile"
+        />
         <el-button type="primary" :loading="regenerating" @click="handleRegenerate">
           重新生成
         </el-button>
@@ -243,8 +263,24 @@
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Delete, Download } from '@element-plus/icons-vue'
-import { listTestCases, triggerGenerate, deleteTestCase, batchDeleteTestCases } from '@/api/testcase'
+import {
+  Search,
+  Delete,
+  Download,
+  Upload,
+  CopyDocument,
+  Document
+} from '@element-plus/icons-vue'
+import {
+  listTestCases,
+  triggerGenerate,
+  deleteTestCase,
+  batchDeleteTestCases,
+  exportTestCases,
+  importTestCases,
+  copyToProject
+} from '@/api/testcase'
+import { listProjects } from '@/api/project'
 import { generateMindmap } from '@/api/mindmap'
 import { useProjectStore } from '@/stores/project'
 import TestCaseCard from '@/components/TestCaseCard.vue'
@@ -281,6 +317,8 @@ const currentTestCase = ref(null)
 
 // v1.4: 批量操作选中行
 const selectedRows = ref([])
+// v1.7: 导入文件 input 引用
+const importFileInput = ref(null)
 
 // v1.5: 覆盖率矩阵
 const coverageMatrix = ref(null)
@@ -461,6 +499,90 @@ async function handleExportSelected() {
     ElMessage.success('选中用例脑图生成成功')
   } catch {
     // 错误已由响应拦截器统一提示
+  }
+}
+
+// v1.7: blob 文件下载（接收 exportTestCases 返回的 { data, fileName }）
+function downloadBlob({ data, fileName }) {
+  const url = URL.createObjectURL(data)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+// v1.7: 导出 JSON（选中时只导出选中，否则导出全部）
+async function handleExportJson() {
+  const ids = selectedRows.value.map((tc) => tc.id)
+  try {
+    const result = await exportTestCases(projectId, 'json', ids)
+    downloadBlob(result)
+    ElMessage.success('JSON 导出成功')
+  } catch (e) {
+    ElMessage.error(e.message || '导出失败')
+  }
+}
+
+// v1.7: 导出 CSV（全部用例）
+async function handleExportCsv() {
+  try {
+    const result = await exportTestCases(projectId, 'csv', null)
+    downloadBlob(result)
+    ElMessage.success('CSV 导出成功')
+  } catch (e) {
+    ElMessage.error(e.message || '导出失败')
+  }
+}
+
+// v1.7: 触发文件选择
+function triggerImportFile() {
+  importFileInput.value?.click()
+}
+
+// v1.7: 处理导入文件
+async function handleImportFile(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  try {
+    const res = await importTestCases(projectId, file)
+    ElMessage.success(`导入完成：成功 ${res.data.imported} 条，跳过 ${res.data.skipped} 条`)
+    await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+  e.target.value = '' // 重置以便重复导入同一文件
+}
+
+// v1.7: 复制选中用例到其他项目
+async function handleCopyTo() {
+  const ids = selectedRows.value.map((tc) => tc.id)
+  try {
+    const projRes = await listProjects()
+    const projects = (projRes.data || []).filter((p) => p.id !== projectId)
+    if (projects.length === 0) {
+      ElMessage.warning('没有可复制的目标项目，请先创建其他项目')
+      return
+    }
+    const options = projects
+      .map((p) => `${p.id} - ${p.name}`)
+      .join('\n')
+    const { value: targetId } = await ElMessageBox.prompt(
+      `可复制到的目标项目：\n${options}\n\n请输入目标项目 ID：`,
+      '复制用例到其他项目',
+      {
+        confirmButtonText: '复制',
+        cancelButtonText: '取消',
+        inputType: 'text',
+        inputValidator: (v) => !!v?.trim() || '请输入目标项目 ID'
+      }
+    )
+    const res = await copyToProject(projectId, ids, targetId.trim())
+    ElMessage.success(`已复制 ${res.data.copied} 条用例到目标项目`)
+  } catch {
+    // 用户取消或错误已由响应拦截器统一提示
   }
 }
 

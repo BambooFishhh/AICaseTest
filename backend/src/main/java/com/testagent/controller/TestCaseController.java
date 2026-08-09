@@ -2,20 +2,31 @@ package com.testagent.controller;
 
 import com.testagent.common.ApiResponse;
 import com.testagent.dto.BatchDeleteRequest;
+import com.testagent.dto.CopyToRequest;
 import com.testagent.dto.TestCaseDTO;
 import com.testagent.dto.TestCaseListResponse;
 import com.testagent.dto.UpdateTestCaseRequest;
 import com.testagent.service.TestCaseService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/projects/{projectId}/testcases")
@@ -66,5 +77,31 @@ public class TestCaseController {
             @RequestBody BatchDeleteRequest req) {
         int deleted = testCaseService.batchDeleteTestCases(projectId, req.getIds());
         return ApiResponse.success(deleted);
+    }
+
+    // v1.7: 导出用例（JSON / CSV），支持导出全部或选中
+    @GetMapping("/export")
+    public ResponseEntity<Resource> exportTestCases(
+            @PathVariable String projectId,
+            @RequestParam(defaultValue = "json") String format,
+            @RequestParam(required = false) List<String> ids) throws IOException {
+        return testCaseService.exportTestCases(projectId, format, ids);
+    }
+
+    // v1.7: 导入 JSON 用例文件
+    @PostMapping(value = "/import", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<Map<String, Object>> importTestCases(
+            @PathVariable String projectId,
+            @RequestParam("file") MultipartFile file) {
+        return ApiResponse.success(testCaseService.importTestCases(projectId, file));
+    }
+
+    // v1.7: 复制选中用例到其他项目
+    @PostMapping("/copy-to")
+    public ApiResponse<Map<String, Object>> copyToProject(
+            @PathVariable String projectId,
+            @RequestBody CopyToRequest req) {
+        return ApiResponse.success(
+                testCaseService.copyToProject(projectId, req.getIds(), req.getTargetProjectId()));
     }
 }

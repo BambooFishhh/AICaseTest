@@ -4,6 +4,40 @@
 
 ---
 
+## v1.7 — 导入导出与协作增强
+
+**日期**: 2026-08-09
+**基线**: v1.6
+**迭代主题**: JSON 导入导出 + CSV 导出 + 跨项目用例复制
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `controller/TestCaseController.java` | 新增 `GET /export`（JSON/CSV）、`POST /import`（multipart）、`POST /copy-to` 接口 | 导入导出与跨项目复制入口 |
+| `dto/CopyToRequest.java` | 新增 DTO：ids + targetProjectId | 复制请求体 |
+| `service/TestCaseService.java` | 新增 `exportTestCases`/`importTestCases`/`copyToProject` + 辅助方法 `nextTestCaseNumber`/`parseTestCaseFromJson`/`cloneTestCase`/`jsonField` | 导出文件流、JSON 解析回灌（重生成 ID、source=imported）、跨项目复制（source=copied）；导入字段缺失用默认值兜底 |
+| `service/CsvExporter.java` | 新增工具类：TestCase 列表转 CSV，含 UTF-8 BOM 与标准 CSV 转义 | Excel 打开中文不乱码、字段含逗号/换行正确转义 |
+
+#### 前端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `api/testcase.js` | 新增 `exportTestCases`（fetch 拿 headers+blob）、`importTestCases`（FormData）、`copyToProject` | 三个新接口封装 |
+| `views/TestCaseList.vue` | header 新增 4 按钮（导出JSON/导出CSV/导入JSON/复制到）+ 隐藏 file input；新增 `downloadBlob`/`handleExportJson`/`handleExportCsv`/`triggerImportFile`/`handleImportFile`/`handleCopyTo` | 导入导出 UI 与交互；复制到用 prompt 列出可选目标项目 |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（63 源文件，8.6s）
+- 前端构建：`npm run build` 成功（15.71s），TestCaseList 12KB→14KB
+- 导出 JSON → 导入回同项目，数量翻倍且 ID 不冲突（重生成 TC-XXX）
+- CSV 导出含 BOM，Excel 中文正常
+- 跨项目复制后目标项目有用例，源项目不受影响
+- 导入非数组 JSON 返回错误提示且不写入
+
+---
+
 ## v1.6 — 高可用增强
 
 **日期**: 2026-08-09

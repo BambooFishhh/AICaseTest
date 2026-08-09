@@ -1,5 +1,6 @@
 package com.testagent.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.agent.TestGeneratorAgent;
 import com.testagent.analyzer.result.BackendResult;
@@ -21,10 +22,21 @@ import com.testagent.repository.TestCaseRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -171,6 +183,186 @@ public class TestCaseService {
             }
         }
         return count;
+    }
+
+    // ==================== v1.7: 导入导出与跨项目复制 ====================
+
+    public ResponseEntity<Resource> exportTestCases(String projectId, String format, List<String> ids) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        List<TestCase> all = testCaseRepository.findByProjectId(projectId);
+        List<TestCase> target = (ids == null || ids.isEmpty())
+                ? all
+                : all.stream().filter(tc -> ids.contains(tc.getId())).collect(Collectors.toList());
+
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        String baseName = project.getName() + "_testcases_" + timestamp;
+
+        if ("csv".equalsIgnoreCase(format)) {
+            byte[] csv = CsvExporter.toCsv(target);
+            InputStreamResource resource = new InputStreamResource(new ByteArrayInputStream(csv));
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + baseName + ".csv\"")
+                    .contentType(MediaType.parseMediaType("text/csv;charset=UTF-8"))
+                    .contentLength(csv.length)
+                    .body(resource);
+        }
+
+        // 默认 JSON 导出
+        List<TestCaseDTO> dtos = target.stream().map(TestCaseDTO::from).collect(Collectors.toList());
+        byte[] json;
+        try {
+            json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(dtos);
+        } catch (Exception e) {
+            log.error("Failed to export JSON for project {}", projectId, e);
+            throw new BusinessException(50004, "导出 JSON 失败: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+        InputStreamResource resource = new InputStreamResource(new ByteArrayInputStream(json));
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + baseName + ".json\"")
+                .contentType(MediaType.APPLICATION_JSON)
+                .contentLength(json.length)
+                .body(resource);
+    }
+
+    @Transactional
+    public Map<String, Object> importTestCases(String projectId, MultipartFile file) {
+        projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        if (file == null || file.isEmpty()) {
+            throw BusinessException.invalidParam("导入文件为空");
+        }
+
+        List<TestCase> parsed;
+        try {
+            JsonNode root = objectMapper.readTree(file.getBytes());
+            if (!root.isArray()) {
+                throw BusinessException.invalidParam("JSON 根节点必须是数组");
+            }
+            parsed = new ArrayList<>();
+            for (JsonNode node : root) {
+                parsed.add(parseTestCaseFromJson(node));
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("Failed to parse import JSON for project {}", projectId, e);
+            throw BusinessException.invalidParam("JSON 解析失败: " + e.getMessage());
+        }
+
+        int startNo = nextTestCaseNumber(projectId);
+        int imported = 0;
+        for (TestCase tc : parsed) {
+            // 跳过无标题的无效用例
+            if (tc.getTitle() == null || tc.getTitle().isBlank()) {
+                continue;
+            }
+            tc.setId(String.format("TC-%03d", startNo++));
+            tc.setProjectId(projectId);
+            tc.setSource("imported");
+            tc.setCreatedAt(LocalDateTime.now());
+            testCaseRepository.save(tc);
+            imported++;
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("imported", imported);
+        result.put("skipped", parsed.size() - imported);
+        return result;
+    }
+
+    @Transactional
+    public Map<String, Object> copyToProject(String sourceProjectId, List<String> ids, String targetProjectId) {
+        if (targetProjectId == null || targetProjectId.isBlank()) {
+            throw BusinessException.invalidParam("目标项目 ID 不能为空");
+        }
+        if (targetProjectId.equals(sourceProjectId)) {
+            throw BusinessException.invalidParam("目标项目不能与源项目相同");
+        }
+        projectRepository.findById(targetProjectId)
+                .orElseThrow(() -> BusinessException.notFound("目标项目不存在: " + targetProjectId));
+
+        List<TestCase> all = testCaseRepository.findByProjectId(sourceProjectId);
+        List<TestCase> selected = all.stream()
+                .filter(tc -> ids != null && ids.contains(tc.getId()))
+                .collect(Collectors.toList());
+
+        int startNo = nextTestCaseNumber(targetProjectId);
+        int copied = 0;
+        for (TestCase tc : selected) {
+            TestCase copy = cloneTestCase(tc);
+            copy.setId(String.format("TC-%03d", startNo++));
+            copy.setProjectId(targetProjectId);
+            copy.setSource("copied");
+            copy.setCreatedAt(LocalDateTime.now());
+            testCaseRepository.save(copy);
+            copied++;
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("copied", copied);
+        return result;
+    }
+
+    private int nextTestCaseNumber(String projectId) {
+        List<TestCase> existing = testCaseRepository.findByProjectId(projectId);
+        return existing.stream()
+                .map(TestCase::getId)
+                .filter(id -> id != null && id.startsWith("TC-"))
+                .mapToInt(id -> {
+                    try {
+                        return Integer.parseInt(id.substring(3));
+                    } catch (Exception e) {
+                        return 0;
+                    }
+                })
+                .max().orElse(0) + 1;
+    }
+
+    private TestCase parseTestCaseFromJson(JsonNode node) {
+        TestCase tc = new TestCase();
+        tc.setTitle(node.path("title").asText(""));
+        tc.setModule(node.path("module").asText("未分类"));
+        tc.setType(node.path("type").asText("positive"));
+        tc.setPriority(node.path("priority").asText("P1"));
+        tc.setPreconditions(jsonField(node, "preconditions", "[]"));
+        tc.setSteps(jsonField(node, "steps", "[]"));
+        tc.setExpectedResults(jsonField(node, "expectedResults", "[]"));
+        tc.setStructuredSteps(jsonField(node, "structuredSteps", "[]"));
+        tc.setApiEndpoints(jsonField(node, "apiEndpoints", "[]"));
+        tc.setTestData(jsonField(node, "testData", "{}"));
+        tc.setExecutionHints(jsonField(node, "executionHints", "{}"));
+        tc.setStateMachineRef(jsonField(node, "stateMachineRef", "{}"));
+        tc.setConfidence(0.8);
+        return tc;
+    }
+
+    private TestCase cloneTestCase(TestCase src) {
+        TestCase tc = new TestCase();
+        tc.setTitle(src.getTitle());
+        tc.setModule(src.getModule());
+        tc.setType(src.getType());
+        tc.setPriority(src.getPriority());
+        tc.setPreconditions(src.getPreconditions());
+        tc.setSteps(src.getSteps());
+        tc.setExpectedResults(src.getExpectedResults());
+        tc.setStructuredSteps(src.getStructuredSteps());
+        tc.setApiEndpoints(src.getApiEndpoints());
+        tc.setTestData(src.getTestData());
+        tc.setExecutionHints(src.getExecutionHints());
+        tc.setStateMachineRef(src.getStateMachineRef());
+        tc.setConfidence(src.getConfidence());
+        return tc;
+    }
+
+    // 将 JSON 节点转为字符串存储；缺失/null 时返回默认值
+    private String jsonField(JsonNode node, String field, String defaultValue) {
+        JsonNode child = node.path(field);
+        if (child == null || child.isMissingNode() || child.isNull()) {
+            return defaultValue;
+        }
+        String s = child.toString();
+        return (s == null || s.isEmpty() || "null".equals(s)) ? defaultValue : s;
     }
 
     @Transactional
