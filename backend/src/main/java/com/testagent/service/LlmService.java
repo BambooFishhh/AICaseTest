@@ -1,26 +1,23 @@
 package com.testagent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.common.BusinessException;
-import jakarta.annotation.PostConstruct;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
+import com.testagent.mcp.McpClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
+/**
+ * LLM 调用服务。
+ * v1.0: OkHttp 直调 OpenAI API
+ * v2.3: 重构为通过 MCP 协议调用独立 MCP Server
+ */
 @Service
 public class LlmService {
 
@@ -33,50 +30,35 @@ public class LlmService {
     @Value("${llm.model:gpt-4o}")
     private String model;
 
-    @Value("${llm.api-key:}")
-    private String apiKey;
-
-    @Value("${llm.base-url:https://api.openai.com/v1}")
-    private String baseUrl;
-
-    private OkHttpClient httpClient;
-
-    @PostConstruct
-    public void init() {
-        httpClient = new OkHttpClient.Builder()
-                .connectTimeout(30, TimeUnit.SECONDS)
-                .readTimeout(120, TimeUnit.SECONDS)
-                .build();
-    }
-
-    // v1.12: 供 VueAnalyzer 等组件判断是否可调用 LLM
-    public boolean isConfigured() {
-        return apiKey != null && !apiKey.isBlank();
-    }
+    @Autowired
+    private McpClient mcpClient;
 
     // v1.4: 重试配置
     private static final int MAX_RETRIES = 3;
     private static final long[] RETRY_DELAYS_MS = {1000, 2000, 4000};
 
+    /**
+     * v2.3: 通过 MCP Server 调用 LLM 文本对话。
+     */
+    public boolean isConfigured() {
+        return mcpClient.isAvailable();
+    }
+
+    /**
+     * v2.3: 通过 MCP 协议调用 llm_chat 工具。
+     */
     public String chat(String systemPrompt, String userPrompt, double temperature) {
         Exception lastException = null;
         for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
             try {
-                return callLlmApi(systemPrompt, userPrompt, temperature);
-            } catch (BusinessException e) {
-                // 400/401/403 等客户端错误不重试
-                if (e.getHttpStatus() == HttpStatus.BAD_REQUEST
-                        || e.getHttpStatus() == HttpStatus.UNAUTHORIZED
-                        || e.getHttpStatus() == HttpStatus.FORBIDDEN) {
-                    throw e;
-                }
-                lastException = e;
-                log.warn("LLM call attempt {} failed: {} (status={}), will retry",
-                        attempt + 1, e.getMessage(), e.getHttpStatus());
+                return mcpClient.callTool("llm_chat", Map.of(
+                        "system_prompt", systemPrompt,
+                        "user_prompt", userPrompt,
+                        "temperature", temperature
+                ));
             } catch (Exception e) {
                 lastException = e;
-                log.warn("LLM call attempt {} failed: {}, will retry",
-                        attempt + 1, e.getMessage());
+                log.warn("LLM call attempt {} failed: {}", attempt + 1, e.getMessage());
             }
             if (attempt < MAX_RETRIES - 1) {
                 try {
@@ -92,71 +74,18 @@ public class LlmService {
                 HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
-    private String callLlmApi(String systemPrompt, String userPrompt, double temperature) throws Exception {
-        List<Map<String, String>> messages = new ArrayList<>();
-        Map<String, String> systemMsg = new LinkedHashMap<>();
-        systemMsg.put("role", "system");
-        systemMsg.put("content", systemPrompt);
-        messages.add(systemMsg);
-
-        Map<String, String> userMsg = new LinkedHashMap<>();
-        userMsg.put("role", "user");
-        userMsg.put("content", userPrompt);
-        messages.add(userMsg);
-
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", model);
-        requestBody.put("messages", messages);
-        requestBody.put("temperature", temperature);
-        requestBody.put("max_tokens", 8192);
-
-        String jsonBody = objectMapper.writeValueAsString(requestBody);
-
-        RequestBody body = RequestBody.create(jsonBody, MediaType.parse("application/json"));
-        Request request = new Request.Builder()
-                .url(baseUrl + "/chat/completions")
-                .addHeader("Authorization", "Bearer " + apiKey)
-                .addHeader("Content-Type", "application/json")
-                .post(body)
-                .build();
-
-        try (Response response = httpClient.newCall(request).execute()) {
-            String responseBody = response.body() != null ? response.body().string() : "";
-            if (!response.isSuccessful()) {
-                log.error("LLM API error: status={}, body={}", response.code(), responseBody);
-                HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
-                if (response.code() == 400) status = HttpStatus.BAD_REQUEST;
-                else if (response.code() == 401) status = HttpStatus.UNAUTHORIZED;
-                else if (response.code() == 403) status = HttpStatus.FORBIDDEN;
-                throw new BusinessException(50002,
-                        "LLM API调用失败: HTTP " + response.code(),
-                        status);
-            }
-            JsonNode root = objectMapper.readTree(responseBody);
-            JsonNode contentNode = root.path("choices").path(0).path("message").path("content");
-            if (contentNode.isMissingNode() || contentNode.asText().isEmpty()) {
-                throw new BusinessException(50002,
-                        "LLM返回内容为空",
-                        HttpStatus.INTERNAL_SERVER_ERROR);
-            }
-            return contentNode.asText();
-        }
-    }
-
-    // v2.1: 多模态调用（图片 + 文本）
+    /**
+     * v2.3: 通过 MCP 协议调用 llm_chat_with_image 工具。
+     */
     public String chatWithImage(String systemPrompt, String userText, String imageBase64) {
         Exception lastException = null;
         for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
             try {
-                return callLlmApiWithImage(systemPrompt, userText, imageBase64);
-            } catch (BusinessException e) {
-                if (e.getHttpStatus() == HttpStatus.BAD_REQUEST
-                        || e.getHttpStatus() == HttpStatus.UNAUTHORIZED
-                        || e.getHttpStatus() == HttpStatus.FORBIDDEN) {
-                    throw e;
-                }
-                lastException = e;
-                log.warn("LLM image call attempt {} failed: {}", attempt + 1, e.getMessage());
+                return mcpClient.callTool("llm_chat_with_image", Map.of(
+                        "system_prompt", systemPrompt,
+                        "user_text", userText,
+                        "image_base64", imageBase64
+                ));
             } catch (Exception e) {
                 lastException = e;
                 log.warn("LLM image call attempt {} failed: {}", attempt + 1, e.getMessage());
@@ -175,65 +104,10 @@ public class LlmService {
                 HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
+    /**
+     * v2.3: chatJson 复用 chat() + JSON 解析。
+     */
     @SuppressWarnings("unchecked")
-    private String callLlmApiWithImage(String systemPrompt, String userText, String imageBase64) throws Exception {
-        List<Map<String, Object>> messages = new ArrayList<>();
-
-        Map<String, Object> systemMsg = new LinkedHashMap<>();
-        systemMsg.put("role", "system");
-        systemMsg.put("content", systemPrompt);
-        messages.add(systemMsg);
-
-        // v2.1: user content 为数组（text + image_url）
-        Map<String, Object> userMsg = new LinkedHashMap<>();
-        userMsg.put("role", "user");
-        List<Map<String, Object>> content = new ArrayList<>();
-        Map<String, Object> textPart = new LinkedHashMap<>();
-        textPart.put("type", "text");
-        textPart.put("text", userText);
-        content.add(textPart);
-        Map<String, Object> imagePart = new LinkedHashMap<>();
-        imagePart.put("type", "image_url");
-        Map<String, String> imageUrl = new LinkedHashMap<>();
-        imageUrl.put("url", "data:image/png;base64," + imageBase64);
-        imagePart.put("image_url", imageUrl);
-        content.add(imagePart);
-        userMsg.put("content", content);
-        messages.add(userMsg);
-
-        Map<String, Object> requestBody = new LinkedHashMap<>();
-        requestBody.put("model", model);
-        requestBody.put("messages", messages);
-        requestBody.put("temperature", 0.1);
-        requestBody.put("max_tokens", 1024);
-
-        String jsonBody = objectMapper.writeValueAsString(requestBody);
-
-        RequestBody body = RequestBody.create(jsonBody, MediaType.parse("application/json"));
-        Request request = new Request.Builder()
-                .url(baseUrl + "/chat/completions")
-                .addHeader("Authorization", "Bearer " + apiKey)
-                .addHeader("Content-Type", "application/json")
-                .post(body)
-                .build();
-
-        try (Response response = httpClient.newCall(request).execute()) {
-            String responseBody = response.body() != null ? response.body().string() : "";
-            if (!response.isSuccessful()) {
-                log.error("LLM Vision API error: status={}, body={}", response.code(), responseBody);
-                throw new BusinessException(50002,
-                        "LLM Vision API调用失败: HTTP " + response.code(),
-                        HttpStatus.INTERNAL_SERVER_ERROR);
-            }
-            JsonNode root = objectMapper.readTree(responseBody);
-            JsonNode contentNode = root.path("choices").path(0).path("message").path("content");
-            if (contentNode.isMissingNode() || contentNode.asText().isEmpty()) {
-                throw new BusinessException(50002, "LLM返回内容为空", HttpStatus.INTERNAL_SERVER_ERROR);
-            }
-            return contentNode.asText();
-        }
-    }
-
     public Map<String, Object> chatJson(String systemPrompt, String userPrompt, double temperature) {
         String response = chat(systemPrompt, userPrompt, temperature);
         String json = extractJsonObject(response);
@@ -273,10 +147,14 @@ public class LlmService {
         return trimmed;
     }
 
+    /**
+     * v2.3: 测试 MCP Server 连接。
+     */
     public Map<String, Object> testConnection() {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("provider", provider);
         result.put("model", model);
+        result.put("mcpAvailable", mcpClient.isAvailable());
         try {
             String response = chat("You are a helpful assistant.", "Reply with the word: ok", 0.0);
             String preview = response.length() > 200 ? response.substring(0, 200) : response;

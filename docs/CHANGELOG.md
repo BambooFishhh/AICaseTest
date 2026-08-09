@@ -4,6 +4,47 @@
 
 ---
 
+## v2.3 — LLM 调用全量拆分到 MCP Server
+
+**日期**: 2026-08-09
+**基线**: v2.2
+**迭代主题**: 后端所有 LLM 调用从 OkHttp 直调改为通过 MCP 协议调用
+
+### 改动清单与目的
+
+#### MCP Server
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `mcp-server/index.js` | 修改 | 新增 llm_chat + llm_chat_with_image 工具（共 3 个工具） |
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `service/LlmService.java` | 重构 | 从 OkHttp 直调 OpenAI API 改为通过 McpClient 调用 MCP Server |
+
+### 架构变更
+```
+v2.2: LlmService → OkHttp → OpenAI API（直调）
+      McpBridgeService → McpClient → MCP Server → OpenAI Vision API
+
+v2.3: LlmService → McpClient → MCP Server → OpenAI API（全部走 MCP）
+      McpBridgeService → McpClient → MCP Server → OpenAI API
+```
+
+### 关键设计
+- LlmService 所有 public 方法签名不变（chat/chatJson/chatWithImage/isConfigured/testConnection）
+- 6 个调用方（PrdAgent/TestGeneratorAgent/StateMachineAgent/VueAnalyzer/ExecutionAgent/SettingsService）零改动
+- 重试逻辑保留在 Java 侧
+- MCP Server 暴露 3 个工具：llm_chat、llm_chat_with_image、multimodal_element_locate
+
+### 验证
+- 后端编译: `mvn compile` BUILD SUCCESS (82 source files, 10.5s)
+- 前端: 无改动
+
+---
+
 ## v2.2 — 独立 MCP Server
 
 **日期**: 2026-08-09
