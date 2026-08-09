@@ -4,6 +4,45 @@
 
 ---
 
+## v1.11 — 前端代码分析 Agent
+
+**日期**: 2026-08-09
+**基线**: v1.10
+**迭代主题**: 增强 VueAnalyzer 为前端代码分析 Agent，补上交互流转/DOM选择器/表单校验上下文
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `analyzer/result/FrontendResult.java` | 新增 forms/componentStates/domSelectors/pageFlows 4 个字段 | 扩展前端分析数据模型 |
+| `analyzer/VueAnalyzer.java` | 新增 4 个提取方法：extractForms/extractComponentStates/extractDomSelectors/extractPageFlows + collectVueFiles + 多个辅助方法 | 深度解析 Vue SFC 提取表单/交互状态/DOM选择器/页面跳转 |
+| `agent/OrchestratorAgent.java` | 新增 loadFrontendResult() + 传给 TestGeneratorAgent | 编排 Agent 加载前端上下文 |
+| `agent/TestGeneratorAgent.java` | 新增 generate(...frontendResult) 重载 + putFrontendContext() + prompt 补充前端信息 | 用例生成消费前端上下文（表单字段→testData、选择器→uiSelector、页面流转→跳转用例） |
+
+#### 前端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `views/CodeAnalysis.vue` | 新增"前端分析"tab，含 4 个展示面板（表单字段/组件交互状态/DOM选择器/页面跳转关系） | 可视化前端分析结果 |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（8.3s，70 source files）
+- 前端构建：`npm run build` 成功（11.63s）
+
+### 向后兼容
+- FrontendResult 新字段默认空列表，历史数据无影响
+- frontendResult 为 null 时 TestGeneratorAgent 退化为原逻辑
+- H2 无 schema 变更（frontendResult 序列化在 CodeAnalysis.text 字段中）
+- 前端无 Vue 项目时前端分析 tab 显示"无数据"
+
+### 范围说明
+- In Scope：VueAnalyzer 4 维度增强、FrontendResult 扩展、OrchestratorAgent 接入、TestGeneratorAgent prompt 改造、CodeAnalysis 页面增强
+- Out of Scope：AI 执行引擎（v2.0）、React/Angular 分析器、Pinia/Vuex 深度分析、Vue SFC 完整 AST 解析
+
+---
+
 ## v1.10 — PRD 驱动的用例生成
 
 **日期**: 2026-08-09

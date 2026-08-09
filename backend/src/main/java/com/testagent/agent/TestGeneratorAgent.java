@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.BusinessRule;
 import com.testagent.analyzer.result.EndpointInfo;
+import com.testagent.analyzer.result.FrontendResult;
 import com.testagent.dto.JsonHelper;
 import com.testagent.dto.PrdAnalysisResult;
 import com.testagent.entity.StateMachine;
@@ -103,6 +104,10 @@ public class TestGeneratorAgent {
             - endpoints：用例 structuredSteps 的 target 用真实接口路径（如 POST /api/order/create）
             - stateMachines：用例的 stateMachineRef 引用真实状态流转
             - businessRules：补充为前置条件或异常场景
+            - frontendForms：testData 填入真实表单字段名和校验规则（required/min/max）
+            - frontendSelectors：structuredSteps 的 ui_action 类型步骤可附 uiSelector（{type, value}）
+            - frontendPageFlows：生成页面跳转验证用例（from→to，验证导航需求）
+            - frontendComponentStates：生成 UI 交互用例（弹窗打开/关闭、分步流程）
 
             ## structuredSteps / testData / executionHints 要求
             - 同 v1.4 质量标准（target 不能为空、expected 可验证、testData 含具体字段值）
@@ -172,6 +177,14 @@ public class TestGeneratorAgent {
     // v1.10: PRD 驱动重载。prdResult 非空时以 PRD 为主生成；为空时退化为代码驱动
     public List<TestCase> generate(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                    BackendResult backendResult, ProgressCallback progressCallback) {
+        // v1.11: 委托给新增 frontendResult 的重载
+        return generate(prdResult, stateMachines, backendResult, null, progressCallback);
+    }
+
+    // v1.11: 新增 frontendResult 重载。前端上下文作为辅助信息注入用例生成
+    public List<TestCase> generate(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                   BackendResult backendResult, FrontendResult frontendResult,
+                                   ProgressCallback progressCallback) {
         List<TestCase> result = new ArrayList<>();
 
         // v1.10: PRD 驱动分支
@@ -180,7 +193,7 @@ public class TestGeneratorAgent {
                 progressCallback.update("基于 PRD 生成用例...");
             }
             try {
-                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult);
+                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult);
             } catch (Exception e) {
                 log.warn("PRD-driven generation failed, fallback to code-driven: {}", e.getMessage());
                 result = new ArrayList<>();
@@ -189,7 +202,7 @@ public class TestGeneratorAgent {
 
         // 代码驱动分支（PRD 为空或 PRD 生成失败时）
         if (result.isEmpty()) {
-            result = generateCodeDrivenCases(stateMachines, backendResult, progressCallback);
+            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback);
         }
 
         if (progressCallback != null) {
@@ -207,7 +220,9 @@ public class TestGeneratorAgent {
     }
 
     // v1.10: 原代码驱动生成逻辑（状态机/endpoint），从 generate 抽出供 PRD 失败时复用
+    // v1.11: 新增 frontendResult 参数
     private List<TestCase> generateCodeDrivenCases(List<StateMachine> stateMachines, BackendResult backendResult,
+                                                    FrontendResult frontendResult,
                                                     ProgressCallback progressCallback) {
         List<TestCase> result = new ArrayList<>();
 
@@ -220,7 +235,7 @@ public class TestGeneratorAgent {
                 }
                 List<TestCase> moduleCases;
                 try {
-                    moduleCases = generateByLlmForStateMachine(sm, backendResult);
+                    moduleCases = generateByLlmForStateMachine(sm, backendResult, frontendResult);
                     if (moduleCases == null || moduleCases.isEmpty()) {
                         log.warn("LLM returned empty for state machine {}, using rules", sm.getName());
                         moduleCases = generateByRulesForStateMachine(sm, backendResult);
@@ -246,7 +261,9 @@ public class TestGeneratorAgent {
 
     // ==================== LLM 生成（分模块） ====================
 
-    private List<TestCase> generateByLlmForStateMachine(StateMachine sm, BackendResult backendResult) {
+    // v1.11: 新增 frontendResult 参数
+    private List<TestCase> generateByLlmForStateMachine(StateMachine sm, BackendResult backendResult,
+                                                         FrontendResult frontendResult) {
         Map<String, Object> context = new LinkedHashMap<>();
 
         Map<String, Object> smMap = new LinkedHashMap<>();
@@ -273,6 +290,9 @@ public class TestGeneratorAgent {
         }
         context.put("businessRules", ruleList);
 
+        // v1.11: 前端上下文
+        putFrontendContext(context, frontendResult);
+
         String systemPrompt = SYSTEM_PROMPT;
 
         String userPrompt;
@@ -293,8 +313,10 @@ public class TestGeneratorAgent {
     }
 
     // v1.10: PRD 驱动的 LLM 生成（PRD 为主、代码为辅）
+    // v1.11: 新增 frontendResult 参数，前端上下文作为辅助信息
     private List<TestCase> generateByLlmWithPrd(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
-                                                 BackendResult backendResult) throws Exception {
+                                                 BackendResult backendResult,
+                                                 FrontendResult frontendResult) throws Exception {
         Map<String, Object> context = new LinkedHashMap<>();
 
         // PRD 为主上下文
@@ -337,12 +359,55 @@ public class TestGeneratorAgent {
         }
         context.put("businessRules", ruleList);
 
+        // v1.11: 前端上下文（辅助）
+        putFrontendContext(context, frontendResult);
+
         String userPrompt = "上下文信息：\n" + objectMapper.writeValueAsString(context)
                 + "\n\n" + FEW_SHOT_EXAMPLES
                 + "\n\n请以 PRD 需求为纲生成测试用例，代码信息用于补充接口路径与前置状态。";
         String response = llmService.chat(SYSTEM_PROMPT_PRD_DRIVEN, userPrompt, 0.4);
         String json = extractJsonArray(response);
         return parseTestCases(json);
+    }
+
+    // v1.11: 将前端上下文注入 context Map，截断避免 token 超限
+    @SuppressWarnings("unchecked")
+    private void putFrontendContext(Map<String, Object> context, FrontendResult frontendResult) {
+        if (frontendResult == null) return;
+
+        // 表单字段（精简：只保留字段名+类型+校验规则）
+        if (frontendResult.getForms() != null && !frontendResult.getForms().isEmpty()) {
+            List<Map<String, Object>> forms = new ArrayList<>();
+            for (Map<String, Object> form : frontendResult.getForms()) {
+                Map<String, Object> f = new LinkedHashMap<>();
+                f.put("component", form.get("component"));
+                f.put("fields", form.get("fields"));
+                forms.add(f);
+            }
+            context.put("frontendForms", forms);
+        }
+
+        // DOM 选择器（精简：只保留 type+value+element）
+        if (frontendResult.getDomSelectors() != null && !frontendResult.getDomSelectors().isEmpty()) {
+            List<Map<String, Object>> selectors = new ArrayList<>();
+            for (Map<String, Object> sel : frontendResult.getDomSelectors()) {
+                Map<String, Object> s = new LinkedHashMap<>();
+                s.put("component", sel.get("component"));
+                s.put("selectors", sel.get("selectors"));
+                selectors.add(s);
+            }
+            context.put("frontendSelectors", selectors);
+        }
+
+        // 组件交互状态
+        if (frontendResult.getComponentStates() != null && !frontendResult.getComponentStates().isEmpty()) {
+            context.put("frontendComponentStates", frontendResult.getComponentStates());
+        }
+
+        // 页面跳转关系
+        if (frontendResult.getPageFlows() != null && !frontendResult.getPageFlows().isEmpty()) {
+            context.put("frontendPageFlows", frontendResult.getPageFlows());
+        }
     }
 
     private List<TestCase> parseTestCases(String json) {

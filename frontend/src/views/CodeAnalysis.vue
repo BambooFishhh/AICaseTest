@@ -126,6 +126,80 @@
           <el-table-column prop="ruleType" label="规则类型" width="120" />
         </el-table>
       </el-tab-pane>
+
+      <!-- v1.11: 前端分析 -->
+      <el-tab-pane label="前端分析" name="frontend">
+        <el-empty v-if="!hasFrontendData" description="无前端分析数据" />
+
+        <div v-else class="frontend-sections">
+          <!-- 表单字段 -->
+          <el-card v-if="frontendForms.length" class="frontend-card">
+            <template #header><span class="card-title">表单字段与校验</span></template>
+            <el-table :data="frontendForms" border size="small">
+              <el-table-column prop="component" label="组件" width="150" />
+              <el-table-column label="字段">
+                <template #default="{ row }">
+                  <div v-for="f in (row.fields || [])" :key="f.name" class="field-tag-row">
+                    <el-tag :type="f.required ? 'danger' : 'info'" size="small">{{ f.name }}</el-tag>
+                    <span class="field-type">({{ f.type }})</span>
+                    <span v-if="f.label" class="field-label">{{ f.label }}</span>
+                    <el-tag v-for="r in (f.rules || [])" :key="r" type="warning" size="small" effect="plain">{{ r }}</el-tag>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column prop="file" label="文件" width="180" />
+            </el-table>
+          </el-card>
+
+          <!-- 组件交互状态 -->
+          <el-card v-if="componentStates.length" class="frontend-card">
+            <template #header><span class="card-title">组件交互状态</span></template>
+            <el-table :data="componentStates" border size="small">
+              <el-table-column prop="component" label="组件" width="150" />
+              <el-table-column label="类型" width="100">
+                <template #default="{ row }">
+                  <el-tag :type="stateTagType(row.type)" size="small">{{ row.type }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="stateVar" label="状态变量" width="150" />
+              <el-table-column prop="trigger" label="触发方式" />
+              <el-table-column prop="file" label="文件" width="180" />
+            </el-table>
+          </el-card>
+
+          <!-- DOM 选择器 -->
+          <el-card v-if="domSelectors.length" class="frontend-card">
+            <template #header><span class="card-title">DOM 选择器</span></template>
+            <el-table :data="domSelectors" border size="small">
+              <el-table-column prop="component" label="组件" width="150" />
+              <el-table-column label="选择器">
+                <template #default="{ row }">
+                  <div v-for="s in (row.selectors || [])" :key="s.value" class="selector-tag-row">
+                    <el-tag :type="selectorTagType(s.type)" size="small">{{ s.type }}</el-tag>
+                    <span class="selector-value">="{{ s.value }}"</span>
+                    <span class="selector-element">({{ s.element }})</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column prop="file" label="文件" width="180" />
+            </el-table>
+          </el-card>
+
+          <!-- 页面跳转关系 -->
+          <el-card v-if="pageFlows.length" class="frontend-card">
+            <template #header><span class="card-title">页面跳转关系</span></template>
+            <el-table :data="pageFlows" border size="small">
+              <el-table-column prop="from" label="来源页面" width="150" />
+              <el-table-column label="" width="40">
+                <template #default><span class="flow-arrow">→</span></template>
+              </el-table-column>
+              <el-table-column prop="to" label="目标页面" width="150" />
+              <el-table-column prop="trigger" label="触发条件" />
+              <el-table-column prop="component" label="组件" width="150" />
+            </el-table>
+          </el-card>
+        </div>
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -152,6 +226,19 @@ const enums = computed(() => backendResult.value.enums || [])
 const entities = computed(() => backendResult.value.entities || [])
 const businessRules = computed(() => backendResult.value.businessRules || [])
 
+// v1.11: 前端分析结果
+const frontendResult = computed(() => analysis.value?.frontendResult || {})
+const frontendForms = computed(() => frontendResult.value.forms || [])
+const componentStates = computed(() => frontendResult.value.componentStates || [])
+const domSelectors = computed(() => frontendResult.value.domSelectors || [])
+const pageFlows = computed(() => frontendResult.value.pageFlows || [])
+const hasFrontendData = computed(() =>
+  frontendForms.value.length > 0 ||
+  componentStates.value.length > 0 ||
+  domSelectors.value.length > 0 ||
+  pageFlows.value.length > 0
+)
+
 const filteredEndpoints = computed(() => {
   if (!methodFilter.value) return endpoints.value
   return endpoints.value.filter(
@@ -175,6 +262,17 @@ function enumTitle(en) {
 
 function entityTitle(ent) {
   return ent.name + (ent.file ? ` (${ent.file})` : '')
+}
+
+// v1.11: 前端分析 tag 类型
+function stateTagType(type) {
+  const map = { dialog: 'warning', drawer: 'danger', steps: 'success', tabs: 'info' }
+  return map[type] || ''
+}
+
+function selectorTagType(type) {
+  const map = { 'data-testid': 'success', id: '', ref: 'warning', 'aria-label': 'info' }
+  return map[type] ?? 'info'
 }
 
 async function loadData() {
@@ -241,5 +339,54 @@ onMounted(loadData)
 }
 .filter-bar {
   margin-bottom: 16px;
+}
+/* v1.11: 前端分析样式 */
+.frontend-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.frontend-card {
+  margin: 0;
+}
+.card-title {
+  font-weight: bold;
+  font-size: 14px;
+}
+.field-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.field-type {
+  color: #909399;
+  font-size: 12px;
+}
+.field-label {
+  color: #606266;
+  font-size: 12px;
+  margin-right: 4px;
+}
+.selector-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.selector-value {
+  font-family: monospace;
+  font-size: 13px;
+  color: #e6a23c;
+}
+.selector-element {
+  color: #909399;
+  font-size: 12px;
+}
+.flow-arrow {
+  font-size: 18px;
+  color: #409eff;
+  font-weight: bold;
 }
 </style>

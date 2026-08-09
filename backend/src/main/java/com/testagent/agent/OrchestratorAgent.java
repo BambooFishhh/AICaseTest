@@ -2,6 +2,7 @@ package com.testagent.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.analyzer.result.BackendResult;
+import com.testagent.analyzer.result.FrontendResult;
 import com.testagent.dto.PrdAnalysisResult;
 import com.testagent.entity.CodeAnalysis;
 import com.testagent.entity.Project;
@@ -20,8 +21,8 @@ import java.util.Optional;
 
 /**
  * v1.10: 用例生成编排 Agent。
- * 显式协调 PrdAgent + 代码侧分析（状态机/后端结果） → TestGeneratorAgent。
- * 替代原 TestCaseService.runGenerate 里的隐式调用链。
+ * v1.11: 新增前端上下文加载（FrontendResult）。
+ * 显式协调 PrdAgent + 代码侧分析（状态机/后端结果/前端结果） → TestGeneratorAgent。
  */
 @Component
 public class OrchestratorAgent {
@@ -47,8 +48,8 @@ public class OrchestratorAgent {
     /**
      * 编排生成测试用例。
      * 1. 读项目 PRD；若有 PRD，PrdAgent 解析为 PrdAnalysisResult
-     * 2. 读代码侧（状态机 + 后端分析结果）
-     * 3. 调 TestGeneratorAgent：PRD 为主、代码为辅
+     * 2. 读代码侧（状态机 + 后端分析结果 + 前端分析结果）
+     * 3. 调 TestGeneratorAgent：PRD 为主、代码为辅（含前端上下文）
      * PRD 为空时 TestGeneratorAgent 退化为代码驱动（向后兼容 v1.9）。
      */
     public List<TestCase> generate(String projectId, TestGeneratorAgent.ProgressCallback progressCallback) {
@@ -70,15 +71,25 @@ public class OrchestratorAgent {
             log.info("No PRD for project {}, fallback to code-driven generation", projectId);
         }
 
-        // 2. 代码侧
+        // 2. 代码侧（后端 + 前端）
         if (progressCallback != null) {
             progressCallback.update("正在加载代码分析结果...");
         }
         List<StateMachine> stateMachines = stateMachineRepository.findByProjectId(projectId);
         BackendResult backendResult = loadBackendResult(projectId);
+        // v1.11: 加载前端分析结果
+        FrontendResult frontendResult = loadFrontendResult(projectId);
+        if (frontendResult != null) {
+            log.info("Frontend result loaded for project {}: forms={}, selectors={}, states={}, flows={}",
+                    projectId,
+                    frontendResult.getForms() == null ? 0 : frontendResult.getForms().size(),
+                    frontendResult.getDomSelectors() == null ? 0 : frontendResult.getDomSelectors().size(),
+                    frontendResult.getComponentStates() == null ? 0 : frontendResult.getComponentStates().size(),
+                    frontendResult.getPageFlows() == null ? 0 : frontendResult.getPageFlows().size());
+        }
 
-        // 3. 生成（PRD 为主、代码为辅）
-        return testGeneratorAgent.generate(prdResult, stateMachines, backendResult, progressCallback);
+        // 3. 生成（PRD 为主、代码为辅，含前端上下文）
+        return testGeneratorAgent.generate(prdResult, stateMachines, backendResult, frontendResult, progressCallback);
     }
 
     private BackendResult loadBackendResult(String projectId) {
@@ -95,5 +106,21 @@ public class OrchestratorAgent {
             }
         }
         return backendResult;
+    }
+
+    // v1.11: 加载前端分析结果
+    private FrontendResult loadFrontendResult(String projectId) {
+        Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findByProjectId(projectId);
+        if (analysisOpt.isPresent()) {
+            String json = analysisOpt.get().getFrontendResult();
+            if (json != null && !json.isBlank() && !json.equals("{}")) {
+                try {
+                    return objectMapper.readValue(json, FrontendResult.class);
+                } catch (Exception e) {
+                    log.warn("Failed to parse frontend result for project {}", projectId, e);
+                }
+            }
+        }
+        return null;
     }
 }
