@@ -4,6 +4,31 @@
 
 ---
 
+## v2.6 — MCP Client 多 Server 架构
+
+**日期**: 2026-08-09
+**基线**: v2.5
+**迭代主题**: McpClient 重构为 McpClientManager + McpConnection，支持多 MCP Server 并行管理
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `mcp/McpConnection.java` | 新建 | 单 Server 连接封装（进程管理 + JSON-RPC 通信 + synchronized 防并发） |
+| `mcp/McpClientManager.java` | 新建 | 多 Server 管理器（Map<String, McpConnection>，替代原 McpClient） |
+| `mcp/McpClient.java` | 删除 | 逻辑已拆分到 McpConnection + McpClientManager |
+| `service/LlmService.java` | 修改 | McpClient → McpClientManager，callTool 加 serverName 参数 |
+| `service/McpBridgeService.java` | 修改 | McpClient → McpClientManager，callTool 加 serverName 参数 |
+| `resources/application.yml` | 修改 | `mcp.server.*` → `mcp.servers.llm.*` 多 Server 配置格式 |
+
+### 验证
+- 后端编译: `mvn compile` BUILD SUCCESS (84 source files)
+- 前端: 无改动，跳过构建验证
+
+---
+
 ## v2.5 — 截图标注 + 录屏回放增强
 
 **日期**: 2026-08-09

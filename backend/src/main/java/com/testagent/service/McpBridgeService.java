@@ -3,7 +3,7 @@ package com.testagent.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.dto.LocateResult;
-import com.testagent.mcp.McpClient;
+import com.testagent.mcp.McpClientManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +14,7 @@ import java.util.Map;
 /**
  * v2.1: MCP 桥接服务 — 多模态视觉识别。
  * v2.2: 重构为通过 MCP 协议调用独立 MCP Server。
+ * v2.6: 适配 McpClientManager 多 Server 架构。
  * 不操作浏览器，只做视觉识别。
  */
 @Service
@@ -23,23 +24,23 @@ public class McpBridgeService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
-    private McpClient mcpClient;
+    private McpClientManager mcpClientManager;
 
     /**
-     * v2.2: 通过 MCP 协议调用多模态元素定位。
+     * v2.6: 通过 MCP 协议调用多模态元素定位。
      * @param imagePath 截图文件路径
      * @param elementDesc 元素自然语言描述，如"找到页面登录按钮"
      * @return LocateResult 定位结果
      */
     public LocateResult multimodalElementLocate(String imagePath, String elementDesc) {
-        if (!mcpClient.isAvailable()) {
+        if (!mcpClientManager.isAvailable("llm")) {
             log.warn("MCP Server 不可用，视觉识别降级");
             return LocateResult.fail("MCP Server 未启动");
         }
 
         try {
             // 通过 MCP 协议调用 multimodal_element_locate 工具
-            String response = mcpClient.callTool("multimodal_element_locate",
+            String response = mcpClientManager.callTool("llm", "multimodal_element_locate",
                     Map.of("image_path", imagePath, "element_desc", elementDesc));
 
             return parseLocateResult(response);

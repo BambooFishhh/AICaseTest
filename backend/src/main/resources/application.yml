@@ -22,11 +22,12 @@ llm:
 app:
   output-dir: outputs
   projects-dir: projects
-# v2.2: MCP Server 配置
+# v2.6: MCP 多 Server 配置
 mcp:
-  server:
-    node-path: ${MCP_NODE_PATH:node}
-    script-path: mcp-server/index.js
+  servers:
+    llm:
+      node-path: ${MCP_NODE_PATH:node}
+      script-path: mcp-server/index.js
 logging:
   level:
     com.testagent: INFO
