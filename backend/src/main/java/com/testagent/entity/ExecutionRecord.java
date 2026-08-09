@@ -53,4 +53,7 @@ public class ExecutionRecord {
     @Column(length = 4096)
     @Builder.Default
     private String recordingFrames = "[]";
+
+    /** v2.8: 录屏视频文件路径（WebM 格式，Playwright recordVideo） */
+    private String recordingVideoPath;
 }

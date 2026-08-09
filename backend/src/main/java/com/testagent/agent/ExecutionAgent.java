@@ -5,7 +5,7 @@ import com.testagent.dto.LocateResult;
 import com.testagent.entity.ExecutionStep;
 import com.testagent.service.LlmService;
 import com.testagent.service.McpBridgeService;
-import com.testagent.skill.BrowserSkill;
+import com.testagent.skill.PlaywrightRecordSkill;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +20,7 @@ import java.util.UUID;
  * Agent 接收测试用例步骤，自主决策调用 Skill 工具和 MCP 工具完成测试执行。
  * 每个 step 走 agentic loop：元素描述生成 → 截图 → 多模态识别 → LLM 决策 → 执行 → 验证 → 兜底。
  * 异常隔离到单步：某步失败标记 failed，不终止后续步骤。
+ * v2.8: 浏览器操作从 BrowserSkill(Selenium) 切换到 PlaywrightRecordSkill(Playwright MCP)。
  */
 @Component
 public class ExecutionAgent {
@@ -27,7 +28,7 @@ public class ExecutionAgent {
     private static final Logger log = LoggerFactory.getLogger(ExecutionAgent.class);
 
     @Autowired
-    private BrowserSkill browserSkill;
+    private PlaywrightRecordSkill playwrightSkill;
 
     @Autowired
     private McpBridgeService mcpBridgeService;
@@ -64,7 +65,7 @@ public class ExecutionAgent {
             String elementDesc = askLlmForElementDescription(action, testCaseContext);
 
             // 步骤 2: 截图（操作前）
-            screenshotBefore = browserSkill.takeScreenshot(sessionId);
+            screenshotBefore = playwrightSkill.takeScreenshot(sessionId);
 
             // 步骤 3: 调 MCP 多模态识别（异常时退化为未找到，由 LLM 决策走 DOM 兜底）
             LocateResult locateResult;
@@ -80,14 +81,14 @@ public class ExecutionAgent {
             strategy = String.valueOf(decision.getOrDefault("strategy", "skip"));
 
             // 操作前页面状态（用于步骤 6 验证点击是否生效）
-            Map<String, String> statusBefore = browserSkill.getPageStatus(sessionId);
+            Map<String, String> statusBefore = playwrightSkill.getPageStatus(sessionId);
 
             // 步骤 5: 执行决策
             switch (strategy) {
                 case "visual_click": {
                     int x = toInt(decision.get("x"), locateResult.getClickX());
                     int y = toInt(decision.get("y"), locateResult.getClickY());
-                    browserSkill.visualClick(sessionId, x, y);
+                    playwrightSkill.visualClick(sessionId, x, y);
                     coordinates = "x=" + x + ",y=" + y;
                     clickX = x;  // v2.5: 供操作后截图标注
                     clickY = y;
@@ -99,7 +100,7 @@ public class ExecutionAgent {
                     String selType = selector.path("type").asText("css");
                     String selValue = selector.path("value").asText("");
                     if (!selValue.isEmpty()) {
-                        browserSkill.domClick(sessionId, selType, selValue);
+                        playwrightSkill.domClick(sessionId, selType, selValue);
                         result = "passed";
                     } else {
                         // 无可用选择器，降级为跳过
@@ -118,7 +119,7 @@ public class ExecutionAgent {
 
             // 步骤 6: 验证点击是否生效（仅 visual_click 和 dom_click）
             if (!"skip".equals(strategy)) {
-                Map<String, String> statusAfter = browserSkill.getPageStatus(sessionId);
+                Map<String, String> statusAfter = playwrightSkill.getPageStatus(sessionId);
                 boolean effective = askLlmIfEffective(statusBefore, statusAfter, action);
 
                 if (!effective) {
@@ -130,7 +131,7 @@ public class ExecutionAgent {
                         String selType = selector.path("type").asText("css");
                         String selValue = selector.path("value").asText("");
                         if (!selValue.isEmpty()) {
-                            browserSkill.domClick(sessionId, selType, selValue);
+                            playwrightSkill.domClick(sessionId, selType, selValue);
                             strategy = strategy + "+dom_fallback";
                             // 兜底重试后保留 passed（最佳努力重试）
                         } else {
@@ -145,7 +146,7 @@ public class ExecutionAgent {
             }
 
             // 步骤 7: 截图（操作后）— v2.5: 带点击坐标标注
-            screenshotAfter = browserSkill.takeScreenshotWithMarker(sessionId, clickX, clickY);
+            screenshotAfter = playwrightSkill.takeScreenshotWithMarker(sessionId, clickX, clickY);
 
         } catch (Exception e) {
             // 异常隔离到单步：标记 failed，不终止后续步骤
@@ -154,7 +155,7 @@ public class ExecutionAgent {
             error = e.getMessage();
             // 失败场景也尽量补一张操作后截图作为证据
                 try {
-                    screenshotAfter = browserSkill.takeScreenshotWithMarker(sessionId, clickX, clickY);
+                    screenshotAfter = playwrightSkill.takeScreenshotWithMarker(sessionId, clickX, clickY);
                 } catch (Exception ignored) {
                 // 截图失败不影响错误信息
             }

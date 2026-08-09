@@ -9,7 +9,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.FileSystemResource;
 
+import java.io.File;
 import java.util.List;
 import java.util.Map;
 
@@ -97,5 +100,23 @@ public class ExecutionController {
                 .header(HttpHeaders.CONTENT_TYPE, "text/html; charset=UTF-8")
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"batch_report.html\"")
                 .body(html);
+    }
+
+    /** v2.8: 下载执行录屏视频（WebM） */
+    @GetMapping("/executions/{executionId}/video")
+    public ResponseEntity<Resource> downloadVideo(@PathVariable String executionId) {
+        ExecutionRecord record = executionService.getExecution(executionId);
+        if (record == null || record.getRecordingVideoPath() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        File videoFile = new File(record.getRecordingVideoPath());
+        if (!videoFile.exists()) {
+            return ResponseEntity.notFound().build();
+        }
+        Resource resource = new FileSystemResource(videoFile);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, "video/webm")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"recording.webm\"")
+                .body(resource);
     }
 }

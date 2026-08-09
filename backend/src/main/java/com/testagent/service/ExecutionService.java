@@ -9,7 +9,7 @@ import com.testagent.repository.ExecutionRecordRepository;
 import com.testagent.repository.ExecutionStepRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.agent.ExecutionAgent;
-import com.testagent.skill.BrowserSkill;
+import com.testagent.skill.PlaywrightRecordSkill;
 import com.testagent.skill.EvidenceSkill;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,6 +25,7 @@ import java.nio.file.Paths;
 /**
  * v2.0: 测试用例执行服务。
  * v2.1: 新增 Agent 模式 + 批量执行。
+ * v2.8: 切换到 PlaywrightRecordSkill，录屏升级为 WebM 视频。
  */
 @Service
 public class ExecutionService {
@@ -39,18 +40,14 @@ public class ExecutionService {
     @Autowired
     private TestCaseRepository testCaseRepository;
     @Autowired
-    private BrowserSkill browserSkill;
+    private PlaywrightRecordSkill playwrightSkill;
     @Autowired
     private EvidenceSkill evidenceSkill;
     @Autowired
-    private ExecutionAgent executionAgent;  // v2.1
+    private ExecutionAgent executionAgent;
 
     /**
      * 异步执行测试用例。
-     * @param projectId 项目 ID
-     * @param testCaseId 用例 ID
-     * @param targetUrl 待测页面 URL
-     * @return 执行记录 ID
      */
     public String execute(String projectId, String testCaseId, String targetUrl) {
         return execute(projectId, testCaseId, targetUrl, "programmatic", null);
@@ -88,7 +85,6 @@ public class ExecutionService {
 
     /**
      * v2.1: 批量执行多条测试用例。
-     * @return 批次 ID
      */
     public String executeBatch(String projectId, List<String> caseIds, String targetUrl) {
         String batchId = "batch-" + UUID.randomUUID().toString().substring(0, 8);
@@ -128,7 +124,7 @@ public class ExecutionService {
     }
 
     /**
-     * v2.1: Agent 模式异步执行。
+     * v2.8: Agent 模式异步执行（PlaywrightRecordSkill）。
      */
     @Async("analysisExecutor")
     void runAgentAsync(String executionId, TestCase testCase, String targetUrl) {
@@ -136,25 +132,15 @@ public class ExecutionService {
         int passed = 0, failed = 0, skipped = 0;
         String sessionId = null;
         String errorMessage = null;
-        List<String> recordingFrames = null;
-        List<String> stepFrames = new ArrayList<>();  // v2.5: 步骤截图帧
+        String videoPath = null;
 
         try {
-            // 1. 启动浏览器
-            sessionId = browserSkill.browserLaunch(true, 1280, 800);
+            // 1. 启动浏览器（Playwright 自动开始录屏）
+            sessionId = playwrightSkill.browserLaunch(true, 1280, 800);
 
             // 2. 导航到目标页面
             if (targetUrl != null && !targetUrl.isBlank()) {
-                browserSkill.browserNavigate(sessionId, targetUrl);
-            }
-
-            // v2.4: 开始录屏
-            String recordingDir = "outputs/recordings/" + executionId;
-            try {
-                Files.createDirectories(Paths.get(recordingDir));
-                browserSkill.startRecording(sessionId, recordingDir);
-            } catch (Exception e) {
-                log.warn("Failed to start recording: {}", e.getMessage());
+                playwrightSkill.browserNavigate(sessionId, targetUrl);
             }
 
             // 3. 解析 structuredSteps
@@ -172,10 +158,6 @@ public class ExecutionService {
                         ExecutionStep step = executionAgent.executeStep(sessionId, stepNode, testCaseContext, i + 1, executionId);
                         steps.add(step);
                         executionStepRepository.save(step);
-                        // v2.5: 收集步骤截图用于录屏帧合并
-                        if (step.getScreenshotAfter() != null) {
-                            stepFrames.add(step.getScreenshotAfter());
-                        }
                         switch (step.getResult()) {
                             case "passed" -> passed++;
                             case "failed" -> failed++;
@@ -204,15 +186,14 @@ public class ExecutionService {
             log.error("Agent execution {} failed", executionId, e);
             errorMessage = e.getMessage();
         } finally {
-            // v2.4: 停止录屏
-            try { recordingFrames = browserSkill.stopRecording(); } catch (Exception e) { log.warn("Failed to stop recording", e); }
-            // v2.5: 合并周期截图 + 步骤截图
-            if (recordingFrames == null) {
-                recordingFrames = new ArrayList<>();
-            }
-            recordingFrames.addAll(stepFrames);
+            // v2.8: 停止录屏，保存 WebM 视频
+            try {
+                videoPath = "outputs/recordings/" + executionId + "/video.webm";
+                playwrightSkill.stopRecording(videoPath);
+            } catch (Exception e) { log.warn("Failed to save recording video", e); }
+            // 关闭浏览器
             if (sessionId != null) {
-                try { browserSkill.closeSession(sessionId); } catch (Exception e) { log.warn("Failed to close session", e); }
+                try { playwrightSkill.closeSession(sessionId); } catch (Exception e) { log.warn("Failed to close session", e); }
             }
         }
 
@@ -225,11 +206,8 @@ public class ExecutionService {
             finalRecord.setEndTime(LocalDateTime.now());
             finalRecord.setSummary(summary);
             finalRecord.setErrorMessage(errorMessage);
-            // v2.4: 保存录屏帧列表
-            if (recordingFrames != null) {
-                try { finalRecord.setRecordingFrames(objectMapper.writeValueAsString(recordingFrames)); }
-                catch (Exception e) { log.warn("Failed to serialize recording frames", e); }
-            }
+            // v2.8: 保存录屏视频路径
+            finalRecord.setRecordingVideoPath(videoPath);
             executionRecordRepository.save(finalRecord);
         }
 
@@ -252,31 +230,24 @@ public class ExecutionService {
         log.info("Agent execution {} completed: {}", executionId, summary);
     }
 
+    /**
+     * v2.8: 程序化模式异步执行（PlaywrightRecordSkill）。
+     */
     @Async("analysisExecutor")
     void runAsync(String executionId, TestCase testCase, String targetUrl) {
         List<ExecutionStep> steps = new ArrayList<>();
         int passed = 0, failed = 0, skipped = 0;
         String sessionId = null;
         String errorMessage = null;
-        List<String> recordingFrames = null;
-        List<String> stepFrames = new ArrayList<>();  // v2.5: 步骤截图帧
+        String videoPath = null;
 
         try {
-            // 1. 启动浏览器
-            sessionId = browserSkill.browserLaunch(true, 1280, 800);
+            // 1. 启动浏览器（Playwright 自动开始录屏）
+            sessionId = playwrightSkill.browserLaunch(true, 1280, 800);
 
             // 2. 导航到目标页面
             if (targetUrl != null && !targetUrl.isBlank()) {
-                browserSkill.browserNavigate(sessionId, targetUrl);
-            }
-
-            // v2.4: 开始录屏
-            String recordingDir = "outputs/recordings/" + executionId;
-            try {
-                Files.createDirectories(Paths.get(recordingDir));
-                browserSkill.startRecording(sessionId, recordingDir);
-            } catch (Exception e) {
-                log.warn("Failed to start recording: {}", e.getMessage());
+                playwrightSkill.browserNavigate(sessionId, targetUrl);
             }
 
             // 3. 解析 structuredSteps
@@ -297,7 +268,7 @@ public class ExecutionService {
                             .target("")
                             .strategy("manual")
                             .result("skipped")
-                            .error("v2.0 暂不支持自然语言步骤自动执行，v2.1 Agent 驱动后支持")
+                            .error("暂不支持自然语言步骤自动执行，请使用 Agent 模式")
                             .build();
                     steps.add(step);
                     skipped++;
@@ -319,30 +290,29 @@ public class ExecutionService {
 
                     try {
                         // 截图（操作前）
-                        String screenshotBefore = browserSkill.takeScreenshot(sessionId);
+                        String screenshotBefore = playwrightSkill.takeScreenshot(sessionId);
                         stepBuilder.screenshotBefore(screenshotBefore);
 
                         switch (type) {
                             case "ui_action":
-                                // v2.0: 用 DOM 点击（v2.1 接入多模态视觉定位）
                                 JsonNode selectorNode = node.path("uiSelector");
                                 if (selectorNode.has("type") && selectorNode.has("value")) {
                                     String selType = selectorNode.path("type").asText();
                                     String selValue = selectorNode.path("value").asText();
-                                    browserSkill.domClick(sessionId, selType, selValue);
+                                    playwrightSkill.domClick(sessionId, selType, selValue);
                                     stepBuilder.strategy("dom");
                                     stepBuilder.result("passed");
                                     passed++;
                                 } else {
                                     stepBuilder.strategy("skipped")
                                             .result("skipped")
-                                            .error("无 DOM 选择器，v2.1 Agent 多模态定位后可执行");
+                                            .error("无 DOM 选择器，Agent 模式支持多模态定位");
                                     skipped++;
                                 }
                                 break;
 
                             case "state_assert":
-                                Map<String, String> status = browserSkill.getPageStatus(sessionId);
+                                Map<String, String> status = playwrightSkill.getPageStatus(sessionId);
                                 stepBuilder.strategy("manual")
                                         .result("passed")
                                         .coordinates("url=" + status.get("url"));
@@ -352,7 +322,7 @@ public class ExecutionService {
                             case "api_call":
                                 stepBuilder.strategy("skipped")
                                         .result("skipped")
-                                        .error("v2.1 接入 API 调用");
+                                        .error("暂不支持 API 调用步骤");
                                 skipped++;
                                 break;
 
@@ -363,16 +333,12 @@ public class ExecutionService {
                                 skipped++;
                         }
 
-                        // 截图（操作后）
-                        // v2.5: 步骤截图改用带标注版本（点击坐标来自结构化步骤节点，0 表示不标注）
-                        String screenshotAfter = browserSkill.takeScreenshotWithMarker(
+                        // 截图（操作后）— v2.5: 带标注版本
+                        String screenshotAfter = playwrightSkill.takeScreenshotWithMarker(
                                 sessionId,
                                 node.path("clickX").asInt(0),
                                 node.path("clickY").asInt(0));
                         stepBuilder.screenshotAfter(screenshotAfter);
-                        if (screenshotAfter != null) {
-                            stepFrames.add(screenshotAfter);
-                        }
 
                     } catch (Exception e) {
                         log.warn("Step {} failed: {}", i + 1, e.getMessage());
@@ -380,7 +346,6 @@ public class ExecutionService {
                                 .result("failed")
                                 .error(e.getMessage());
                         failed++;
-                        // 继续执行下一步骤，不终止
                     }
 
                     ExecutionStep step = stepBuilder.build();
@@ -393,17 +358,15 @@ public class ExecutionService {
             log.error("Execution {} failed", executionId, e);
             errorMessage = e.getMessage();
         } finally {
-            // v2.4: 停止录屏
-            try { recordingFrames = browserSkill.stopRecording(); } catch (Exception e) { log.warn("Failed to stop recording", e); }
-            // v2.5: 合并周期截图 + 步骤截图
-            if (recordingFrames == null) {
-                recordingFrames = new ArrayList<>();
-            }
-            recordingFrames.addAll(stepFrames);
+            // v2.8: 停止录屏，保存 WebM 视频
+            try {
+                videoPath = "outputs/recordings/" + executionId + "/video.webm";
+                playwrightSkill.stopRecording(videoPath);
+            } catch (Exception e) { log.warn("Failed to save recording video", e); }
             // 关闭浏览器
             if (sessionId != null) {
                 try {
-                    browserSkill.closeSession(sessionId);
+                    playwrightSkill.closeSession(sessionId);
                 } catch (Exception e) {
                     log.warn("Failed to close browser session", e);
                 }
@@ -420,11 +383,8 @@ public class ExecutionService {
             finalRecord.setEndTime(LocalDateTime.now());
             finalRecord.setSummary(summary);
             finalRecord.setErrorMessage(errorMessage);
-            // v2.4: 保存录屏帧列表
-            if (recordingFrames != null) {
-                try { finalRecord.setRecordingFrames(objectMapper.writeValueAsString(recordingFrames)); }
-                catch (Exception e) { log.warn("Failed to serialize recording frames", e); }
-            }
+            // v2.8: 保存录屏视频路径
+            finalRecord.setRecordingVideoPath(videoPath);
             executionRecordRepository.save(finalRecord);
         }
 

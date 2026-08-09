@@ -4,6 +4,33 @@
 
 ---
 
+## v2.8 — 执行链路切换（Selenium → Playwright）
+
+**日期**: 2026-08-09
+**基线**: v2.7
+**迭代主题**: 执行引擎从 Selenium BrowserSkill 切换到 Playwright PlaywrightRecordSkill，录屏从图片序列升级为 WebM 视频
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `entity/ExecutionRecord.java` | 修改 | 新增 `recordingVideoPath` 字段，存储 WebM 视频路径（替代 recordingFrames 图片序列） |
+| `controller/ExecutionController.java` | 修改 | 新增 `GET /executions/{executionId}/video` 视频下载 API（返回 video/webm 流） |
+| `service/ExecutionService.java` | 修改 | 依赖从 `BrowserSkill` 替换为 `PlaywrightRecordSkill`；录屏逻辑改为 `stopRecording(videoPath)` 保存视频；移除周期截图 startRecording 调用（Playwright 在 launch 时自动开始录屏） |
+| `agent/ExecutionAgent.java` | 修改 | 依赖从 `BrowserSkill` 替换为 `PlaywrightRecordSkill`；所有 `browserSkill.xxx()` 调用替换为 `playwrightSkill.xxx()`（takeScreenshot/visualClick/domClick/getPageStatus/takeScreenshotWithMarker） |
+
+### 验证
+- 后端编译: `mvn compile` BUILD SUCCESS (85 source files)
+- 前端: 无改动（前端 API 调用不变，录屏回放仍用旧图片轮播，v2.9 升级为视频播放）
+
+### 说明
+- BrowserSkill 与 PlaywrightRecordSkill 过渡期共存，v2.9 将清理 Selenium 依赖
+- 截图标注逻辑（红圈+十字准星+坐标文本）在 PlaywrightRecordSkill 中复用 Graphics2D 实现，与 BrowserSkill 行为一致
+
+---
+
 ## v2.7 — Playwright MCP Server + PlaywrightRecordSkill
 
 **日期**: 2026-08-09
