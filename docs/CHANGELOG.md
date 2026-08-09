@@ -4,6 +4,50 @@
 
 ---
 
+## v2.0 — Skill 工具层 + 执行数据模型
+
+**日期**: 2026-08-09
+**基线**: v1.12
+**迭代主题**: AI 用例执行引擎基础设施 — Selenium WebDriver 集成、7 个 Skill 工具、执行数据模型、API、前端触发
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `pom.xml` | 新增 selenium-java 4.21.0 + webdrivermanager 5.8.0 | Selenium WebDriver 依赖 |
+| `skill/BrowserSkill.java` | 新建 | 7 个浏览器操作 Skill：browserLaunch/navigate/takeScreenshot/visualClick/domClick/getPageStatus/closeSession |
+| `skill/EvidenceSkill.java` | 新建 | 证据存储 Skill：saveTestEvidence → Markdown 文档 |
+| `entity/ExecutionRecord.java` | 新建 | 执行记录实体（id/projectId/testCaseId/status/startTime/endTime/summary） |
+| `entity/ExecutionStep.java` | 新建 | 执行步骤实体（stepIndex/action/strategy/result/screenshotBefore/After/error） |
+| `repository/ExecutionRecordRepository.java` | 新建 | 执行记录 Repository |
+| `repository/ExecutionStepRepository.java` | 新建 | 执行步骤 Repository |
+| `service/ExecutionService.java` | 新建 | 程序化执行服务：逐步骤调用 Skill 工具，记录结果，生成证据 |
+| `controller/ExecutionController.java` | 新建 | 4 个执行 API：触发执行/查询结果/执行历史/步骤详情 |
+
+#### 前端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `api/execution.js` | 新建 | 4 个执行 API 封装 |
+| `views/ExecutionResult.vue` | 新建 | 执行结果展示页（概览+步骤详情+轮询） |
+| `components/TestCaseCard.vue` | 修改 | 新增"执行"按钮+URL输入对话框 |
+| `router/index.js` | 修改 | 新增 ExecutionResult 路由 |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（78 source files, 9.4s）
+- 前端构建：`npm run build` 成功
+
+### v2.x 路线
+| 版本 | 主题 | 状态 |
+|------|------|------|
+| v2.0 | Skill 工具层 + 执行数据模型 | ✅ 完成 |
+| v2.1 | MCP 多模态桥接 + Agent 执行引擎 | 规划中 |
+| v2.2 | 执行报告 + 录屏 | 规划中 |
+
+---
+
 ## v1.12 — VueAnalyzer LLM 增强
 
 **日期**: 2026-08-09

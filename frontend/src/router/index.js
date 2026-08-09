@@ -36,6 +36,12 @@ const routes = [
     meta: { title: '测试用例' }
   },
   {
+    path: '/projects/:id/executions/:eid',
+    name: 'ExecutionResult',
+    component: () => import('@/views/ExecutionResult.vue'),
+    meta: { title: '执行结果' }
+  },
+  {
     path: '/projects/:id/state-machines',
     name: 'StateMachineOverview',
     component: () => import('@/views/StateMachineOverview.vue'),

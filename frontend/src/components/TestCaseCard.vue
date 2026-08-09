@@ -400,6 +400,7 @@
             编辑
           </el-button>
           <el-button :icon="Clock" @click="emit('versions')">历史版本</el-button>
+          <el-button type="success" :icon="VideoPlay" @click="openExecuteDialog">执行</el-button>
           <el-button @click="goPrev" :disabled="!canGoPrev">上一条</el-button>
           <el-button @click="goNext" :disabled="!canGoNext">下一条</el-button>
         </template>
@@ -412,13 +413,47 @@
       </div>
     </template>
   </el-dialog>
+
+  <!-- v2.0 执行测试用例对话框 -->
+  <el-dialog
+    v-model="executeDialogVisible"
+    title="执行测试用例"
+    width="480px"
+    append-to-body
+  >
+    <el-form label-width="100px">
+      <el-form-item label="用例标题">
+        <span>{{ testCase.title || '-' }}</span>
+      </el-form-item>
+      <el-form-item label="待测页面URL">
+        <el-input
+          v-model="targetUrl"
+          placeholder="http://localhost:5173"
+          clearable
+        />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="executeDialogVisible = false">取消</el-button>
+      <el-button
+        type="success"
+        :icon="VideoPlay"
+        :loading="executing"
+        @click="confirmExecute"
+      >
+        确认执行
+      </el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, EditPen, Check, Clock } from '@element-plus/icons-vue'
+import { Plus, Delete, EditPen, Check, Clock, VideoPlay } from '@element-plus/icons-vue'
 import StateMachineViewer from './StateMachineViewer.vue'
+import { executeTestCase } from '@/api/execution'
 
 const props = defineProps({
   testCase: {
@@ -445,8 +480,17 @@ const props = defineProps({
 
 const emit = defineEmits(['save', 'close', 'delete', 'prev', 'next', 'versions'])
 
+const route = useRoute()
+const router = useRouter()
+const projectId = route.params.id
+
 // 编辑模式状态
 const editMode = ref(false)
+
+// 执行相关状态
+const executeDialogVisible = ref(false)
+const targetUrl = ref('http://localhost:5173')
+const executing = ref(false)
 
 // 表单数据（编辑模式）
 const formData = reactive({
@@ -702,6 +746,36 @@ const handleDelete = async () => {
 // v1.3 导航
 const goPrev = () => emit('prev')
 const goNext = () => emit('next')
+
+// v2.0 执行测试用例
+const openExecuteDialog = () => {
+  targetUrl.value = 'http://localhost:5173'
+  executeDialogVisible.value = true
+}
+
+const confirmExecute = async () => {
+  if (!targetUrl.value || !targetUrl.value.trim()) {
+    ElMessage.warning('请输入待测页面URL')
+    return
+  }
+  if (!props.testCase?.id) {
+    ElMessage.warning('用例ID不存在，无法执行')
+    return
+  }
+  executing.value = true
+  try {
+    const res = await executeTestCase(projectId, props.testCase.id, targetUrl.value.trim())
+    const eid = res.data?.executionId
+    executeDialogVisible.value = false
+    if (eid) {
+      router.push(`/projects/${projectId}/executions/${eid}`)
+    }
+  } catch (e) {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    executing.value = false
+  }
+}
 
 // 保存：同步置信度并发射事件
 const handleSave = () => {
