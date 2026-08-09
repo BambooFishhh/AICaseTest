@@ -16,9 +16,11 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 public class TestGeneratorAgent {
@@ -29,19 +31,41 @@ public class TestGeneratorAgent {
     @Autowired
     private LlmService llmService;
 
+    // ==================== 主生成流程（v1.2 分模块生成） ====================
+
     public List<TestCase> generate(List<StateMachine> stateMachines, BackendResult backendResult) {
-        List<TestCase> result;
-        try {
-            result = generateByLlm(stateMachines, backendResult);
-            if (result == null || result.isEmpty()) {
-                log.warn("LLM test generation returned empty, falling back to rule-based");
-                result = generateByRules(stateMachines, backendResult);
+        List<TestCase> result = new ArrayList<>();
+
+        if (stateMachines != null && !stateMachines.isEmpty()) {
+            for (StateMachine sm : stateMachines) {
+                List<TestCase> moduleCases;
+                try {
+                    moduleCases = generateByLlmForStateMachine(sm, backendResult);
+                    if (moduleCases == null || moduleCases.isEmpty()) {
+                        log.warn("LLM returned empty for state machine {}, using rules", sm.getName());
+                        moduleCases = generateByRulesForStateMachine(sm, backendResult);
+                    }
+                } catch (Exception e) {
+                    log.warn("LLM generation failed for state machine {}, falling back to rules: {}",
+                            sm.getName(), e.getMessage());
+                    moduleCases = generateByRulesForStateMachine(sm, backendResult);
+                }
+                result.addAll(moduleCases);
             }
-        } catch (Exception e) {
-            log.warn("LLM test generation failed, falling back to rule-based: {}", e.getMessage());
-            result = generateByRules(stateMachines, backendResult);
         }
 
+        // 无状态机时按 endpoints 生成
+        if (result.isEmpty() && backendResult != null && backendResult.getEndpoints() != null) {
+            result = generateByEndpoints(backendResult);
+        }
+
+        // 质量评分（去重前计算，用于去重决策）
+        calculateQualityScores(result);
+
+        // 去重
+        result = deduplicate(result);
+
+        // 编号
         int counter = 1;
         for (TestCase tc : result) {
             tc.setId(String.format("TC-%03d", counter++));
@@ -50,49 +74,36 @@ public class TestGeneratorAgent {
         return result;
     }
 
-    // ==================== LLM 生成 ====================
+    // ==================== LLM 生成（分模块） ====================
 
-    private List<TestCase> generateByLlm(List<StateMachine> stateMachines, BackendResult backendResult) {
+    private List<TestCase> generateByLlmForStateMachine(StateMachine sm, BackendResult backendResult) {
         Map<String, Object> context = new LinkedHashMap<>();
 
-        List<Map<String, Object>> smList = new ArrayList<>();
-        for (StateMachine sm : stateMachines) {
-            Map<String, Object> smMap = new LinkedHashMap<>();
-            smMap.put("name", sm.getName());
-            smMap.put("description", sm.getDescription());
-            smMap.put("states", JsonHelper.parseListMap(sm.getStates()));
-            smMap.put("transitions", JsonHelper.parseListMap(sm.getTransitions()));
-            smList.add(smMap);
-        }
-        context.put("stateMachines", smList);
+        Map<String, Object> smMap = new LinkedHashMap<>();
+        smMap.put("name", sm.getName());
+        smMap.put("description", sm.getDescription());
+        smMap.put("states", JsonHelper.parseListMap(sm.getStates()));
+        smMap.put("transitions", JsonHelper.parseListMap(sm.getTransitions()));
+        context.put("stateMachine", smMap);
 
-        if (backendResult != null) {
-            List<Map<String, Object>> endpointList = new ArrayList<>();
-            if (backendResult.getEndpoints() != null) {
-                for (EndpointInfo ep : backendResult.getEndpoints()) {
-                    Map<String, Object> epMap = new LinkedHashMap<>();
-                    epMap.put("method", ep.getMethod());
-                    epMap.put("path", ep.getPath());
-                    epMap.put("function", ep.getFunction());
-                    endpointList.add(epMap);
-                }
+        // 按模块名匹配相关端点
+        List<Map<String, Object>> matchedEndpoints = matchEndpoints(backendResult, sm.getName());
+        context.put("endpoints", matchedEndpoints);
+
+        // business rules
+        List<Map<String, Object>> ruleList = new ArrayList<>();
+        if (backendResult != null && backendResult.getBusinessRules() != null) {
+            for (BusinessRule br : backendResult.getBusinessRules()) {
+                Map<String, Object> brMap = new LinkedHashMap<>();
+                brMap.put("function", br.getFunction());
+                brMap.put("rule", br.getRule());
+                brMap.put("ruleType", br.getRuleType());
+                ruleList.add(brMap);
             }
-            context.put("endpoints", endpointList);
-
-            List<Map<String, Object>> ruleList = new ArrayList<>();
-            if (backendResult.getBusinessRules() != null) {
-                for (BusinessRule br : backendResult.getBusinessRules()) {
-                    Map<String, Object> brMap = new LinkedHashMap<>();
-                    brMap.put("function", br.getFunction());
-                    brMap.put("rule", br.getRule());
-                    brMap.put("ruleType", br.getRuleType());
-                    ruleList.add(brMap);
-                }
-            }
-            context.put("businessRules", ruleList);
         }
+        context.put("businessRules", ruleList);
 
-        String systemPrompt = "你是测试用例生成专家。根据提供的后端代码分析结果和状态机信息，生成全面的、AI可执行的测试用例。"
+        String systemPrompt = "你是测试用例生成专家。根据提供的状态机信息和后端接口信息，生成全面的、AI可执行的测试用例。"
                 + "请返回JSON数组，每个测试用例包含："
                 + "title(标题), module(模块), type(类型: positive/negative/boundary/data), "
                 + "priority(优先级: P0/P1/P2/P3), "
@@ -115,6 +126,10 @@ public class TestGeneratorAgent {
         String response = llmService.chat(systemPrompt, userPrompt, 0.4);
         String json = extractJsonArray(response);
 
+        return parseTestCases(json);
+    }
+
+    private List<TestCase> parseTestCases(String json) {
         List<TestCase> result = new ArrayList<>();
         try {
             JsonNode array = objectMapper.readTree(json);
@@ -128,7 +143,6 @@ public class TestGeneratorAgent {
                     tc.setPreconditions(serializeStringArray(node.path("preconditions")));
                     tc.setSteps(serializeStringArray(node.path("steps")));
                     tc.setExpectedResults(serializeStringArray(node.path("expectedResults")));
-                    // v1.1 结构化字段
                     tc.setStructuredSteps(nodeToJson(node.path("structuredSteps"), "[]"));
                     tc.setApiEndpoints(nodeToJson(node.path("apiEndpoints"), "[]"));
                     tc.setTestData(nodeToJson(node.path("testData"), "{}"));
@@ -146,67 +160,62 @@ public class TestGeneratorAgent {
         return result;
     }
 
-    // ==================== 规则生成（LLM 失败回退） ====================
+    // ==================== 规则生成（单模块回退） ====================
 
-    private List<TestCase> generateByRules(List<StateMachine> stateMachines, BackendResult backendResult) {
+    private List<TestCase> generateByRulesForStateMachine(StateMachine sm, BackendResult backendResult) {
         List<TestCase> result = new ArrayList<>();
+        List<Map<String, Object>> states = JsonHelper.parseListMap(sm.getStates());
+        List<Map<String, Object>> transitions = JsonHelper.parseListMap(sm.getTransitions());
+        List<Map<String, Object>> matchedEndpoints = matchEndpoints(backendResult, sm.getName());
 
-        if (stateMachines != null) {
-            for (StateMachine sm : stateMachines) {
-                List<Map<String, Object>> states = JsonHelper.parseListMap(sm.getStates());
-                List<Map<String, Object>> transitions = JsonHelper.parseListMap(sm.getTransitions());
-                List<Map<String, Object>> matchedEndpoints = matchEndpoints(backendResult, sm.getName());
+        result.add(buildPositiveTest(sm, transitions, matchedEndpoints));
+        result.add(buildNegativeTest(sm, states, transitions));
+        result.add(buildBoundaryTest(sm, states, transitions));
+        return result;
+    }
 
-                result.add(buildPositiveTest(sm, transitions, matchedEndpoints));
-                result.add(buildNegativeTest(sm, states, transitions));
-                result.add(buildBoundaryTest(sm, states, transitions));
-            }
+    private List<TestCase> generateByEndpoints(BackendResult backendResult) {
+        List<TestCase> result = new ArrayList<>();
+        for (EndpointInfo endpoint : backendResult.getEndpoints()) {
+            TestCase tc = new TestCase();
+            tc.setTitle("验证接口 " + endpoint.getMethod() + " " + endpoint.getPath());
+            tc.setModule("接口测试");
+            tc.setType("positive");
+            tc.setPriority("P1");
+            tc.setPreconditions(toJsonList("服务正常运行"));
+            tc.setSteps(toJsonList("调用接口 " + endpoint.getMethod() + " " + endpoint.getPath()));
+            tc.setExpectedResults(toJsonList("接口应返回成功响应"));
+
+            List<Map<String, Object>> steps = new ArrayList<>();
+            Map<String, Object> step = new LinkedHashMap<>();
+            step.put("order", 1);
+            step.put("action", "调用接口");
+            step.put("target", endpoint.getMethod() + " " + endpoint.getPath());
+            step.put("expected", "接口返回成功响应");
+            step.put("data", new LinkedHashMap<>());
+            step.put("type", "api_call");
+            steps.add(step);
+            tc.setStructuredSteps(toJson(steps));
+
+            List<Map<String, Object>> eps = new ArrayList<>();
+            Map<String, Object> ep = new LinkedHashMap<>();
+            ep.put("method", endpoint.getMethod());
+            ep.put("path", endpoint.getPath());
+            ep.put("description", endpoint.getFunction());
+            eps.add(ep);
+            tc.setApiEndpoints(toJson(eps));
+
+            tc.setTestData("{}");
+            Map<String, Object> hints = new LinkedHashMap<>();
+            hints.put("approach", "api_call");
+            hints.put("notes", "直接调用该接口验证");
+            hints.put("prerequisites", toJsonList("服务正常运行"));
+            tc.setExecutionHints(toJson(hints));
+            tc.setStateMachineRef("{}");
+            tc.setSource("rule_based");
+            tc.setConfidence(0.5);
+            result.add(tc);
         }
-
-        if (result.isEmpty() && backendResult != null && backendResult.getEndpoints() != null) {
-            for (EndpointInfo endpoint : backendResult.getEndpoints()) {
-                TestCase tc = new TestCase();
-                tc.setTitle("验证接口 " + endpoint.getMethod() + " " + endpoint.getPath());
-                tc.setModule("接口测试");
-                tc.setType("positive");
-                tc.setPriority("P1");
-                tc.setPreconditions(toJsonList("服务正常运行"));
-                tc.setSteps(toJsonList("调用接口 " + endpoint.getMethod() + " " + endpoint.getPath()));
-                tc.setExpectedResults(toJsonList("接口应返回成功响应"));
-
-                // v1.1 结构化字段
-                List<Map<String, Object>> steps = new ArrayList<>();
-                Map<String, Object> step = new LinkedHashMap<>();
-                step.put("order", 1);
-                step.put("action", "调用接口");
-                step.put("target", endpoint.getMethod() + " " + endpoint.getPath());
-                step.put("expected", "接口返回成功响应");
-                step.put("data", new LinkedHashMap<>());
-                step.put("type", "api_call");
-                steps.add(step);
-                tc.setStructuredSteps(toJson(steps));
-
-                List<Map<String, Object>> eps = new ArrayList<>();
-                Map<String, Object> ep = new LinkedHashMap<>();
-                ep.put("method", endpoint.getMethod());
-                ep.put("path", endpoint.getPath());
-                ep.put("description", endpoint.getFunction());
-                eps.add(ep);
-                tc.setApiEndpoints(toJson(eps));
-
-                tc.setTestData("{}");
-                Map<String, Object> hints = new LinkedHashMap<>();
-                hints.put("approach", "api_call");
-                hints.put("notes", "直接调用该接口验证");
-                hints.put("prerequisites", toJsonList("服务正常运行"));
-                tc.setExecutionHints(toJson(hints));
-                tc.setStateMachineRef("{}");
-                tc.setSource("rule_based");
-                tc.setConfidence(0.5);
-                result.add(tc);
-            }
-        }
-
         return result;
     }
 
@@ -277,7 +286,6 @@ public class TestGeneratorAgent {
         tc.setPriority("P1");
         tc.setPreconditions(toJsonList("系统处于某个已定义状态"));
 
-        // 构造若干反向/非法转换作为 forbiddenTransitions
         List<Map<String, Object>> forbidden = buildForbiddenTransitions(states, transitions);
 
         List<Map<String, Object>> structuredSteps = new ArrayList<>();
@@ -387,11 +395,126 @@ public class TestGeneratorAgent {
         return tc;
     }
 
+    // ==================== 去重（v1.2） ====================
+
+    private List<TestCase> deduplicate(List<TestCase> cases) {
+        List<TestCase> result = new ArrayList<>();
+        for (TestCase tc : cases) {
+            boolean isDup = false;
+            for (int i = 0; i < result.size(); i++) {
+                TestCase existing = result.get(i);
+                if (isDuplicate(tc, existing)) {
+                    // 保留 qualityScore 更高者
+                    int tcScore = tc.getQualityScore() == null ? 0 : tc.getQualityScore();
+                    int existScore = existing.getQualityScore() == null ? 0 : existing.getQualityScore();
+                    if (tcScore > existScore) {
+                        result.set(i, tc);
+                    }
+                    isDup = true;
+                    break;
+                }
+            }
+            if (!isDup) {
+                result.add(tc);
+            }
+        }
+        log.info("Deduplication: {} cases -> {} cases", cases.size(), result.size());
+        return result;
+    }
+
+    private boolean isDuplicate(TestCase a, TestCase b) {
+        String titleA = a.getTitle() == null ? "" : a.getTitle().trim();
+        String titleB = b.getTitle() == null ? "" : b.getTitle().trim();
+        if (titleA.isEmpty() || titleB.isEmpty()) {
+            return false;
+        }
+        // 标题完全相同
+        if (titleA.equals(titleB)) {
+            return true;
+        }
+        // 同模块才判重
+        String modA = a.getModule() == null ? "" : a.getModule();
+        String modB = b.getModule() == null ? "" : b.getModule();
+        if (modA.equals(modB)) {
+            // 子串包含关系
+            if (titleA.contains(titleB) || titleB.contains(titleA)) {
+                return true;
+            }
+            // 短标题字符重叠率 > 80%
+            if (titleA.length() <= 20 && titleB.length() <= 20) {
+                Set<Character> setA = new HashSet<>();
+                for (char c : titleA.toCharArray()) setA.add(c);
+                Set<Character> setB = new HashSet<>();
+                for (char c : titleB.toCharArray()) setB.add(c);
+                Set<Character> intersection = new HashSet<>(setA);
+                intersection.retainAll(setB);
+                int maxLen = Math.max(setA.size(), setB.size());
+                if (maxLen > 0 && (double) intersection.size() / maxLen > 0.8) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // ==================== 质量评分（v1.2） ====================
+
+    private void calculateQualityScores(List<TestCase> cases) {
+        for (TestCase tc : cases) {
+            tc.setQualityScore(calculateQualityScore(tc));
+        }
+    }
+
+    private int calculateQualityScore(TestCase tc) {
+        int score = 0;
+
+        // 结构化步骤完整 30
+        List<Map<String, Object>> sSteps = JsonHelper.parseListMap(tc.getStructuredSteps());
+        if (!sSteps.isEmpty()) {
+            boolean allComplete = true;
+            for (Map<String, Object> s : sSteps) {
+                if (s.get("action") == null || s.get("target") == null || s.get("expected") == null) {
+                    allComplete = false;
+                    break;
+                }
+            }
+            score += allComplete ? 30 : 15;
+        }
+
+        // 关联接口 20
+        List<Map<String, Object>> eps = JsonHelper.parseListMap(tc.getApiEndpoints());
+        if (!eps.isEmpty()) {
+            score += 20;
+        }
+
+        // 测试数据 15
+        Map<String, Object> td = JsonHelper.parseMap(tc.getTestData());
+        if (!td.isEmpty()) {
+            score += 15;
+        }
+
+        // 执行提示 15
+        Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
+        if (hints.containsKey("approach") && hints.get("approach") != null) {
+            score += 15;
+        }
+
+        // 步骤数量 10
+        if (sSteps.size() >= 2) {
+            score += 10;
+        }
+
+        // 预期结果 10
+        List<String> exp = JsonHelper.parseListString(tc.getExpectedResults());
+        if (!exp.isEmpty()) {
+            score += 10;
+        }
+
+        return score;
+    }
+
     // ==================== 辅助方法 ====================
 
-    /**
-     * 构造状态机引用 JSON。includeForbidden 为 true 时附带 forbiddenTransitions。
-     */
     private String buildStateMachineRef(StateMachine sm, List<Map<String, Object>> transitions,
                                         boolean includeForbidden) {
         return buildStateMachineRef(sm, transitions, includeForbidden, new ArrayList<>());
@@ -409,14 +532,10 @@ public class TestGeneratorAgent {
         return toJson(ref);
     }
 
-    /**
-     * 基于状态机状态构造若干反向/非法转换（简单启发式：反转已有转换并标记为 forbidden）。
-     */
     private List<Map<String, Object>> buildForbiddenTransitions(List<Map<String, Object>> states,
                                                                 List<Map<String, Object>> transitions) {
         List<Map<String, Object>> forbidden = new ArrayList<>();
         if (transitions != null && !transitions.isEmpty()) {
-            // 取首条转换的反向作为示例非法转换
             Map<String, Object> first = transitions.get(0);
             Map<String, Object> reverse = new LinkedHashMap<>();
             reverse.put("from", first.getOrDefault("to", ""));
@@ -424,7 +543,6 @@ public class TestGeneratorAgent {
             reverse.put("reason", "反向转换通常不被允许");
             forbidden.add(reverse);
         }
-        // 若有终态，构造从终态出发的非法转换
         if (states != null) {
             for (Map<String, Object> s : states) {
                 Object isTerminal = s.get("is_terminal");
@@ -441,9 +559,6 @@ public class TestGeneratorAgent {
         return forbidden;
     }
 
-    /**
-     * 按状态机名称关键词匹配后端 API 端点。
-     */
     private List<Map<String, Object>> matchEndpoints(BackendResult backendResult, String smName) {
         List<Map<String, Object>> matched = new ArrayList<>();
         if (backendResult == null || backendResult.getEndpoints() == null || smName == null) {

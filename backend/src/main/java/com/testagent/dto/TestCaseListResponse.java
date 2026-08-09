@@ -4,6 +4,7 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 @Data
 @Builder
@@ -16,4 +17,6 @@ public class TestCaseListResponse {
     private int pageSize;
 
     private List<TestCaseDTO> testCases;
+
+    private Map<String, Object> coverage;
 }

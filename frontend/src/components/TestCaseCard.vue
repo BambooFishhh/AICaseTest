@@ -44,6 +44,15 @@
             {{ getExecutionStatusLabel(testCase.executionStatus) }}
           </el-tag>
         </el-descriptions-item>
+        <el-descriptions-item label="质量评分">
+          <el-progress
+            v-if="testCase.qualityScore > 0"
+            :percentage="testCase.qualityScore"
+            :color="qualityColor(testCase.qualityScore)"
+            :stroke-width="14"
+          />
+          <span v-else class="text-muted">未评分</span>
+        </el-descriptions-item>
       </el-descriptions>
 
       <el-divider content-position="left">前置条件</el-divider>
@@ -546,6 +555,13 @@ const getExecutionStatusTagType = (status) => {
   return map[status] || 'info'
 }
 
+// v1.2 质量评分颜色
+const qualityColor = (score) => {
+  if (score >= 80) return '#67c23a'
+  if (score >= 50) return '#e6a23c'
+  return '#f56c6c'
+}
+
 // 进入编辑模式：克隆 props 数据到表单
 const enterEditMode = () => {
   const tc = props.testCase || {}
@@ -729,5 +745,9 @@ watch(
   margin-top: 4px;
   font-size: 13px;
   color: #606266;
+}
+.text-muted {
+  color: #c0c4cc;
+  font-size: 12px;
 }
 </style>

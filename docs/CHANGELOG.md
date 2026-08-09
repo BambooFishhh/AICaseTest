@@ -4,6 +4,41 @@
 
 ---
 
+## v1.2 — 用例生成质量增强
+
+**日期**: 2026-08-09
+**基线**: v1.1
+**迭代主题**: 提升用例生成质量——分模块精准生成、去重、覆盖率度量、质量评分
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `agent/TestGeneratorAgent.java` | 重构 `generate()` 为分模块生成：按状态机逐个调用 LLM，单模块失败仅回退该模块；新增 `deduplicate()`（标题相似度去重，保留质量更高者）、`calculateQualityScore()`（结构完整度 0-100 评分） | 单次聚焦提升质量、避免 token 超限、单点失败隔离；消除重复用例；量化用例质量 |
+| `entity/TestCase.java` | 新增 `qualityScore` 字段（Integer） | 持久化质量评分 |
+| `dto/TestCaseDTO.java` | 新增 `qualityScore` 字段 + `from()` | 向前端透传质量分 |
+| `dto/TestCaseListResponse.java` | 新增 `coverage` 字段（Map） | 随列表响应返回覆盖率 |
+| `service/TestCaseService.java` | `listTestCases()` 增加覆盖率计算；新增 `calculateCoverage()`（状态转换覆盖率 + 接口覆盖率 + 类型分布） | 让用例质量可度量、可视化 |
+
+#### 前端
+
+| 文件 | 改动 | 目的 |
+|------|------|------|
+| `views/TestCaseList.vue` | 新增覆盖率面板（状态转换/接口覆盖率进度条）；表格新增"质量"列（进度条） | 质量可视化，用户直观感知覆盖率与用例质量 |
+| `components/TestCaseCard.vue` | 元信息区新增"质量评分"进度条 | 详情中展示单用例质量分 |
+
+### 验证
+- 后端编译：`mvn compile` BUILD SUCCESS（58 源文件）
+- 前端构建：`npm run build` 成功（19.40s）
+
+### 下一步（v1.3 规划）
+- AI 用例执行引擎：基于 structuredSteps + executionHints 自动调用 API 执行用例
+- 执行结果存储与 executionStatus 状态流转
+
+---
+
 ## v1.1 — 结构化可执行用例（Executable Test Case Spec）
 
 **日期**: 2026-08-09

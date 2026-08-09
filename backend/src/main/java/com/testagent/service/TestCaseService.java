@@ -3,8 +3,10 @@ package com.testagent.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.agent.TestGeneratorAgent;
 import com.testagent.analyzer.result.BackendResult;
+import com.testagent.analyzer.result.EndpointInfo;
 import com.testagent.common.BusinessException;
 import com.testagent.dto.GenerateRequest;
+import com.testagent.dto.JsonHelper;
 import com.testagent.dto.TestCaseDTO;
 import com.testagent.dto.TestCaseListResponse;
 import com.testagent.dto.UpdateTestCaseRequest;
@@ -24,8 +26,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -115,11 +122,14 @@ public class TestCaseService {
                 .map(TestCaseDTO::from)
                 .collect(Collectors.toList());
 
+        Map<String, Object> coverage = calculateCoverage(projectId, all);
+
         return TestCaseListResponse.builder()
                 .total(total)
                 .page(page)
                 .pageSize(pageSize)
                 .testCases(items)
+                .coverage(coverage)
                 .build();
     }
 
@@ -186,6 +196,110 @@ public class TestCaseService {
             project.setStatus(status);
             projectRepository.save(project);
         });
+    }
+
+    private Map<String, Object> calculateCoverage(String projectId, List<TestCase> allTestCases) {
+        Map<String, Object> coverage = new LinkedHashMap<>();
+
+        // 状态转换覆盖率
+        List<StateMachine> stateMachines = stateMachineRepository.findByProjectId(projectId);
+        Set<String> totalTransitions = new HashSet<>();
+        for (StateMachine sm : stateMachines) {
+            List<Map<String, Object>> transitions = JsonHelper.parseListMap(sm.getTransitions());
+            for (Map<String, Object> t : transitions) {
+                String from = String.valueOf(t.getOrDefault("from", ""));
+                String to = String.valueOf(t.getOrDefault("to", ""));
+                totalTransitions.add(from + "->" + to);
+            }
+        }
+
+        Set<String> coveredTransitions = new HashSet<>();
+        for (TestCase tc : allTestCases) {
+            Map<String, Object> smRef = JsonHelper.parseMap(tc.getStateMachineRef());
+            Object transitionsObj = smRef.get("transitions");
+            if (transitionsObj instanceof List) {
+                for (Object item : (List<?>) transitionsObj) {
+                    if (item instanceof Map) {
+                        Map<?, ?> t = (Map<?, ?>) item;
+                        String from = String.valueOf(t.get("from"));
+                        String to = String.valueOf(t.get("to"));
+                        coveredTransitions.add(from + "->" + to);
+                    }
+                }
+            }
+        }
+
+        int stateTotal = totalTransitions.size();
+        int stateCovered = 0;
+        for (String ct : coveredTransitions) {
+            if (totalTransitions.contains(ct)) {
+                stateCovered++;
+            }
+        }
+        Map<String, Object> stateCov = new LinkedHashMap<>();
+        stateCov.put("covered", stateCovered);
+        stateCov.put("total", stateTotal);
+        stateCov.put("rate", stateTotal == 0 ? 0.0 : (double) stateCovered / stateTotal);
+        coverage.put("stateTransition", stateCov);
+
+        // 接口覆盖率
+        Set<String> totalEndpoints = new HashSet<>();
+        Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findByProjectId(projectId);
+        if (analysisOpt.isPresent()) {
+            String backendResultJson = analysisOpt.get().getBackendResult();
+            if (backendResultJson != null && !backendResultJson.isBlank()
+                    && !backendResultJson.equals("{}")) {
+                try {
+                    BackendResult backendResult = objectMapper.readValue(backendResultJson, BackendResult.class);
+                    if (backendResult.getEndpoints() != null) {
+                        for (EndpointInfo ep : backendResult.getEndpoints()) {
+                            totalEndpoints.add(ep.getMethod() + " " + ep.getPath());
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to parse backend result for coverage", e);
+                }
+            }
+        }
+
+        Set<String> coveredEndpoints = new HashSet<>();
+        for (TestCase tc : allTestCases) {
+            List<Map<String, Object>> eps = JsonHelper.parseListMap(tc.getApiEndpoints());
+            for (Map<String, Object> ep : eps) {
+                String method = String.valueOf(ep.getOrDefault("method", ""));
+                String path = String.valueOf(ep.getOrDefault("path", ""));
+                coveredEndpoints.add(method + " " + path);
+            }
+        }
+
+        int apiTotal = totalEndpoints.size();
+        int apiCovered = 0;
+        for (String ce : coveredEndpoints) {
+            if (totalEndpoints.contains(ce)) {
+                apiCovered++;
+            }
+        }
+        Map<String, Object> apiCov = new LinkedHashMap<>();
+        apiCov.put("covered", apiCovered);
+        apiCov.put("total", apiTotal);
+        apiCov.put("rate", apiTotal == 0 ? 0.0 : (double) apiCovered / apiTotal);
+        coverage.put("apiEndpoint", apiCov);
+
+        // 类型分布
+        Map<String, Integer> typeDist = new LinkedHashMap<>();
+        typeDist.put("positive", 0);
+        typeDist.put("negative", 0);
+        typeDist.put("boundary", 0);
+        typeDist.put("data", 0);
+        for (TestCase tc : allTestCases) {
+            String type = tc.getType();
+            if (type != null && typeDist.containsKey(type)) {
+                typeDist.put(type, typeDist.get(type) + 1);
+            }
+        }
+        coverage.put("typeDistribution", typeDist);
+
+        return coverage;
     }
 
     private String toJson(Object obj) {

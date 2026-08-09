@@ -43,6 +43,37 @@
       </el-col>
     </el-row>
 
+    <!-- 覆盖率面板（v1.2） -->
+    <el-card v-if="coverage" class="coverage-card">
+      <template #header>覆盖率度量</template>
+      <el-row :gutter="16">
+        <el-col :span="12">
+          <div class="coverage-item">
+            <div class="coverage-label">状态转换覆盖率</div>
+            <el-progress
+              :percentage="Math.round(coverage.stateTransition.rate * 100)"
+              :color="coverageColor(coverage.stateTransition.rate)"
+            />
+            <div class="coverage-detail">
+              {{ coverage.stateTransition.covered }} / {{ coverage.stateTransition.total }}
+            </div>
+          </div>
+        </el-col>
+        <el-col :span="12">
+          <div class="coverage-item">
+            <div class="coverage-label">接口覆盖率</div>
+            <el-progress
+              :percentage="Math.round(coverage.apiEndpoint.rate * 100)"
+              :color="coverageColor(coverage.apiEndpoint.rate)"
+            />
+            <div class="coverage-detail">
+              {{ coverage.apiEndpoint.covered }} / {{ coverage.apiEndpoint.total }}
+            </div>
+          </div>
+        </el-col>
+      </el-row>
+    </el-card>
+
     <el-card class="filter-card">
       <el-row :gutter="16">
         <el-col :xs="24" :sm="8">
@@ -115,6 +146,17 @@
           <el-tag :type="priorityTagType(row.priority)">{{ row.priority }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="质量" width="120">
+        <template #default="{ row }">
+          <el-progress
+            v-if="row.qualityScore > 0"
+            :percentage="row.qualityScore"
+            :color="qualityColor(row.qualityScore)"
+            :stroke-width="14"
+          />
+          <span v-else class="text-muted">未评分</span>
+        </template>
+      </el-table-column>
     </el-table>
 
     <el-pagination
@@ -167,6 +209,7 @@ const pollingMessage = ref('')
 
 const testCases = ref([])
 const allTestCases = ref([])
+const coverage = ref(null)
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
@@ -218,6 +261,18 @@ function priorityTagType(priority) {
   return 'info'
 }
 
+// v1.2 覆盖率与质量颜色
+function coverageColor(rate) {
+  if (rate >= 0.8) return '#67c23a'
+  if (rate >= 0.5) return '#e6a23c'
+  return '#f56c6c'
+}
+function qualityColor(score) {
+  if (score >= 80) return '#67c23a'
+  if (score >= 50) return '#e6a23c'
+  return '#f56c6c'
+}
+
 async function loadList() {
   loading.value = true
   try {
@@ -230,6 +285,7 @@ async function loadList() {
     total.value = data.total || 0
     page.value = data.page || page.value
     pageSize.value = data.pageSize || pageSize.value
+    coverage.value = data.coverage || null
   } finally {
     loading.value = false
   }
@@ -354,5 +410,25 @@ onUnmounted(() => {
   margin-top: 20px;
   display: flex;
   justify-content: flex-end;
+}
+.coverage-card {
+  margin-bottom: 20px;
+}
+.coverage-item {
+  margin-bottom: 8px;
+}
+.coverage-label {
+  font-size: 13px;
+  color: #606266;
+  margin-bottom: 6px;
+}
+.coverage-detail {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+}
+.text-muted {
+  color: #c0c4cc;
+  font-size: 12px;
 }
 </style>

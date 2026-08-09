@@ -42,6 +42,8 @@ public class TestCaseDTO {
 
     private String executionStatus;
 
+    private Integer qualityScore;
+
     private String source;
 
     private Double confidence;
@@ -68,6 +70,7 @@ public class TestCaseDTO {
                 .testData(JsonHelper.parseMap(entity.getTestData()))
                 .executionHints(JsonHelper.parseMap(entity.getExecutionHints()))
                 .executionStatus(entity.getExecutionStatus())
+                .qualityScore(entity.getQualityScore())
                 .source(entity.getSource())
                 .confidence(entity.getConfidence())
                 .createdAt(entity.getCreatedAt())

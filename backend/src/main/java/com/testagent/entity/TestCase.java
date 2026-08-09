@@ -58,6 +58,9 @@ public class TestCase {
     @Column(name = "execution_status")
     private String executionStatus = "not_executed";
 
+    @Column(name = "quality_score")
+    private Integer qualityScore = 0;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 }
