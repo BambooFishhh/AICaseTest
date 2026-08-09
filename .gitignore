@@ -1,0 +1,28 @@
+# 敏感信息
+.env
+
+# Maven 本地仓库缓存
+.m2-repo/
+
+# 构建产物
+backend/target/
+frontend/dist/
+*.class
+
+# 数据库文件
+*.db
+*.db-shm
+*.db-wal
+*.mv.db
+*.lock.db
+
+# Node 依赖
+node_modules/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# 日志
+*.log

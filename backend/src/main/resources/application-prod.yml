@@ -1,0 +1,28 @@
+server:
+  port: 8000
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/appdb;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  h2:
+    console:
+      enabled: false
+      path: /h2-console
+llm:
+  provider: ${LLM_PROVIDER:mimo}
+  model: ${LLM_MODEL:mimo-v2.5-pro}
+  api-key: ${LLM_API_KEY:}
+  base-url: ${LLM_BASE_URL:https://api.xiaomimimo.com/v1}
+app:
+  output-dir: outputs
+  projects-dir: projects
+logging:
+  level:
+    com.testagent: INFO
+    org.hibernate.SQL: WARN
