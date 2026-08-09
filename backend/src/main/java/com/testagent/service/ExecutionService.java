@@ -137,6 +137,7 @@ public class ExecutionService {
         String sessionId = null;
         String errorMessage = null;
         List<String> recordingFrames = null;
+        List<String> stepFrames = new ArrayList<>();  // v2.5: 步骤截图帧
 
         try {
             // 1. 启动浏览器
@@ -171,6 +172,10 @@ public class ExecutionService {
                         ExecutionStep step = executionAgent.executeStep(sessionId, stepNode, testCaseContext, i + 1, executionId);
                         steps.add(step);
                         executionStepRepository.save(step);
+                        // v2.5: 收集步骤截图用于录屏帧合并
+                        if (step.getScreenshotAfter() != null) {
+                            stepFrames.add(step.getScreenshotAfter());
+                        }
                         switch (step.getResult()) {
                             case "passed" -> passed++;
                             case "failed" -> failed++;
@@ -201,6 +206,11 @@ public class ExecutionService {
         } finally {
             // v2.4: 停止录屏
             try { recordingFrames = browserSkill.stopRecording(); } catch (Exception e) { log.warn("Failed to stop recording", e); }
+            // v2.5: 合并周期截图 + 步骤截图
+            if (recordingFrames == null) {
+                recordingFrames = new ArrayList<>();
+            }
+            recordingFrames.addAll(stepFrames);
             if (sessionId != null) {
                 try { browserSkill.closeSession(sessionId); } catch (Exception e) { log.warn("Failed to close session", e); }
             }
@@ -249,6 +259,7 @@ public class ExecutionService {
         String sessionId = null;
         String errorMessage = null;
         List<String> recordingFrames = null;
+        List<String> stepFrames = new ArrayList<>();  // v2.5: 步骤截图帧
 
         try {
             // 1. 启动浏览器
@@ -353,8 +364,15 @@ public class ExecutionService {
                         }
 
                         // 截图（操作后）
-                        String screenshotAfter = browserSkill.takeScreenshot(sessionId);
+                        // v2.5: 步骤截图改用带标注版本（点击坐标来自结构化步骤节点，0 表示不标注）
+                        String screenshotAfter = browserSkill.takeScreenshotWithMarker(
+                                sessionId,
+                                node.path("clickX").asInt(0),
+                                node.path("clickY").asInt(0));
                         stepBuilder.screenshotAfter(screenshotAfter);
+                        if (screenshotAfter != null) {
+                            stepFrames.add(screenshotAfter);
+                        }
 
                     } catch (Exception e) {
                         log.warn("Step {} failed: {}", i + 1, e.getMessage());
@@ -377,6 +395,11 @@ public class ExecutionService {
         } finally {
             // v2.4: 停止录屏
             try { recordingFrames = browserSkill.stopRecording(); } catch (Exception e) { log.warn("Failed to stop recording", e); }
+            // v2.5: 合并周期截图 + 步骤截图
+            if (recordingFrames == null) {
+                recordingFrames = new ArrayList<>();
+            }
+            recordingFrames.addAll(stepFrames);
             // 关闭浏览器
             if (sessionId != null) {
                 try {

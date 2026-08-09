@@ -16,8 +16,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.awt.BasicStroke;
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.Graphics2D;
+import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import javax.imageio.ImageIO;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -122,6 +128,49 @@ public class BrowserSkill {
             log.error("保存截图失败: sessionId={}", sessionId, e);
             throw new RuntimeException("保存截图失败", e);
         }
+    }
+
+    /**
+     * v2.5: 截图并标注点击位置。
+     * @param sessionId 浏览器会话 ID
+     * @param clickX 点击 X 坐标（0 表示不标注）
+     * @param clickY 点击 Y 坐标（0 表示不标注）
+     * @return 截图文件路径
+     */
+    public String takeScreenshotWithMarker(String sessionId, int clickX, int clickY) {
+        String path = takeScreenshot(sessionId);
+        if (clickX > 0 && clickY > 0) {
+            try {
+                annotateScreenshot(path, clickX, clickY);
+            } catch (Exception e) {
+                log.warn("截图标注失败: {}", e.getMessage());
+            }
+        }
+        return path;
+    }
+
+    /**
+     * v2.5: 在截图上绘制红色圆圈+十字准星标注点击位置。
+     */
+    private void annotateScreenshot(String imagePath, int x, int y) throws Exception {
+        BufferedImage image = ImageIO.read(new File(imagePath));
+        Graphics2D g = image.createGraphics();
+
+        // 红色圆圈（半径 20px，线宽 3px）
+        g.setColor(Color.RED);
+        g.setStroke(new BasicStroke(3));
+        g.drawOval(x - 20, y - 20, 40, 40);
+
+        // 十字准星（横线 + 竖线，各 30px）
+        g.drawLine(x - 30, y, x + 30, y);
+        g.drawLine(x, y - 30, x, y + 30);
+
+        // 坐标文本
+        g.setFont(new Font("Arial", Font.BOLD, 14));
+        g.drawString("click: (" + x + ", " + y + ")", x + 25, y - 25);
+
+        g.dispose();
+        ImageIO.write(image, "png", new File(imagePath));
     }
 
     /**

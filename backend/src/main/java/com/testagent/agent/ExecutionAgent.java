@@ -57,6 +57,7 @@ public class ExecutionAgent {
         String error = null;
         String screenshotBefore = null;
         String screenshotAfter = null;
+        int clickX = 0, clickY = 0;  // v2.5: 记录视觉点击坐标用于截图标注
 
         try {
             // 步骤 1: LLM 生成元素查找描述
@@ -88,6 +89,8 @@ public class ExecutionAgent {
                     int y = toInt(decision.get("y"), locateResult.getClickY());
                     browserSkill.visualClick(sessionId, x, y);
                     coordinates = "x=" + x + ",y=" + y;
+                    clickX = x;  // v2.5: 供操作后截图标注
+                    clickY = y;
                     result = "passed";
                     break;
                 }
@@ -141,8 +144,8 @@ public class ExecutionAgent {
                 }
             }
 
-            // 步骤 7: 截图（操作后）
-            screenshotAfter = browserSkill.takeScreenshot(sessionId);
+            // 步骤 7: 截图（操作后）— v2.5: 带点击坐标标注
+            screenshotAfter = browserSkill.takeScreenshotWithMarker(sessionId, clickX, clickY);
 
         } catch (Exception e) {
             // 异常隔离到单步：标记 failed，不终止后续步骤
@@ -150,9 +153,9 @@ public class ExecutionAgent {
             result = "failed";
             error = e.getMessage();
             // 失败场景也尽量补一张操作后截图作为证据
-            try {
-                screenshotAfter = browserSkill.takeScreenshot(sessionId);
-            } catch (Exception ignored) {
+                try {
+                    screenshotAfter = browserSkill.takeScreenshotWithMarker(sessionId, clickX, clickY);
+                } catch (Exception ignored) {
                 // 截图失败不影响错误信息
             }
         }

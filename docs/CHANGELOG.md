@@ -4,6 +4,39 @@
 
 ---
 
+## v2.5 — 截图标注 + 录屏回放增强
+
+**日期**: 2026-08-09
+**基线**: v2.4
+**迭代主题**: 截图标注点击位置（红圈+十字准星）+ 录屏帧合并步骤截图
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `skill/BrowserSkill.java` | 修改 | 新增 takeScreenshotWithMarker + annotateScreenshot（Graphics2D 绘制红圈+十字+坐标文本） |
+| `service/ExecutionService.java` | 修改 | 步骤截图改用带标注版本 + 录屏帧合并步骤截图 |
+| `agent/ExecutionAgent.java` | 修改 | Agent 模式截图改用 takeScreenshotWithMarker + clickX/clickY 传递 |
+
+### 标注效果
+```
+┌──────────────────────────┐
+│                          │
+│        ⊕ ← 红圈+十字     │
+│       登录按钮            │
+│  click: (260, 340)       │
+│                          │
+└──────────────────────────┘
+```
+
+### 验证
+- 后端编译: `mvn compile` BUILD SUCCESS (83 source files)
+- 前端构建: `npm run build` 成功 (11.61s，无改动)
+
+---
+
 ## v2.4 — 执行报告 + 录屏
 
 **日期**: 2026-08-09
