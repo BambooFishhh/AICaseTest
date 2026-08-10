@@ -367,6 +367,20 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v3.3](docs/v3.3/PRD_v3.3_流式生成取消与落库保护.md)
 
+### v3.4 — 生成参数可配置
+
+将硬编码的用例生成参数（temperature 0.4、数量引导、测试类型）提取为项目级可配置项，支持按项目类型调整用例密度与多样性。
+
+- 后端: 新建 `GenerationParams` DTO（caseDensity/temperature/focusTypes），存储于 Project.settings JSON
+- 后端: `ProjectService` 新增 `getGenerationParams`/`updateGenerationParams`，从 settings JSON 读写，解析失败降级默认值
+- 后端: `ProjectController` 新增 `GET/PUT /api/projects/{id}/generation-params` 端点
+- 后端: `OrchestratorAgent` 解析 Project.settings 得到 GenerationParams，透传给 TestGeneratorAgent
+- 后端: `TestGeneratorAgent` 将 SYSTEM_PROMPT 拆为 HEADER + 动态数量引导段 + FOOTER，根据 caseDensity 动态拼接；LLM temperature 参数化（从 params 读取）
+- 前端: `api/project.js` 新增 `getGenerationParams`/`updateGenerationParams`
+- 前端: `TestCaseList.vue` 新增"生成参数"按钮 + 对话框（用例密度 radio 三档 + 创造性 slider 0.2~0.6 + 聚焦类型 checkbox 四选）
+
+详见：[PRD v3.4](docs/v3.4/PRD_v3.4_生成参数可配置.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -398,6 +412,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v3.1 | 目录选择器与界面优化（DirSelector 组件/FilesystemController/表单优化） | ✅ 完成 |
 | v3.2 | 用例生成流式输出（SSE Stream/逐条推送/实时入表/EventSource 消费） | ✅ 完成 |
 | v3.3 | 流式生成取消与落库保护（取消端点/检查点/落库保护/客户端断开自动取消） | ✅ 完成 |
+| v3.4 | 生成参数可配置（caseDensity/temperature/focusTypes 项目级配置 + 动态 prompt） | ✅ 完成 |
 
 ## API 概览
 
@@ -416,6 +431,8 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | PUT | `/api/projects/{id}/prd` | 更新文本 PRD |
 | POST | `/api/projects/{id}/prd/upload` | 上传 PDF（PDFBox 解析） |
 | POST | `/api/projects/{id}/prd/fetch` | 抓取在线链接 PRD（Jsoup） |
+| GET | `/api/projects/{id}/generation-params` | 获取生成参数（v3.4） |
+| PUT | `/api/projects/{id}/generation-params` | 更新生成参数（v3.4） |
 | GET | `/api/projects/{id}/testcases` | 用例列表（分页+筛选+覆盖率） |
 | GET | `/api/projects/{id}/coverage/matrix` | 覆盖率矩阵（每转换覆盖详情） |
 | GET | `/api/projects/{id}/testcases/{tcId}` | 用例详情 |

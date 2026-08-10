@@ -39,3 +39,13 @@ export function uploadPrdPdf(projectId, file) {
 export function fetchPrdUrl(projectId, url) {
   return request.post(`/projects/${projectId}/prd/fetch`, { url })
 }
+
+// v3.4: 获取生成参数
+export function getGenerationParams(projectId) {
+  return request.get(`/projects/${projectId}/generation-params`)
+}
+
+// v3.4: 更新生成参数
+export function updateGenerationParams(projectId, params) {
+  return request.put(`/projects/${projectId}/generation-params`, params)
+}

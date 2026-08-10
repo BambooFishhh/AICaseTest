@@ -3,6 +3,7 @@ package com.testagent.controller;
 import com.testagent.common.ApiResponse;
 import com.testagent.dto.CreateProjectRequest;
 import com.testagent.dto.GenerateRequest;
+import com.testagent.dto.GenerationParams;
 import com.testagent.dto.ProjectDTO;
 import com.testagent.service.ProjectService;
 import com.testagent.service.TestCaseService;
@@ -105,6 +106,19 @@ public class ProjectController {
     public ApiResponse<Map<String, Object>> cancelGenerate(@PathVariable String projectId) {
         boolean cancelled = testCaseService.cancelGeneration(projectId);
         return ApiResponse.success(Map.of("cancelled", cancelled));
+    }
+
+    // v3.4: 获取生成参数
+    @GetMapping("/{projectId}/generation-params")
+    public ApiResponse<GenerationParams> getGenerationParams(@PathVariable String projectId) {
+        return ApiResponse.success(projectService.getGenerationParams(projectId));
+    }
+
+    // v3.4: 更新生成参数
+    @PutMapping("/{projectId}/generation-params")
+    public ApiResponse<GenerationParams> updateGenerationParams(@PathVariable String projectId,
+                                                                @RequestBody GenerationParams params) {
+        return ApiResponse.success(projectService.updateGenerationParams(projectId, params));
     }
 
     // v1.10: 查询 PRD

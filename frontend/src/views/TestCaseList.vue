@@ -62,6 +62,8 @@
           style="display: none"
           @change="handleImportFile"
         />
+        <!-- v3.4: 生成参数配置 -->
+        <el-button :icon="Setting" @click="handleOpenGenParams">生成参数</el-button>
         <el-button type="primary" :loading="regenerating" @click="handleRegenerate">
           重新生成
         </el-button>
@@ -371,6 +373,53 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- v3.4: 生成参数配置对话框 -->
+    <el-dialog
+      v-model="showGenParamsDialog"
+      title="生成参数"
+      width="480px"
+    >
+      <el-form :model="genParams" label-width="100px">
+        <el-form-item label="用例密度">
+          <el-radio-group v-model="genParams.caseDensity">
+            <el-radio-button label="low">精简</el-radio-button>
+            <el-radio-button label="medium">标准</el-radio-button>
+            <el-radio-button label="high">详尽</el-radio-button>
+          </el-radio-group>
+          <div class="form-tip">控制每个状态转换/需求项的用例数量</div>
+        </el-form-item>
+        <el-form-item label="创造性">
+          <el-slider
+            v-model="genParams.temperature"
+            :min="0.2"
+            :max="0.6"
+            :step="0.1"
+            :marks="{ 0.2: '严谨', 0.4: '标准', 0.6: '发散' }"
+          />
+          <div class="form-tip">LLM 温度，越低越稳定一致，越高越多样发散</div>
+        </el-form-item>
+        <el-form-item label="聚焦类型">
+          <el-checkbox-group v-model="genParams.focusTypes">
+            <el-checkbox label="positive">正向</el-checkbox>
+            <el-checkbox label="negative">异常</el-checkbox>
+            <el-checkbox label="boundary">边界</el-checkbox>
+            <el-checkbox label="data">数据</el-checkbox>
+          </el-checkbox-group>
+          <div class="form-tip">不选 = 全部类型（当前版本仅作为生成提示，不强制过滤）</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showGenParamsDialog = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="savingParams"
+          @click="handleSaveGenParams"
+        >
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -387,7 +436,8 @@ import {
   Document,
   Check,
   ArrowDown,
-  VideoPlay
+  VideoPlay,
+  Setting
 } from '@element-plus/icons-vue'
 import {
   listTestCases,
@@ -400,7 +450,7 @@ import {
   copyToProject,
   reviewTestCases
 } from '@/api/testcase'
-import { listProjects, getProject } from '@/api/project'
+import { listProjects, getProject, getGenerationParams, updateGenerationParams } from '@/api/project'
 import { generateMindmap } from '@/api/mindmap'
 import { executeBatch } from '@/api/execution'
 import { useProjectStore } from '@/stores/project'
@@ -916,6 +966,46 @@ async function handleGenerateMindmap() {
   }
 }
 
+// v3.4: 生成参数配置
+const showGenParamsDialog = ref(false)
+const savingParams = ref(false)
+const genParams = ref({
+  caseDensity: 'medium',
+  temperature: 0.4,
+  focusTypes: []
+})
+
+// v3.4: 打开对话框时拉取当前参数
+async function handleOpenGenParams() {
+  showGenParamsDialog.value = true
+  try {
+    const res = await getGenerationParams(projectId)
+    if (res.data) {
+      genParams.value = {
+        caseDensity: res.data.caseDensity || 'medium',
+        temperature: typeof res.data.temperature === 'number' ? res.data.temperature : 0.4,
+        focusTypes: Array.isArray(res.data.focusTypes) ? res.data.focusTypes : []
+      }
+    }
+  } catch {
+    // 拉取失败用默认值
+  }
+}
+
+// v3.4: 保存生成参数
+async function handleSaveGenParams() {
+  savingParams.value = true
+  try {
+    await updateGenerationParams(projectId, genParams.value)
+    ElMessage.success('生成参数已保存，下次重新生成时生效')
+    showGenParamsDialog.value = false
+  } catch {
+    ElMessage.error('保存失败')
+  } finally {
+    savingParams.value = false
+  }
+}
+
 onMounted(async () => {
   await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
   // v3.2: 来自 ProjectDetail "生成用例"跳转，自动触发流式生成
@@ -1024,5 +1114,12 @@ onUnmounted(() => {
 .text-muted {
   color: #c0c4cc;
   font-size: 12px;
+}
+/* v3.4: 生成参数对话框提示文本 */
+.form-tip {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+  line-height: 1.4;
 }
 </style>

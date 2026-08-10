@@ -1,8 +1,10 @@
 package com.testagent.agent;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.FrontendResult;
+import com.testagent.dto.GenerationParams;
 import com.testagent.dto.PrdAnalysisResult;
 import com.testagent.entity.CodeAnalysis;
 import com.testagent.entity.Project;
@@ -47,8 +49,10 @@ public class OrchestratorAgent {
     private TestGeneratorAgent testGeneratorAgent;
 
     // v3.2: 生成上下文容器，供 generate 与 generateStreaming 共用
+    // v3.4: 新增 params 字段（项目级生成参数）
     private record GenContext(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
-                              BackendResult backendResult, FrontendResult frontendResult) {}
+                              BackendResult backendResult, FrontendResult frontendResult,
+                              GenerationParams params) {}
 
     /**
      * 编排生成测试用例。
@@ -56,16 +60,18 @@ public class OrchestratorAgent {
      * 2. 读代码侧（状态机 + 后端分析结果 + 前端分析结果）
      * 3. 调 TestGeneratorAgent：PRD 为主、代码为辅（含前端上下文）
      * PRD 为空时 TestGeneratorAgent 退化为代码驱动（向后兼容 v1.9）。
+     * v3.4: 透传 GenerationParams（从 Project.settings 解析），供 TestGeneratorAgent 动态拼接 prompt + 调整 temperature。
      */
     public List<TestCase> generate(String projectId, TestGeneratorAgent.ProgressCallback progressCallback) {
         GenContext ctx = loadGenerationContext(projectId, progressCallback);
         return testGeneratorAgent.generate(ctx.prdResult(), ctx.stateMachines(), ctx.backendResult(),
-                ctx.frontendResult(), progressCallback);
+                ctx.frontendResult(), progressCallback, ctx.params());
     }
 
     /**
      * v3.2: 流式编排生成。与 generate 行为一致，额外通过 caseCb 在每条用例解析完成时回调（用于 SSE 推送）。
      * v3.3: 新增 cancelled 参数，透传给 TestGeneratorAgent 用于取消检查。
+     * v3.4: 透传 GenerationParams。
      */
     public List<TestCase> generateStreaming(String projectId,
                                             TestGeneratorAgent.ProgressCallback progressCallback,
@@ -73,10 +79,11 @@ public class OrchestratorAgent {
                                             AtomicBoolean cancelled) {
         GenContext ctx = loadGenerationContext(projectId, progressCallback);
         return testGeneratorAgent.generateStreaming(ctx.prdResult(), ctx.stateMachines(), ctx.backendResult(),
-                ctx.frontendResult(), progressCallback, caseCallback, cancelled);
+                ctx.frontendResult(), progressCallback, caseCallback, cancelled, ctx.params());
     }
 
     // v3.2: 抽取生成上下文加载（PRD 解析 + 代码/前端结果加载），供 generate 与 generateStreaming 复用
+    // v3.4: 解析 Project.settings 得到 GenerationParams，空/失败降级默认值
     private GenContext loadGenerationContext(String projectId, TestGeneratorAgent.ProgressCallback progressCallback) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new IllegalStateException("项目不存在: " + projectId));
@@ -111,7 +118,32 @@ public class OrchestratorAgent {
                     frontendResult.getComponentStates() == null ? 0 : frontendResult.getComponentStates().size(),
                     frontendResult.getPageFlows() == null ? 0 : frontendResult.getPageFlows().size());
         }
-        return new GenContext(prdResult, stateMachines, backendResult, frontendResult);
+
+        // v3.4: 解析生成参数
+        GenerationParams params = parseGenerationParams(project.getSettings());
+        return new GenContext(prdResult, stateMachines, backendResult, frontendResult, params);
+    }
+
+    // v3.4: 从 Project.settings JSON 解析生成参数，失败/空降级默认值
+    private GenerationParams parseGenerationParams(String settingsJson) {
+        if (settingsJson == null || settingsJson.isBlank() || "{}".equals(settingsJson)) {
+            return GenerationParams.defaults();
+        }
+        try {
+            JsonNode settings = objectMapper.readTree(settingsJson);
+            JsonNode gpNode = settings.path("generationParams");
+            if (gpNode.isMissingNode() || gpNode.isNull()) {
+                return GenerationParams.defaults();
+            }
+            GenerationParams params = objectMapper.treeToValue(gpNode, GenerationParams.class);
+            if (params.getCaseDensity() == null) params.setCaseDensity("medium");
+            if (params.getTemperature() == null) params.setTemperature(0.4);
+            if (params.getFocusTypes() == null) params.setFocusTypes(List.of());
+            return params;
+        } catch (Exception e) {
+            log.warn("Failed to parse generation params, using defaults", e);
+            return GenerationParams.defaults();
+        }
     }
 
     private BackendResult loadBackendResult(String projectId) {

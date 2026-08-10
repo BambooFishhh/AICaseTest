@@ -6,6 +6,7 @@ import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.BusinessRule;
 import com.testagent.analyzer.result.EndpointInfo;
 import com.testagent.analyzer.result.FrontendResult;
+import com.testagent.dto.GenerationParams;
 import com.testagent.dto.JsonHelper;
 import com.testagent.dto.PrdAnalysisResult;
 import com.testagent.entity.StateMachine;
@@ -53,7 +54,8 @@ public class TestGeneratorAgent {
     }
 
     // v1.4: 结构化分段 system prompt
-    private static final String SYSTEM_PROMPT = """
+    // v3.4: 拆分为 HEADER + 动态数量引导段 + FOOTER，medium 档文本与原 SYSTEM_PROMPT 完全一致
+    private static final String SYSTEM_PROMPT_HEADER = """
             # 角色
             你是资深测试工程师，擅长生成结构化、AI 可执行的测试用例。
 
@@ -62,10 +64,9 @@ public class TestGeneratorAgent {
 
             # 生成要求
             ## 数量引导
-            - 正向用例（positive）：每个合法状态转换至少 1 条
-            - 异常用例（negative）：每个状态转换至少 1 条非法输入/非法转换
-            - 边界值用例（boundary）：涉及数值/长度字段的至少 2 条（上界+下界）
-            - 数据驱动用例（data）：多参数组合场景至少 1 条
+            """;
+
+    private static final String SYSTEM_PROMPT_FOOTER = """
 
             ## 测试数据要求
             - testData 必须包含具体字段值，不能为空对象 {}
@@ -102,7 +103,8 @@ public class TestGeneratorAgent {
             """;
 
     // v1.10: PRD 驱动 system prompt（PRD 为主、代码为辅）
-    private static final String SYSTEM_PROMPT_PRD_DRIVEN = """
+    // v3.4: 拆分为 HEADER + 动态数量引导段 + FOOTER，medium 档文本与原 SYSTEM_PROMPT_PRD_DRIVEN 完全一致
+    private static final String SYSTEM_PROMPT_PRD_HEADER = """
             # 角色
             你是资深测试工程师，以需求为源生成结构化、AI 可执行的测试用例。
 
@@ -111,10 +113,9 @@ public class TestGeneratorAgent {
 
             # 生成要求
             ## 以需求为纲
-            - 遍历 requirements 数组，每个需求项至少生成 1 条正向用例 + 1 条异常用例
-            - 涉及数值/长度字段的，补充边界值用例（上界 + 下界）
-            - 优先级遵循需求项的 priority；未标注的按 P1
-            - module 取自 PRD 的 modules；type 取值 positive/negative/boundary/data
+            """;
+
+    private static final String SYSTEM_PROMPT_PRD_FOOTER = """
 
             ## 代码信息用于补充（不作为用例来源，只增强可执行性）
             - endpoints：用例 structuredSteps 的 target 用真实接口路径（如 POST /api/order/create）
@@ -177,6 +178,76 @@ public class TestGeneratorAgent {
     @Autowired
     private LlmService llmService;
 
+    // ==================== v3.4: 动态 prompt + temperature 参数化 ====================
+
+    // v3.4: 根据 caseDensity 拼接状态机驱动的数量引导段
+    private String buildQuantityGuide(String caseDensity) {
+        if ("low".equals(caseDensity)) {
+            return """
+                    - 正向用例（positive）：每个合法状态转换至少 1 条
+                    - 异常用例（negative）：每个状态转换至少 1 条非法输入/非法转换
+                    - 边界值用例（boundary）：涉及数值/长度字段的至少 1 条
+                    - 数据驱动用例（data）：可选""";
+        } else if ("high".equals(caseDensity)) {
+            return """
+                    - 正向用例（positive）：每个合法状态转换至少 2 条
+                    - 异常用例（negative）：每个状态转换至少 2 条非法输入/非法转换
+                    - 边界值用例（boundary）：涉及数值/长度字段的至少 3 条（上界+下界+越界）
+                    - 数据驱动用例（data）：多参数组合场景至少 2 条""";
+        }
+        // medium = 当前行为（与 v3.3 SYSTEM_PROMPT 完全一致）
+        return """
+                - 正向用例（positive）：每个合法状态转换至少 1 条
+                - 异常用例（negative）：每个状态转换至少 1 条非法输入/非法转换
+                - 边界值用例（boundary）：涉及数值/长度字段的至少 2 条（上界+下界）
+                - 数据驱动用例（data）：多参数组合场景至少 1 条""";
+    }
+
+    // v3.4: 根据 caseDensity 拼接 PRD 驱动的"以需求为纲"段
+    private String buildPrdQuantityGuide(String caseDensity) {
+        if ("low".equals(caseDensity)) {
+            return """
+                    - 遍历 requirements 数组，每个需求项至少生成 1 条正向用例
+                    - 异常用例可选；边界值用例可选
+                    - 优先级遵循需求项的 priority；未标注的按 P1
+                    - module 取自 PRD 的 modules；type 取值 positive/negative/boundary/data""";
+        } else if ("high".equals(caseDensity)) {
+            return """
+                    - 遍历 requirements 数组，每个需求项至少生成 2 条正向用例 + 2 条异常用例
+                    - 涉及数值/长度字段的，补充边界值用例（上界 + 下界 + 越界）
+                    - 数据驱动用例：多参数组合场景至少 2 条
+                    - 优先级遵循需求项的 priority；未标注的按 P1
+                    - module 取自 PRD 的 modules；type 取值 positive/negative/boundary/data""";
+        }
+        // medium = 当前行为（与 v3.3 SYSTEM_PROMPT_PRD_DRIVEN 完全一致）
+        return """
+                - 遍历 requirements 数组，每个需求项至少生成 1 条正向用例 + 1 条异常用例
+                - 涉及数值/长度字段的，补充边界值用例（上界 + 下界）
+                - 优先级遵循需求项的 priority；未标注的按 P1
+                - module 取自 PRD 的 modules；type 取值 positive/negative/boundary/data""";
+    }
+
+    // v3.4: 动态构建状态机驱动 system prompt（替换数量引导段）
+    private String buildSystemPrompt(GenerationParams params) {
+        String density = (params != null && params.getCaseDensity() != null) ? params.getCaseDensity() : "medium";
+        return SYSTEM_PROMPT_HEADER + buildQuantityGuide(density) + SYSTEM_PROMPT_FOOTER;
+    }
+
+    // v3.4: 动态构建 PRD 驱动 system prompt
+    private String buildPrdDrivenPrompt(GenerationParams params) {
+        String density = (params != null && params.getCaseDensity() != null) ? params.getCaseDensity() : "medium";
+        return SYSTEM_PROMPT_PRD_HEADER + buildPrdQuantityGuide(density) + SYSTEM_PROMPT_PRD_FOOTER;
+    }
+
+    // v3.4: 从 params 读取 temperature，null/越界时默认 0.4（与 v3.3 行为一致）
+    private double resolveTemperature(GenerationParams params) {
+        if (params != null && params.getTemperature() != null) {
+            double t = params.getTemperature();
+            if (t >= 0.0 && t <= 1.0) return t;
+        }
+        return 0.4;
+    }
+
     // ==================== 主生成流程（v1.2 分模块生成） ====================
 
     public List<TestCase> generate(List<StateMachine> stateMachines, BackendResult backendResult) {
@@ -198,9 +269,18 @@ public class TestGeneratorAgent {
     }
 
     // v1.11: 新增 frontendResult 重载。前端上下文作为辅助信息注入用例生成
+    // v3.4: 委托给新增 params 重载（params=null 向后兼容）
     public List<TestCase> generate(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                    BackendResult backendResult, FrontendResult frontendResult,
                                    ProgressCallback progressCallback) {
+        return generate(prdResult, stateMachines, backendResult, frontendResult, progressCallback, null);
+    }
+
+    // v3.4: 新增 params 重载。根据 GenerationParams 动态拼接 system prompt + 调整 LLM temperature。
+    // params 为 null 时退化为 v3.3 行为（medium/0.4）。
+    public List<TestCase> generate(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                   BackendResult backendResult, FrontendResult frontendResult,
+                                   ProgressCallback progressCallback, GenerationParams params) {
         List<TestCase> result = new ArrayList<>();
 
         // v1.10: PRD 驱动分支
@@ -209,7 +289,7 @@ public class TestGeneratorAgent {
                 progressCallback.update("基于 PRD 生成用例...");
             }
             try {
-                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, null, null);
+                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, null, null, params);
             } catch (Exception e) {
                 log.warn("PRD-driven generation failed, fallback to code-driven: {}", e.getMessage());
                 result = new ArrayList<>();
@@ -218,7 +298,7 @@ public class TestGeneratorAgent {
 
         // 代码驱动分支（PRD 为空或 PRD 生成失败时）
         if (result.isEmpty()) {
-            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, null, null);
+            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, null, null, params);
         }
 
         if (progressCallback != null) {
@@ -238,10 +318,11 @@ public class TestGeneratorAgent {
     // v3.2: 流式生成重载。与 generate 行为一致（PRD 驱动/代码驱动分支、去重、质量评分、编号），
     // 额外通过 caseCb 在每条用例解析完成时回调（去重前），用于 SSE 推送
     // v3.3: 新增 cancelled 参数，在 LLM 调用前/状态机循环迭代前检查取消标志
+    // v3.4: 新增 params 参数，动态拼接 prompt + 调整 temperature
     public List<TestCase> generateStreaming(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                              BackendResult backendResult, FrontendResult frontendResult,
                                              ProgressCallback progressCallback, CaseCallback caseCb,
-                                             AtomicBoolean cancelled) {
+                                             AtomicBoolean cancelled, GenerationParams params) {
         List<TestCase> result = new ArrayList<>();
 
         if (prdResult != null && !prdResult.isEmpty()) {
@@ -250,7 +331,7 @@ public class TestGeneratorAgent {
                 progressCallback.update("基于 PRD 生成用例...");
             }
             try {
-                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, caseCb, cancelled);
+                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, caseCb, cancelled, params);
             } catch (GenerationCancelledException e) {
                 throw e;  // v3.3: 取消异常向上传播，不触发 fallback
             } catch (Exception e) {
@@ -260,7 +341,7 @@ public class TestGeneratorAgent {
         }
 
         if (result.isEmpty()) {
-            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, caseCb, cancelled);
+            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, caseCb, cancelled, params);
         }
 
         if (progressCallback != null) {
@@ -281,10 +362,11 @@ public class TestGeneratorAgent {
     // v1.11: 新增 frontendResult 参数
     // v3.2: 新增 caseCb 参数，规则回退与 LLM 解析均透传回调
     // v3.3: 新增 cancelled 参数，每模块循环迭代前检查取消标志
+    // v3.4: 新增 params 参数，透传给 generateByLlmForStateMachine 用于动态 prompt + temperature
     private List<TestCase> generateCodeDrivenCases(List<StateMachine> stateMachines, BackendResult backendResult,
                                                     FrontendResult frontendResult,
                                                     ProgressCallback progressCallback, CaseCallback caseCb,
-                                                    AtomicBoolean cancelled) {
+                                                    AtomicBoolean cancelled, GenerationParams params) {
         List<TestCase> result = new ArrayList<>();
 
         if (stateMachines != null && !stateMachines.isEmpty()) {
@@ -297,7 +379,7 @@ public class TestGeneratorAgent {
                 }
                 List<TestCase> moduleCases;
                 try {
-                    moduleCases = generateByLlmForStateMachine(sm, backendResult, frontendResult, caseCb, cancelled);
+                    moduleCases = generateByLlmForStateMachine(sm, backendResult, frontendResult, caseCb, cancelled, params);
                     if (moduleCases == null || moduleCases.isEmpty()) {
                         log.warn("LLM returned empty for state machine {}, using rules", sm.getName());
                         moduleCases = generateByRulesForStateMachine(sm, backendResult, caseCb);
@@ -328,9 +410,10 @@ public class TestGeneratorAgent {
     // v1.11: 新增 frontendResult 参数
     // v3.2: 新增 caseCb 参数，透传给 parseTestCases 用于流式回调
     // v3.3: 新增 cancelled 参数，LLM 调用前检查取消标志
+    // v3.4: 新增 params 参数，动态拼接 system prompt + 调整 temperature
     private List<TestCase> generateByLlmForStateMachine(StateMachine sm, BackendResult backendResult,
                                                          FrontendResult frontendResult, CaseCallback caseCb,
-                                                         AtomicBoolean cancelled) {
+                                                         AtomicBoolean cancelled, GenerationParams params) {
         Map<String, Object> context = new LinkedHashMap<>();
 
         Map<String, Object> smMap = new LinkedHashMap<>();
@@ -360,7 +443,8 @@ public class TestGeneratorAgent {
         // v1.11: 前端上下文
         putFrontendContext(context, frontendResult);
 
-        String systemPrompt = SYSTEM_PROMPT;
+        // v3.4: 动态构建 system prompt（根据 caseDensity 拼接数量引导段）
+        String systemPrompt = buildSystemPrompt(params);
 
         String userPrompt;
         try {
@@ -374,7 +458,8 @@ public class TestGeneratorAgent {
         }
 
         checkCancelled(cancelled);  // v3.3: LLM 调用前检查（耗时操作，最关键的取消点）
-        String response = llmService.chat(systemPrompt, userPrompt, 0.4);
+        // v3.4: temperature 参数化（从 params 读取，null/越界默认 0.4）
+        String response = llmService.chat(systemPrompt, userPrompt, resolveTemperature(params));
         String json = extractJsonArray(response);
 
         return parseTestCases(json, caseCb);
@@ -384,10 +469,12 @@ public class TestGeneratorAgent {
     // v1.11: 新增 frontendResult 参数，前端上下文作为辅助信息
     // v3.2: 新增 caseCb 参数，透传给 parseTestCases 用于流式回调
     // v3.3: 新增 cancelled 参数，LLM 调用前检查取消标志
+    // v3.4: 新增 params 参数，动态拼接 PRD system prompt + 调整 temperature
     private List<TestCase> generateByLlmWithPrd(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                                  BackendResult backendResult,
                                                  FrontendResult frontendResult,
-                                                 CaseCallback caseCb, AtomicBoolean cancelled) throws Exception {
+                                                 CaseCallback caseCb, AtomicBoolean cancelled,
+                                                 GenerationParams params) throws Exception {
         Map<String, Object> context = new LinkedHashMap<>();
 
         // PRD 为主上下文
@@ -437,7 +524,8 @@ public class TestGeneratorAgent {
                 + "\n\n" + FEW_SHOT_EXAMPLES
                 + "\n\n请以 PRD 需求为纲生成测试用例，代码信息用于补充接口路径与前置状态。";
         checkCancelled(cancelled);  // v3.3: LLM 调用前检查（耗时操作，最关键的取消点）
-        String response = llmService.chat(SYSTEM_PROMPT_PRD_DRIVEN, userPrompt, 0.4);
+        // v3.4: 动态构建 PRD system prompt + temperature 参数化
+        String response = llmService.chat(buildPrdDrivenPrompt(params), userPrompt, resolveTemperature(params));
         String json = extractJsonArray(response);
         return parseTestCases(json, caseCb);
     }

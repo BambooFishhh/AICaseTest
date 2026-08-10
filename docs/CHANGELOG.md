@@ -4,6 +4,45 @@
 
 ---
 
+## v3.4 — 生成参数可配置
+
+**日期**: 2026-08-11
+**基线**: v3.3
+**迭代主题**: 将硬编码的用例生成参数（temperature 0.4、数量引导、测试类型）提取为项目级可配置项，支持按项目类型调整用例密度与多样性
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `dto/GenerationParams.java` | 新建 | 项目级生成参数 DTO（caseDensity/temperature/focusTypes），含 `defaults()` 兜底默认值 |
+| `service/ProjectService.java` | 修改 | 新增 `getGenerationParams`/`updateGenerationParams`/`parseGenerationParams`，从 Project.settings JSON 读写 generationParams 字段，解析失败降级默认值 |
+| `controller/ProjectController.java` | 修改 | 新增 `GET/PUT /{projectId}/generation-params` 端点 |
+| `agent/OrchestratorAgent.java` | 修改 | GenContext record 新增 `params` 字段；`loadGenerationContext` 解析 Project.settings 得到 GenerationParams；`generate`/`generateStreaming` 透传 params 给 TestGeneratorAgent |
+| `agent/TestGeneratorAgent.java` | 修改 | 将 `SYSTEM_PROMPT`/`SYSTEM_PROMPT_PRD_DRIVEN` 拆为 HEADER + 动态数量引导段 + FOOTER；新增 `buildQuantityGuide`/`buildPrdQuantityGuide`/`buildSystemPrompt`/`buildPrdDrivenPrompt`/`resolveTemperature`；`generate`/`generateStreaming`/`generateCodeDrivenCases`/`generateByLlmForStateMachine`/`generateByLlmWithPrd` 新增 `params` 参数，LLM 调用改用动态 prompt + 参数化 temperature |
+
+#### 前端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `api/project.js` | 修改 | 新增 `getGenerationParams(projectId)` + `updateGenerationParams(projectId, params)` |
+| `views/TestCaseList.vue` | 修改 | 工具栏新增"生成参数"按钮 + el-dialog（caseDensity radio 三档 + temperature slider 0.2~0.6 + focusTypes checkbox 四选）+ `handleOpenGenParams`（拉取当前参数）+ `handleSaveGenParams`（保存）+ form-tip 样式 |
+
+### 验证
+- 后端编译: `mvn compile` BUILD SUCCESS
+- 前端构建: `npm run build` 成功（TestCaseList chunk 27.50 kB）
+
+### 说明
+- **存储复用**：参数存入 `Project.settings` JSON 的 `generationParams` 字段，无需新建表
+- **向后兼容**：settings 为空 `{}` 时使用默认值（medium/0.4/[]），行为与 v3.3 完全一致；medium 档 system prompt 文本与 v3.3 完全一致
+- **density 映射**：low（正向≥1/异常≥1/边界≥1/数据可选）/ medium（当前行为）/ high（正向≥2/异常≥2/边界≥3/数据≥2）
+- **temperature 范围**：0.2~0.6，越低越稳定一致，越高越多样发散；越界降级为 0.4
+- **focusTypes**：当前版本仅作为生成提示写入 prompt 上下文，不强制过滤解析结果（避免丢弃高质量用例）
+- 参数保存后下次"重新生成"时生效（OrchestratorAgent 从 Project.settings 读取）
+
+---
+
 ## v3.3 — 流式生成取消与落库保护
 
 **日期**: 2026-08-11

@@ -4,8 +4,13 @@ import com.testagent.agent.PrdAgent;
 import com.testagent.common.BusinessException;
 import com.testagent.dto.CreateProjectRequest;
 import com.testagent.dto.GenerateRequest;
+import com.testagent.dto.GenerationParams;
 import com.testagent.dto.ProjectDTO;
 import com.testagent.entity.Project;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.http.HttpStatus;
 import com.testagent.repository.CodeAnalysisRepository;
 import com.testagent.repository.MindMapRepository;
 import com.testagent.repository.ProjectRepository;
@@ -29,6 +34,7 @@ import java.util.stream.Collectors;
 public class ProjectService {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectService.class);
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
     private ProjectRepository projectRepository;
@@ -190,5 +196,53 @@ public class ProjectService {
         p.setPrdSourceRef(url);
         projectRepository.save(p);
         return ProjectDTO.from(p);
+    }
+
+    // ==================== v3.4: 生成参数 ====================
+
+    // v3.4: 获取生成参数（从 Project.settings JSON 解析，失败降级默认值）
+    public GenerationParams getGenerationParams(String projectId) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        return parseGenerationParams(project.getSettings());
+    }
+
+    // v3.4: 更新生成参数（写入 Project.settings JSON 的 generationParams 字段）
+    @Transactional
+    public GenerationParams updateGenerationParams(String projectId, GenerationParams params) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        try {
+            ObjectNode settings = (ObjectNode) objectMapper.readTree(
+                    project.getSettings() != null ? project.getSettings() : "{}");
+            settings.set("generationParams", objectMapper.valueToTree(params));
+            project.setSettings(objectMapper.writeValueAsString(settings));
+            projectRepository.save(project);
+            return params;
+        } catch (Exception e) {
+            throw new BusinessException(50005, "保存生成参数失败: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    // v3.4: 从 settings JSON 解析生成参数，失败/空降级默认值
+    GenerationParams parseGenerationParams(String settingsJson) {
+        if (settingsJson == null || settingsJson.isBlank() || "{}".equals(settingsJson)) {
+            return GenerationParams.defaults();
+        }
+        try {
+            JsonNode settings = objectMapper.readTree(settingsJson);
+            JsonNode gpNode = settings.path("generationParams");
+            if (gpNode.isMissingNode() || gpNode.isNull()) {
+                return GenerationParams.defaults();
+            }
+            GenerationParams params = objectMapper.treeToValue(gpNode, GenerationParams.class);
+            if (params.getCaseDensity() == null) params.setCaseDensity("medium");
+            if (params.getTemperature() == null) params.setTemperature(0.4);
+            if (params.getFocusTypes() == null) params.setFocusTypes(List.of());
+            return params;
+        } catch (Exception e) {
+            log.warn("Failed to parse generation params, using defaults", e);
+            return GenerationParams.defaults();
+        }
     }
 }
