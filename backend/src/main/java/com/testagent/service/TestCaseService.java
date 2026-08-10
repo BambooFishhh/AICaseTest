@@ -36,6 +36,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -50,6 +51,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 @Service
@@ -117,6 +119,94 @@ public class TestCaseService {
             String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             projectRepository.updateStatusWithError(projectId, "failed", errorMsg);
         }
+    }
+
+    /**
+     * v3.2: SSE 流式生成。emitter 由 Controller 传入，本方法在 generationExecutor 线程执行生成，
+     * 通过 emitter 推送 progress/case/complete/error 事件，结束时落库。
+     * 客户端断开/超时由 onCompletion/onTimeout/onError 置 clientGone，后续 send 静默跳过。
+     */
+    @Async("generationExecutor")
+    public void runGenerateStream(String projectId, SseEmitter emitter) {
+        AtomicBoolean clientGone = new AtomicBoolean(false);
+        emitter.onCompletion(() -> {
+            clientGone.set(true);
+            log.info("SSE client disconnected: {}", projectId);
+        });
+        emitter.onTimeout(() -> {
+            clientGone.set(true);
+            log.warn("SSE timeout: {}", projectId);
+        });
+        emitter.onError(t -> {
+            clientGone.set(true);
+            log.warn("SSE error: {}", projectId, t);
+        });
+
+        try {
+            // 前置校验（与 runGenerate 一致）
+            Project project = projectRepository.findById(projectId)
+                    .orElseThrow(() -> new IllegalArgumentException("项目不存在: " + projectId));
+            boolean hasPrd = project.getPrdContent() != null && !project.getPrdContent().isBlank();
+            CodeAnalysis analysis = codeAnalysisRepository.findByProjectId(projectId).orElse(null);
+            boolean hasAnalysis = analysis != null && "completed".equals(analysis.getStatus());
+            if (!hasPrd && !hasAnalysis) {
+                throw new IllegalStateException("请先输入 PRD 或完成代码分析，至少需要一项才能生成用例");
+            }
+
+            updateProjectStatus(projectId, "generating");
+
+            // 进度回调 → 推送 progress 事件 + 同步写 project.progress（兼容轮询）
+            TestGeneratorAgent.ProgressCallback progressCb = msg -> {
+                sendSseEvent(emitter, clientGone, "progress", Map.of("message", msg));
+                projectRepository.updateProgress(projectId, msg);
+            };
+            // 用例回调 → 推送 case 事件（每条用例解析完成即推送，不等去重/落库）
+            TestGeneratorAgent.CaseCallback caseCb = tc ->
+                    sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
+
+            List<TestCase> testCases = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb);
+
+            progressCb.update("正在保存用例...");
+            testCaseRepository.deleteAll(testCaseRepository.findByProjectId(projectId));
+            for (TestCase tc : testCases) {
+                tc.setProjectId(projectId);
+                testCaseRepository.save(tc);
+            }
+
+            projectRepository.updateProgress(projectId, null);
+            updateProjectStatus(projectId, "completed");
+
+            sendSseEvent(emitter, clientGone, "complete", Map.of("total", testCases.size()));
+            safeSseComplete(emitter, clientGone);
+            log.info("Streaming generation completed for project {}: {} cases", projectId, testCases.size());
+        } catch (Exception e) {
+            log.error("Streaming generation failed for project {}", projectId, e);
+            String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            projectRepository.updateStatusWithError(projectId, "failed", errorMsg);
+            sendSseEvent(emitter, clientGone, "error", Map.of("message", errorMsg));
+            safeSseCompleteWithError(emitter, clientGone, e);
+        }
+    }
+
+    // v3.2: 安全推送——客户端已断开则跳过，IOException/IllegalStateException 静默吞掉并置位
+    private void sendSseEvent(SseEmitter emitter, AtomicBoolean clientGone, String name, Object data) {
+        if (clientGone.get()) return;
+        try {
+            emitter.send(SseEmitter.event().name(name).data(data, MediaType.APPLICATION_JSON));
+        } catch (IllegalStateException | IOException ex) {
+            clientGone.set(true);
+            log.debug("SSE send failed (client likely gone): {}", ex.getMessage());
+        }
+    }
+
+    private void safeSseComplete(SseEmitter emitter, AtomicBoolean clientGone) {
+        if (clientGone.get()) return;
+        try { emitter.complete(); } catch (Exception ignored) {}
+    }
+
+    private void safeSseCompleteWithError(SseEmitter emitter, AtomicBoolean clientGone, Exception e) {
+        if (clientGone.get()) return;
+        try { emitter.completeWithError(e); } catch (Exception ignored) {}
     }
 
     public TestCaseListResponse listTestCases(String projectId, int page, int pageSize,

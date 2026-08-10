@@ -228,6 +228,16 @@
       show-icon
       class="polling-alert"
     />
+    <!-- v3.2: 流式生成进度面板 -->
+    <el-alert
+      v-if="streaming"
+      :title="`正在生成测试用例... 已收到 ${streamedCases.length} 条`"
+      :description="streamProgress"
+      type="success"
+      :closable="false"
+      show-icon
+      class="polling-alert streaming-alert"
+    />
 
     <el-table
       :data="displayTestCases"
@@ -238,7 +248,12 @@
       @selection-change="handleSelectionChange"
     >
       <el-table-column type="selection" width="45" />
-      <el-table-column prop="id" label="编号" width="120" />
+      <el-table-column prop="id" label="编号" width="120">
+        <template #default="{ row }">
+          <span v-if="streaming">生成中</span>
+          <span v-else>{{ row.id }}</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="title" label="标题" min-width="200" />
       <el-table-column prop="module" label="模块" width="140" />
       <el-table-column label="类型" width="100">
@@ -273,7 +288,7 @@
     </el-table>
 
     <el-pagination
-      v-if="total > 0"
+      v-if="total > 0 && !streaming"
       class="pagination"
       background
       layout="total, sizes, prev, pager, next, jumper"
@@ -364,7 +379,7 @@ import {
 } from '@element-plus/icons-vue'
 import {
   listTestCases,
-  triggerGenerate,
+  streamGenerate,
   deleteTestCase,
   batchDeleteTestCases,
   exportTestCases,
@@ -372,7 +387,7 @@ import {
   copyToProject,
   reviewTestCases
 } from '@/api/testcase'
-import { listProjects } from '@/api/project'
+import { listProjects, getProject } from '@/api/project'
 import { generateMindmap } from '@/api/mindmap'
 import { executeBatch } from '@/api/execution'
 import { useProjectStore } from '@/stores/project'
@@ -396,6 +411,12 @@ const generationError = ref('')
 const progressText = computed(
   () => projectStore.progressMessage || pollingMessage.value
 )
+
+// v3.2: SSE 流式生成状态
+const streaming = ref(false)
+const streamProgress = ref('')
+const streamedCases = ref([]) // 流式期间实时累积的用例
+let streamEs = null // EventSource 实例（非响应式）
 
 const testCases = ref([])
 const allTestCases = ref([])
@@ -450,7 +471,12 @@ const stats = computed(() => {
 })
 
 // 后端不支持 priority 服务端筛选，这里在当前页数据上做客户端筛选
+// v3.2: 流式期间展示 streamedCases（实时累积），否则展示分页数据
 const displayTestCases = computed(() => {
+  if (streaming.value) {
+    if (!filters.priority) return streamedCases.value
+    return streamedCases.value.filter((tc) => tc.priority === filters.priority)
+  }
   if (!filters.priority) return testCases.value
   return testCases.value.filter((tc) => tc.priority === filters.priority)
 })
@@ -798,29 +824,38 @@ async function handleRegenerate() {
   } catch {
     return
   }
-  try {
-    await triggerGenerate(projectId, {})
-    ElMessage.success('用例生成已启动')
-    // v1.6: 开始生成时清除上次错误详情
-    generationError.value = ''
-    pollingMessage.value = '正在生成测试用例，请稍候...'
-    regenerating.value = true
-    projectStore.startPolling(projectId, async (status, prevStatus, project) => {
-      pollingMessage.value = ''
+  // v3.2: 进入流式生成模式
+  generationError.value = ''
+  streaming.value = true
+  streamProgress.value = '正在启动生成...'
+  streamedCases.value = []
+  regenerating.value = true
+
+  streamEs = streamGenerate(projectId, {
+    onProgress: (msg) => {
+      streamProgress.value = msg
+    },
+    onCase: (tc) => {
+      // 新用例插入到顶部，实时可见
+      streamedCases.value.unshift(tc)
+    },
+    onComplete: async (total) => {
+      ElMessage.success(`用例生成完成，共 ${total} 条`)
+      streaming.value = false
+      streamProgress.value = ''
       regenerating.value = false
-      if (status === 'completed') {
-        ElMessage.success('用例生成完成')
-        page.value = 1
-        await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
-      } else if (status === 'failed') {
-        // v1.6: 展示后端返回的具体错误详情
-        generationError.value = project?.errorMessage || '未知错误'
-        ElMessage.error('用例生成失败')
-      }
-    })
-  } catch {
-    // 错误已由响应拦截器统一提示
-  }
+      page.value = 1
+      // 刷新列表获取最终编号 + 覆盖率
+      await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+    },
+    onError: (msg) => {
+      streaming.value = false
+      streamProgress.value = ''
+      regenerating.value = false
+      generationError.value = msg
+      ElMessage.error('用例生成失败')
+    }
+  })
 }
 
 async function handleGenerateMindmap() {
@@ -835,10 +870,29 @@ async function handleGenerateMindmap() {
 
 onMounted(async () => {
   await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+  // v3.2: 来自 ProjectDetail "生成用例"跳转，自动触发流式生成
+  if (route.query.generate === '1') {
+    // 清理 query，避免刷新重复触发
+    router.replace({ path: route.path })
+    // 拉取项目状态，generating/analyzing 时不触发
+    try {
+      const res = await getProject(projectId)
+      const status = res.data?.status
+      if (status === 'analyzing' || status === 'generating') return
+      handleRegenerate()
+    } catch {
+      // 状态获取失败则忽略，不自动触发
+    }
+  }
 })
 
 onUnmounted(() => {
   projectStore.stopPolling()
+  // v3.2: 释放 EventSource，避免组件卸载后连接泄漏
+  if (streamEs) {
+    streamEs.close()
+    streamEs = null
+  }
 })
 </script>
 

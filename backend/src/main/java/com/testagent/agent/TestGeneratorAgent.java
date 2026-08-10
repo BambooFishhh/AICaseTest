@@ -36,6 +36,12 @@ public class TestGeneratorAgent {
         void update(String message);
     }
 
+    // v3.2: 用例流式回调接口，每生成一条用例立即回调一次（用于 SSE 推送）
+    @FunctionalInterface
+    public interface CaseCallback {
+        void onCase(TestCase tc);
+    }
+
     // v1.4: 结构化分段 system prompt
     private static final String SYSTEM_PROMPT = """
             # 角色
@@ -193,7 +199,7 @@ public class TestGeneratorAgent {
                 progressCallback.update("基于 PRD 生成用例...");
             }
             try {
-                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult);
+                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, null);
             } catch (Exception e) {
                 log.warn("PRD-driven generation failed, fallback to code-driven: {}", e.getMessage());
                 result = new ArrayList<>();
@@ -202,7 +208,44 @@ public class TestGeneratorAgent {
 
         // 代码驱动分支（PRD 为空或 PRD 生成失败时）
         if (result.isEmpty()) {
-            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback);
+            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, null);
+        }
+
+        if (progressCallback != null) {
+            progressCallback.update("正在质量评分与去重...");
+        }
+        calculateQualityScores(result);
+        result = deduplicate(result);
+
+        int counter = 1;
+        for (TestCase tc : result) {
+            tc.setId(String.format("TC-%03d", counter++));
+            tc.setCreatedAt(LocalDateTime.now());
+        }
+        return result;
+    }
+
+    // v3.2: 流式生成重载。与 generate 行为一致（PRD 驱动/代码驱动分支、去重、质量评分、编号），
+    // 额外通过 caseCb 在每条用例解析完成时回调（去重前），用于 SSE 推送
+    public List<TestCase> generateStreaming(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                             BackendResult backendResult, FrontendResult frontendResult,
+                                             ProgressCallback progressCallback, CaseCallback caseCb) {
+        List<TestCase> result = new ArrayList<>();
+
+        if (prdResult != null && !prdResult.isEmpty()) {
+            if (progressCallback != null) {
+                progressCallback.update("基于 PRD 生成用例...");
+            }
+            try {
+                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, caseCb);
+            } catch (Exception e) {
+                log.warn("PRD-driven streaming generation failed, fallback to code-driven: {}", e.getMessage());
+                result = new ArrayList<>();
+            }
+        }
+
+        if (result.isEmpty()) {
+            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, caseCb);
         }
 
         if (progressCallback != null) {
@@ -221,9 +264,10 @@ public class TestGeneratorAgent {
 
     // v1.10: 原代码驱动生成逻辑（状态机/endpoint），从 generate 抽出供 PRD 失败时复用
     // v1.11: 新增 frontendResult 参数
+    // v3.2: 新增 caseCb 参数，规则回退与 LLM 解析均透传回调
     private List<TestCase> generateCodeDrivenCases(List<StateMachine> stateMachines, BackendResult backendResult,
                                                     FrontendResult frontendResult,
-                                                    ProgressCallback progressCallback) {
+                                                    ProgressCallback progressCallback, CaseCallback caseCb) {
         List<TestCase> result = new ArrayList<>();
 
         if (stateMachines != null && !stateMachines.isEmpty()) {
@@ -235,15 +279,15 @@ public class TestGeneratorAgent {
                 }
                 List<TestCase> moduleCases;
                 try {
-                    moduleCases = generateByLlmForStateMachine(sm, backendResult, frontendResult);
+                    moduleCases = generateByLlmForStateMachine(sm, backendResult, frontendResult, caseCb);
                     if (moduleCases == null || moduleCases.isEmpty()) {
                         log.warn("LLM returned empty for state machine {}, using rules", sm.getName());
-                        moduleCases = generateByRulesForStateMachine(sm, backendResult);
+                        moduleCases = generateByRulesForStateMachine(sm, backendResult, caseCb);
                     }
                 } catch (Exception e) {
                     log.warn("LLM generation failed for state machine {}, falling back to rules: {}",
                             sm.getName(), e.getMessage());
-                    moduleCases = generateByRulesForStateMachine(sm, backendResult);
+                    moduleCases = generateByRulesForStateMachine(sm, backendResult, caseCb);
                 }
                 result.addAll(moduleCases);
             }
@@ -254,7 +298,7 @@ public class TestGeneratorAgent {
             if (progressCallback != null) {
                 progressCallback.update("无状态机，按接口生成用例...");
             }
-            result = generateByEndpoints(backendResult);
+            result = generateByEndpoints(backendResult, caseCb);
         }
         return result;
     }
@@ -262,8 +306,9 @@ public class TestGeneratorAgent {
     // ==================== LLM 生成（分模块） ====================
 
     // v1.11: 新增 frontendResult 参数
+    // v3.2: 新增 caseCb 参数，透传给 parseTestCases 用于流式回调
     private List<TestCase> generateByLlmForStateMachine(StateMachine sm, BackendResult backendResult,
-                                                         FrontendResult frontendResult) {
+                                                         FrontendResult frontendResult, CaseCallback caseCb) {
         Map<String, Object> context = new LinkedHashMap<>();
 
         Map<String, Object> smMap = new LinkedHashMap<>();
@@ -309,14 +354,16 @@ public class TestGeneratorAgent {
         String response = llmService.chat(systemPrompt, userPrompt, 0.4);
         String json = extractJsonArray(response);
 
-        return parseTestCases(json);
+        return parseTestCases(json, caseCb);
     }
 
     // v1.10: PRD 驱动的 LLM 生成（PRD 为主、代码为辅）
     // v1.11: 新增 frontendResult 参数，前端上下文作为辅助信息
+    // v3.2: 新增 caseCb 参数，透传给 parseTestCases 用于流式回调
     private List<TestCase> generateByLlmWithPrd(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                                  BackendResult backendResult,
-                                                 FrontendResult frontendResult) throws Exception {
+                                                 FrontendResult frontendResult,
+                                                 CaseCallback caseCb) throws Exception {
         Map<String, Object> context = new LinkedHashMap<>();
 
         // PRD 为主上下文
@@ -367,7 +414,7 @@ public class TestGeneratorAgent {
                 + "\n\n请以 PRD 需求为纲生成测试用例，代码信息用于补充接口路径与前置状态。";
         String response = llmService.chat(SYSTEM_PROMPT_PRD_DRIVEN, userPrompt, 0.4);
         String json = extractJsonArray(response);
-        return parseTestCases(json);
+        return parseTestCases(json, caseCb);
     }
 
     // v1.11: 将前端上下文注入 context Map，截断避免 token 超限
@@ -411,6 +458,11 @@ public class TestGeneratorAgent {
     }
 
     private List<TestCase> parseTestCases(String json) {
+        return parseTestCases(json, null);
+    }
+
+    // v3.2: 流式解析重载。caseCb 非空时，每解析出一条用例立即回调（用于 SSE 推送）
+    private List<TestCase> parseTestCases(String json, CaseCallback caseCb) {
         List<TestCase> result = new ArrayList<>();
         try {
             JsonNode array = objectMapper.readTree(json);
@@ -432,6 +484,12 @@ public class TestGeneratorAgent {
                     tc.setSource("ai_generation");
                     tc.setConfidence(0.8);
                     result.add(tc);
+                    // v3.2: 解析出一条立即回调，不等去重
+                    if (caseCb != null) {
+                        try { caseCb.onCase(tc); } catch (Exception ex) {
+                            log.warn("caseCallback failed, continue: {}", ex.getMessage());
+                        }
+                    }
                 }
             }
         } catch (Exception e) {
@@ -443,19 +501,28 @@ public class TestGeneratorAgent {
 
     // ==================== 规则生成（单模块回退） ====================
 
-    private List<TestCase> generateByRulesForStateMachine(StateMachine sm, BackendResult backendResult) {
+    // v3.2: 新增 caseCb 参数，每条规则用例构建后立即回调
+    private List<TestCase> generateByRulesForStateMachine(StateMachine sm, BackendResult backendResult,
+                                                          CaseCallback caseCb) {
         List<TestCase> result = new ArrayList<>();
         List<Map<String, Object>> states = JsonHelper.parseListMap(sm.getStates());
         List<Map<String, Object>> transitions = JsonHelper.parseListMap(sm.getTransitions());
         List<Map<String, Object>> matchedEndpoints = matchEndpoints(backendResult, sm.getName());
 
-        result.add(buildPositiveTest(sm, transitions, matchedEndpoints));
-        result.add(buildNegativeTest(sm, states, transitions));
-        result.add(buildBoundaryTest(sm, states, transitions));
+        TestCase positive = buildPositiveTest(sm, transitions, matchedEndpoints);
+        result.add(positive);
+        if (caseCb != null) { try { caseCb.onCase(positive); } catch (Exception ignored) {} }
+        TestCase negative = buildNegativeTest(sm, states, transitions);
+        result.add(negative);
+        if (caseCb != null) { try { caseCb.onCase(negative); } catch (Exception ignored) {} }
+        TestCase boundary = buildBoundaryTest(sm, states, transitions);
+        result.add(boundary);
+        if (caseCb != null) { try { caseCb.onCase(boundary); } catch (Exception ignored) {} }
         return result;
     }
 
-    private List<TestCase> generateByEndpoints(BackendResult backendResult) {
+    // v3.2: 新增 caseCb 参数，每个接口用例构建后立即回调
+    private List<TestCase> generateByEndpoints(BackendResult backendResult, CaseCallback caseCb) {
         List<TestCase> result = new ArrayList<>();
         for (EndpointInfo endpoint : backendResult.getEndpoints()) {
             TestCase tc = new TestCase();
@@ -496,6 +563,7 @@ public class TestGeneratorAgent {
             tc.setSource("rule_based");
             tc.setConfidence(0.5);
             result.add(tc);
+            if (caseCb != null) { try { caseCb.onCase(tc); } catch (Exception ignored) {} }
         }
         return result;
     }

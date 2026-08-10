@@ -338,6 +338,20 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v3.1](docs/v3.1/PRD_v3.1_目录选择器与界面优化.md)
 
+### v3.2 — 用例生成流式输出（SSE Stream）
+
+将用例生成从"异步轮询 + 终态一次性返回"升级为"SSE 流式推送"，用户每生成一条用例即可实时看到。
+
+- 后端: `TestGeneratorAgent` 新增 `CaseCallback` 接口 + `generateStreaming` 重载，每条用例解析后立即回调（去重前）
+- 后端: `OrchestratorAgent` 抽取 `loadGenerationContext` helper + 新增 `generateStreaming` 透传 caseCb
+- 后端: `TestCaseService` 新增 `runGenerateStream(projectId, emitter)`（`@Async`），通过 SseEmitter 推送 progress/case/complete/error 事件
+- 后端: `ProjectController` 新增 `GET /api/projects/{id}/testcases/generate-stream` SSE 端点（5 分钟超时，generating 状态拒绝）
+- 前端: `api/testcase.js` 新增 `streamGenerate`（基于浏览器原生 EventSource）
+- 前端: `TestCaseList.vue` 流式生成面板（绿色 alert 进度+计数 + 表格逐条入表 + 编号列"生成中" + 流式期间隐藏分页 + ?generate=1 自动触发）
+- 前端: `ProjectDetail.vue` "生成用例"跳转 TestCaseList 自动触发流式生成
+
+详见：[PRD v3.2](docs/v3.2/PRD_v3.2_用例生成流式输出.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -367,6 +381,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v2.9 | Selenium 清理 + 录屏回放升级（删除BrowserSkill/移除selenium依赖/前端video播放WebM） | ✅ 完成 |
 | v3.0 | PRD 驱动流程改造（sourcePath 改可选/PRD 面板上提/生成前置校验） | ✅ 完成 |
 | v3.1 | 目录选择器与界面优化（DirSelector 组件/FilesystemController/表单优化） | ✅ 完成 |
+| v3.2 | 用例生成流式输出（SSE Stream/逐条推送/实时入表/EventSource 消费） | ✅ 完成 |
 
 ## API 概览
 
@@ -379,6 +394,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | POST | `/api/projects/{id}/analyze` | 触发代码分析 |
 | GET | `/api/projects/{id}/analysis` | 获取分析结果 |
 | POST | `/api/projects/{id}/testcases/generate` | 触发用例生成 |
+| GET | `/api/projects/{id}/testcases/generate-stream` | 流式生成用例（SSE，推送 progress/case/complete/error，v3.2） |
 | GET | `/api/projects/{id}/prd` | 查询 PRD 内容 |
 | PUT | `/api/projects/{id}/prd` | 更新文本 PRD |
 | POST | `/api/projects/{id}/prd/upload` | 上传 PDF（PDFBox 解析） |

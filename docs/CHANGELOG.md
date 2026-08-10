@@ -4,6 +4,44 @@
 
 ---
 
+## v3.2 — 用例生成流式输出（SSE Stream）
+
+**日期**: 2026-08-11
+**基线**: v3.1
+**迭代主题**: 将用例生成从"异步轮询 + 终态一次性返回"升级为"SSE 流式推送"，用户每生成一条用例即可实时看到，无需等待全部完成
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `agent/TestGeneratorAgent.java` | 修改 | 新增 `CaseCallback` 接口 + `generateStreaming` 重载；`parseTestCases`/`generateByLlmWithPrd`/`generateByLlmForStateMachine`/`generateByRulesForStateMachine`/`generateByEndpoints`/`generateCodeDrivenCases` 增加 caseCb 参数，每条用例解析/构建后立即回调（去重前），用于 SSE 推送 |
+| `agent/OrchestratorAgent.java` | 修改 | 抽取 `loadGenerationContext` helper（PRD 解析 + 代码/前端结果加载），`generate` 与新增 `generateStreaming` 共用，避免重复 |
+| `service/TestCaseService.java` | 修改 | 新增 `runGenerateStream(projectId, emitter)`（`@Async`）：通过 SseEmitter 推送 progress/case/complete/error 事件，结束时落库；新增 `sendSseEvent`/`safeSseComplete` 私有方法处理客户端断开/超时 |
+| `controller/ProjectController.java` | 修改 | 新增 `GET /{projectId}/testcases/generate-stream` SSE 端点（5 分钟超时），generating 状态立即推送 error 事件并关闭 |
+
+#### 前端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `api/testcase.js` | 修改 | 新增 `streamGenerate(projectId, callbacks)`，基于浏览器原生 EventSource 消费 SSE，返回事件源供调用方 close() |
+| `views/TestCaseList.vue` | 修改 | 新增流式状态（streaming/streamProgress/streamedCases）+ 流式生成面板（绿色 alert 显示进度与计数）+ 表格流式数据源切换 + 编号列显示"生成中" + 流式期间隐藏分页 + onMounted 自动触发（?generate=1）+ onUnmounted 释放 EventSource；`handleRegenerate` 改用 streamGenerate |
+| `views/ProjectDetail.vue` | 修改 | "生成用例"改为 `router.push('/projects/:id/testcases?generate=1')` 跳转自动触发流式生成；移除 triggerGenerate import 与轮询逻辑 |
+
+### 验证
+- 后端编译: `mvn compile` BUILD SUCCESS (86 source files)
+- 前端构建: `npm run build` 成功（TestCaseList chunk 24.18 kB）
+
+### 说明
+- 保留旧端点 `POST /api/projects/{id}/generate` 与 `TestCaseService.runGenerate`，作为非流式回退路径，完全向后兼容
+- 流式生成与旧端点共用 `generating` 状态机，互斥（任一在 generating 时另一端点拒绝）
+- caseCb 在去重前触发，流式推送的用例编号为临时序号，落库后重新编号；前端 complete 事件后刷新列表拿最终编号
+- 客户端断开/超时由 `onCompletion`/`onTimeout`/`onError` 置 `clientGone` 标志，后续 send 静默跳过，生成继续完成落库
+- LLM 一次返回全部 JSON，Java 侧解析后逐条回调模拟流式体验（首条延迟 ≈ LLM 总耗时）
+
+---
+
 ## v3.1 — 目录选择器与界面优化
 
 **日期**: 2026-08-10

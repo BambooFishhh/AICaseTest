@@ -4,6 +4,35 @@ export function triggerGenerate(projectId, params) {
   return request.post(`/projects/${projectId}/generate`, params || {})
 }
 
+// v3.2: SSE 流式生成用例。基于浏览器原生 EventSource，返回事件源对象供调用方 close()。
+// 事件类型：progress（进度文本）、case（单条用例）、complete（完成，含 total）、error（失败）。
+export function streamGenerate(projectId, { onProgress, onCase, onComplete, onError } = {}) {
+  const url = `/api/projects/${projectId}/testcases/generate-stream`
+  const es = new EventSource(url)
+
+  es.addEventListener('progress', (e) => {
+    try { onProgress?.(JSON.parse(e.data).message) } catch {}
+  })
+  es.addEventListener('case', (e) => {
+    try { onCase?.(JSON.parse(e.data).testCase) } catch {}
+  })
+  es.addEventListener('complete', (e) => {
+    try { onComplete?.(JSON.parse(e.data).total) } catch {}
+    es.close()
+  })
+  es.addEventListener('error', (e) => {
+    // SSE 原生 error 事件：data 可能为空（网络断开）或携带后端 error 事件 data
+    let msg = '生成连接异常'
+    if (e.data) {
+      try { msg = JSON.parse(e.data).message || msg } catch {}
+    }
+    onError?.(msg)
+    es.close()
+  })
+
+  return es
+}
+
 export function listTestCases(projectId, params) {
   return request.get(`/projects/${projectId}/testcases`, { params })
 }

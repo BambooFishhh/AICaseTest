@@ -45,6 +45,10 @@ public class OrchestratorAgent {
     @Autowired
     private TestGeneratorAgent testGeneratorAgent;
 
+    // v3.2: 生成上下文容器，供 generate 与 generateStreaming 共用
+    private record GenContext(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                              BackendResult backendResult, FrontendResult frontendResult) {}
+
     /**
      * 编排生成测试用例。
      * 1. 读项目 PRD；若有 PRD，PrdAgent 解析为 PrdAnalysisResult
@@ -53,6 +57,24 @@ public class OrchestratorAgent {
      * PRD 为空时 TestGeneratorAgent 退化为代码驱动（向后兼容 v1.9）。
      */
     public List<TestCase> generate(String projectId, TestGeneratorAgent.ProgressCallback progressCallback) {
+        GenContext ctx = loadGenerationContext(projectId, progressCallback);
+        return testGeneratorAgent.generate(ctx.prdResult(), ctx.stateMachines(), ctx.backendResult(),
+                ctx.frontendResult(), progressCallback);
+    }
+
+    /**
+     * v3.2: 流式编排生成。与 generate 行为一致，额外通过 caseCb 在每条用例解析完成时回调（用于 SSE 推送）。
+     */
+    public List<TestCase> generateStreaming(String projectId,
+                                            TestGeneratorAgent.ProgressCallback progressCallback,
+                                            TestGeneratorAgent.CaseCallback caseCallback) {
+        GenContext ctx = loadGenerationContext(projectId, progressCallback);
+        return testGeneratorAgent.generateStreaming(ctx.prdResult(), ctx.stateMachines(), ctx.backendResult(),
+                ctx.frontendResult(), progressCallback, caseCallback);
+    }
+
+    // v3.2: 抽取生成上下文加载（PRD 解析 + 代码/前端结果加载），供 generate 与 generateStreaming 复用
+    private GenContext loadGenerationContext(String projectId, TestGeneratorAgent.ProgressCallback progressCallback) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new IllegalStateException("项目不存在: " + projectId));
 
@@ -77,7 +99,6 @@ public class OrchestratorAgent {
         }
         List<StateMachine> stateMachines = stateMachineRepository.findByProjectId(projectId);
         BackendResult backendResult = loadBackendResult(projectId);
-        // v1.11: 加载前端分析结果
         FrontendResult frontendResult = loadFrontendResult(projectId);
         if (frontendResult != null) {
             log.info("Frontend result loaded for project {}: forms={}, selectors={}, states={}, flows={}",
@@ -87,9 +108,7 @@ public class OrchestratorAgent {
                     frontendResult.getComponentStates() == null ? 0 : frontendResult.getComponentStates().size(),
                     frontendResult.getPageFlows() == null ? 0 : frontendResult.getPageFlows().size());
         }
-
-        // 3. 生成（PRD 为主、代码为辅，含前端上下文）
-        return testGeneratorAgent.generate(prdResult, stateMachines, backendResult, frontendResult, progressCallback);
+        return new GenContext(prdResult, stateMachines, backendResult, frontendResult);
     }
 
     private BackendResult loadBackendResult(String projectId) {

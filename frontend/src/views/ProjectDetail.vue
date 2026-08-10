@@ -71,7 +71,6 @@ import { ElMessage } from 'element-plus'
 import { getProject } from '@/api/project'
 import PrdPanel from '@/components/PrdPanel.vue'
 import { triggerAnalysis } from '@/api/analysis'
-import { triggerGenerate } from '@/api/testcase'
 import { generateMindmap, downloadMindmapUrl } from '@/api/mindmap'
 import { useProjectStore } from '@/stores/project'
 
@@ -174,22 +173,9 @@ async function handleAnalyze() {
   }
 }
 
-async function handleGenerate() {
-  try {
-    await triggerGenerate(projectId, {})
-    ElMessage.success('用例生成已启动')
-    pollingMessage.value = '正在生成测试用例，请稍候...'
-    projectStore.startPolling(projectId, (status) => {
-      pollingMessage.value = ''
-      if (status === 'completed') {
-        ElMessage.success('用例生成完成')
-      } else if (status === 'failed') {
-        ElMessage.error('用例生成失败')
-      }
-    })
-  } catch (e) {
-    // 错误已由响应拦截器统一提示
-  }
+// v3.2: 跳转 TestCaseList 并自动触发流式生成（SSE），生成进度与用例实时呈现
+function handleGenerate() {
+  router.push(`/projects/${projectId}/testcases?generate=1`)
 }
 
 async function handleMindmap() {

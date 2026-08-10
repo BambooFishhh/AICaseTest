@@ -5,6 +5,7 @@ import com.testagent.dto.CreateProjectRequest;
 import com.testagent.dto.GenerateRequest;
 import com.testagent.dto.ProjectDTO;
 import com.testagent.service.ProjectService;
+import com.testagent.service.TestCaseService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.Map;
@@ -31,6 +33,9 @@ public class ProjectController {
 
     @Autowired
     private ProjectService projectService;
+
+    @Autowired
+    private TestCaseService testCaseService;
 
     @GetMapping
     public ApiResponse<List<ProjectDTO>> listProjects() {
@@ -65,6 +70,32 @@ public class ProjectController {
             @RequestBody GenerateRequest req) {
         projectService.triggerGenerate(projectId, req);
         return ResponseEntity.accepted().body(ApiResponse.accepted("测试用例生成已启动"));
+    }
+
+    /**
+     * v3.2: SSE 流式生成用例。返回 text/event-stream，推送 progress/case/complete/error 事件。
+     * 浏览器 EventSource 仅支持 GET，故此端点为 GET。
+     * 并发控制：项目状态为 generating 时立即推送 error 事件并关闭，避免重复触发。
+     */
+    @GetMapping("/{projectId}/testcases/generate-stream")
+    public SseEmitter generateStream(@PathVariable String projectId) {
+        ProjectDTO project = projectService.getProject(projectId);
+        if ("generating".equals(project.getStatus())) {
+            // 已在生成中：推送 error 事件并立即关闭
+            SseEmitter err = new SseEmitter(0L);
+            try {
+                err.send(SseEmitter.event().name("error").data(
+                        Map.of("message", "正在生成中，请等待当前任务完成"),
+                        MediaType.APPLICATION_JSON));
+                err.complete();
+            } catch (Exception ignored) {
+                // 客户端可能已断开，忽略
+            }
+            return err;
+        }
+        SseEmitter emitter = new SseEmitter(5L * 60 * 1000); // 5 分钟超时
+        testCaseService.runGenerateStream(projectId, emitter);
+        return emitter;
     }
 
     // v1.10: 查询 PRD
