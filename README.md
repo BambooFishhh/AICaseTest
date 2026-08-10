@@ -328,6 +328,16 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v3.0](docs/v3.0/PRD_v3.0_PRD驱动流程改造.md)
 
+### v3.1 — 目录选择器与界面优化
+
+将本地路径从手动输入升级为可视化目录选择器，并优化创建项目表单界面。
+
+- 后端: 新建 `DirItem` DTO + `FilesystemController`，提供 `GET /api/filesystem/dirs` 目录列表接口（path 为空返回根盘符，非空返回子目录）
+- 前端: 新建 `DirSelector.vue` 目录选择器组件（el-popover + el-tree 懒加载，支持返回上级/节点选中/确定回调）
+- 前端: `ProjectCreate.vue` 来源类型改为 el-radio-button；本地路径输入框集成目录选择器（el-input append 插槽）；Git 地址加格式校验；无代码模式加 el-alert 说明；新增重置按钮
+
+详见：[PRD v3.1](docs/v3.1/PRD_v3.1_目录选择器与界面优化.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -356,6 +366,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v2.8 | 执行链路切换（Selenium→Playwright/录屏升级WebM视频/视频下载API） | ✅ 完成 |
 | v2.9 | Selenium 清理 + 录屏回放升级（删除BrowserSkill/移除selenium依赖/前端video播放WebM） | ✅ 完成 |
 | v3.0 | PRD 驱动流程改造（sourcePath 改可选/PRD 面板上提/生成前置校验） | ✅ 完成 |
+| v3.1 | 目录选择器与界面优化（DirSelector 组件/FilesystemController/表单优化） | ✅ 完成 |
 
 ## API 概览
 
@@ -395,6 +406,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | GET | `/api/executions/{eid}/steps` | 执行步骤详情（v2.0） |
 | GET | `/api/executions/{eid}/video` | 下载执行录屏视频 WebM（v2.8） |
 | POST | `/api/projects/{pid}/testcases/batch-execute` | 批量执行（v2.1） |
+| GET | `/api/filesystem/dirs?path=` | 目录列表（path 为空返回根盘符，v3.1） |
 | GET | `/api/batches/{batchId}` | 查询批次状态（v2.1） |
 | GET | `/api/health` | 健康检查 |
 

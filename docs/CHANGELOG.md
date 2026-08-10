@@ -4,6 +4,41 @@
 
 ---
 
+## v3.1 — 目录选择器与界面优化
+
+**日期**: 2026-08-10
+**基线**: v3.0
+**迭代主题**: 将本地路径从手动输入升级为可视化目录选择器，并优化创建项目表单界面
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `dto/DirItem.java` | 新建 | 目录项 DTO（name/path/leaf），用于目录树懒加载节点数据传输 |
+| `controller/FilesystemController.java` | 新建 | 提供 `GET /api/filesystem/dirs` 接口：path 为空返回系统根盘符，非空返回子目录列表（过滤文件、仅返回可读目录） |
+
+#### 前端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `api/filesystem.js` | 新建 | 封装 `getDirs(path)` 目录列表 API |
+| `components/DirSelector.vue` | 新建 | 目录选择器组件：el-popover + el-tree 懒加载，支持返回上级、节点点击选中、确定回调 |
+| `views/ProjectCreate.vue` | 修改 | 来源类型从 el-select 改为 el-radio-button（更直观）；本地路径输入框集成 DirSelector（el-input append 插槽）；Git 地址加格式校验 + https:// 前缀；无代码模式加 el-alert 说明；新增重置按钮；表单卡片加 header 提示文案；样式优化 |
+
+### 验证
+- 后端编译: `mvn compile` BUILD SUCCESS
+- 前端构建: `npm run build` 成功（ProjectCreate chunk 6.05 kB）
+
+### 说明
+- 目录选择器仅用于"本地路径"来源类型，Git 地址和无代码模式不展示
+- 后端目录列表 API 过滤掉文件和不可读目录，仅返回目录
+- DirSelector 通过 el-tree 懒加载按需请求子目录，避免一次性加载大量节点
+- 切换来源类型时自动清空路径并清除校验状态
+
+---
+
 ## v3.0 — PRD 驱动流程改造
 
 **日期**: 2026-08-10
