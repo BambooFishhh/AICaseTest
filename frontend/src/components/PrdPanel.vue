@@ -11,6 +11,7 @@
     <!-- 来源切换 -->
     <el-radio-group v-model="activeTab" size="small" class="prd-tabs">
       <el-radio-button label="text">文本/Markdown</el-radio-button>
+      <el-radio-button label="md">md/txt 上传</el-radio-button>
       <el-radio-button label="pdf">PDF 上传</el-radio-button>
       <el-radio-button label="link">在线链接</el-radio-button>
     </el-radio-group>
@@ -25,16 +26,25 @@
       />
       <div class="prd-actions">
         <el-button type="primary" :loading="saving" @click="saveText">保存 PRD</el-button>
-        <el-button :icon="Upload" @click="triggerFileImport">导入 .md/.txt</el-button>
         <el-button v-if="prdContent" @click="previewVisible = true">预览完整</el-button>
-        <input
-          ref="fileInputRef"
-          type="file"
-          accept=".md,.markdown,.txt"
-          style="display:none"
-          @change="handleFileImport"
-        />
       </div>
+    </div>
+
+    <!-- md/txt 上传 -->
+    <div v-show="activeTab === 'md'" class="prd-upload-area">
+      <el-upload
+        drag
+        accept=".md,.markdown,.txt"
+        :auto-upload="true"
+        :show-file-list="false"
+        :http-request="handleMdUpload"
+      >
+        <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+        <div class="el-upload__text">拖拽 .md/.txt 文件到此，或<em>点击上传</em></div>
+        <template #tip>
+          <div class="el-upload__tip">支持 Markdown 和纯文本文件，限 5MB 以内</div>
+        </template>
+      </el-upload>
     </div>
 
     <!-- PDF 上传 -->
@@ -90,7 +100,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { UploadFilled, Upload } from '@element-plus/icons-vue'
+import { UploadFilled } from '@element-plus/icons-vue'
 import { getPrd, updatePrd, uploadPrdPdf, fetchPrdUrl } from '@/api/project'
 
 const props = defineProps({ projectId: String })
@@ -107,7 +117,6 @@ const sourceRef = ref('')
 const textForm = ref({ content: '' })
 const linkForm = ref({ url: '' })
 const linkError = ref('')
-const fileInputRef = ref()
 
 const prdPreview = computed(() => {
   if (!prdContent.value) return ''
@@ -116,8 +125,8 @@ const prdPreview = computed(() => {
     : prdContent.value
 })
 
-const sourceTagType = computed(() => ({ text: '', pdf: 'warning', link: 'success' }[sourceType.value] || 'info'))
-const sourceText = computed(() => ({ text: '文本', pdf: 'PDF', link: '链接' }[sourceType.value] || sourceType.value))
+const sourceTagType = computed(() => ({ text: '', md: 'success', pdf: 'warning', link: 'success' }[sourceType.value] || 'info'))
+const sourceText = computed(() => ({ text: '文本', md: 'md/txt', pdf: 'PDF', link: '链接' }[sourceType.value] || sourceType.value))
 
 watch(() => props.projectId, (id) => { if (id) loadPrd() }, { immediate: true })
 
@@ -129,7 +138,8 @@ async function loadPrd() {
     sourceRef.value = res.data?.prdSourceRef || ''
     textForm.value.content = prdContent.value
     // 切到已有来源对应的 tab
-    if (sourceType.value === 'pdf') activeTab.value = 'pdf'
+    if (sourceType.value === 'md') activeTab.value = 'md'
+    else if (sourceType.value === 'pdf') activeTab.value = 'pdf'
     else if (sourceType.value === 'link') {
       activeTab.value = 'link'
       linkForm.value.url = sourceRef.value || ''
@@ -154,31 +164,34 @@ async function saveText() {
   }
 }
 
-// 导入 .md/.txt 文件（浏览器端直接读取文本，无需后端解析）
-function triggerFileImport() {
-  fileInputRef.value?.click()
-}
-
-function handleFileImport(e) {
-  const file = e.target.files?.[0]
-  if (!file) return
-  // 限制文件大小 5MB
+// md/txt 上传：浏览器端 FileReader 读取文本，再调用 updatePrd 保存
+async function handleMdUpload(option) {
+  const file = option.file
   if (file.size > 5 * 1024 * 1024) {
     ElMessage.warning('文件过大，请控制在 5MB 以内')
-    e.target.value = ''
+    option.onError(new Error('文件过大'))
     return
   }
   const reader = new FileReader()
-  reader.onload = () => {
-    textForm.value.content = reader.result
-    ElMessage.success(`已导入 ${file.name}（${file.size} 字节），记得点击"保存 PRD"`)
+  reader.onload = async () => {
+    try {
+      const content = reader.result
+      const res = await updatePrd(props.projectId, content)
+      prdContent.value = res.data?.prdContent || content
+      sourceType.value = 'md'
+      sourceRef.value = file.name
+      textForm.value.content = content
+      ElMessage.success(`${file.name} 导入成功`)
+      option.onSuccess(res)
+    } catch (e) {
+      option.onError(e)
+    }
   }
   reader.onerror = () => {
     ElMessage.error('文件读取失败')
+    option.onError(new Error('文件读取失败'))
   }
   reader.readAsText(file, 'UTF-8')
-  // 重置 input，允许重复导入同一文件
-  e.target.value = ''
 }
 
 async function handlePdfUpload(option) {
