@@ -36,16 +36,16 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="form.sourceType === 'local_path'" label="项目路径" prop="sourcePath">
-          <el-input
-            v-model="form.sourcePath"
-            placeholder="请输入项目源码路径，或点击右侧浏览选择"
-            clearable
-          >
-            <template #append>
-              <!-- v3.1: 目录选择器插件 -->
-              <DirSelector @select="handleDirSelect" />
-            </template>
-          </el-input>
+          <div class="path-input-group">
+            <el-input
+              v-model="form.sourcePath"
+              placeholder="请输入项目源码路径，或点击右侧浏览选择"
+              clearable
+              class="path-input"
+            />
+            <!-- v3.1: 目录选择器插件 -->
+            <DirSelector @select="handleDirSelect" />
+          </div>
           <div class="form-item-tip">提示：可手动输入路径，或使用浏览按钮可视化选择目录</div>
         </el-form-item>
         <el-form-item v-else-if="form.sourceType === 'git_url'" label="Git 地址" prop="sourcePath">
@@ -212,11 +212,13 @@ function goBack() {
   line-height: 1.4;
   margin-top: 4px;
 }
-/* el-input append 内的浏览按钮去掉多余边距 */
-:deep(.el-input-group__append) {
-  padding: 0;
+.path-input-group {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  align-items: center;
 }
-:deep(.el-input-group__append .el-button) {
-  border: none;
+.path-input {
+  flex: 1;
 }
 </style>
