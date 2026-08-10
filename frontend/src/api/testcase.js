@@ -5,8 +5,9 @@ export function triggerGenerate(projectId, params) {
 }
 
 // v3.2: SSE 流式生成用例。基于浏览器原生 EventSource，返回事件源对象供调用方 close()。
-// 事件类型：progress（进度文本）、case（单条用例）、complete（完成，含 total）、error（失败）。
-export function streamGenerate(projectId, { onProgress, onCase, onComplete, onError } = {}) {
+// 事件类型：progress（进度文本）、case（单条用例）、complete（完成，含 total）、cancelled（取消）、error（失败）。
+// v3.3: 新增 cancelled 事件 + onCancelled 回调，区分"取消"与"失败"。
+export function streamGenerate(projectId, { onProgress, onCase, onComplete, onCancelled, onError } = {}) {
   const url = `/api/projects/${projectId}/testcases/generate-stream`
   const es = new EventSource(url)
 
@@ -20,6 +21,11 @@ export function streamGenerate(projectId, { onProgress, onCase, onComplete, onEr
     try { onComplete?.(JSON.parse(e.data).total) } catch {}
     es.close()
   })
+  // v3.3: 取消事件（区别于 error，前端用 warning 而非 error 提示）
+  es.addEventListener('cancelled', (e) => {
+    try { onCancelled?.(JSON.parse(e.data).message) } catch {}
+    es.close()
+  })
   es.addEventListener('error', (e) => {
     // SSE 原生 error 事件：data 可能为空（网络断开）或携带后端 error 事件 data
     let msg = '生成连接异常'
@@ -31,6 +37,11 @@ export function streamGenerate(projectId, { onProgress, onCase, onComplete, onEr
   })
 
   return es
+}
+
+// v3.3: 取消流式生成。后端置取消标志，生成线程在下个检查点停止并跳过落库。
+export function cancelGenerate(projectId) {
+  return request.post(`/projects/${projectId}/testcases/generate-cancel`)
 }
 
 export function listTestCases(projectId, params) {

@@ -98,6 +98,15 @@ public class ProjectController {
         return emitter;
     }
 
+    /**
+     * v3.3: 取消流式生成。置取消标志，生成线程在下个检查点停止并跳过落库（保留旧用例）。
+     */
+    @PostMapping("/{projectId}/testcases/generate-cancel")
+    public ApiResponse<Map<String, Object>> cancelGenerate(@PathVariable String projectId) {
+        boolean cancelled = testCaseService.cancelGeneration(projectId);
+        return ApiResponse.success(Map.of("cancelled", cancelled));
+    }
+
     // v1.10: 查询 PRD
     @GetMapping("/{projectId}/prd")
     public ApiResponse<Map<String, Object>> getPrd(@PathVariable String projectId) {

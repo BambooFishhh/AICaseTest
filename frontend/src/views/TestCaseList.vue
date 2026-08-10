@@ -232,12 +232,24 @@
     <el-alert
       v-if="streaming"
       :title="`正在生成测试用例... 已收到 ${streamedCases.length} 条`"
-      :description="streamProgress"
       type="success"
       :closable="false"
       show-icon
       class="polling-alert streaming-alert"
-    />
+    >
+      <!-- v3.3: 进度文本 + 取消生成按钮 -->
+      <div class="streaming-alert-body">
+        <span class="streaming-progress-text">{{ streamProgress }}</span>
+        <el-button
+          type="danger"
+          size="small"
+          :loading="cancelling"
+          @click="handleCancelGenerate"
+        >
+          取消生成
+        </el-button>
+      </div>
+    </el-alert>
 
     <el-table
       :data="displayTestCases"
@@ -380,6 +392,7 @@ import {
 import {
   listTestCases,
   streamGenerate,
+  cancelGenerate,
   deleteTestCase,
   batchDeleteTestCases,
   exportTestCases,
@@ -416,6 +429,7 @@ const progressText = computed(
 const streaming = ref(false)
 const streamProgress = ref('')
 const streamedCases = ref([]) // 流式期间实时累积的用例
+const cancelling = ref(false) // v3.3: 取消生成中状态
 let streamEs = null // EventSource 实例（非响应式）
 
 const testCases = ref([])
@@ -844,18 +858,52 @@ async function handleRegenerate() {
       streaming.value = false
       streamProgress.value = ''
       regenerating.value = false
+      cancelling.value = false
       page.value = 1
       // 刷新列表获取最终编号 + 覆盖率
+      await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+    },
+    onCancelled: async (msg) => {
+      // v3.3: 生成被取消，旧用例已保留
+      ElMessage.warning(msg || '生成已取消，旧用例已保留')
+      streaming.value = false
+      streamProgress.value = ''
+      regenerating.value = false
+      cancelling.value = false
+      // 刷新列表（显示旧用例）
       await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
     },
     onError: (msg) => {
       streaming.value = false
       streamProgress.value = ''
       regenerating.value = false
+      cancelling.value = false
       generationError.value = msg
       ElMessage.error('用例生成失败')
     }
   })
+}
+
+// v3.3: 取消流式生成
+async function handleCancelGenerate() {
+  try {
+    await ElMessageBox.confirm(
+      '确定要取消生成吗？已生成的用例将被丢弃，旧用例会保留。',
+      '确认取消',
+      { confirmButtonText: '确定取消', cancelButtonText: '继续生成', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  cancelling.value = true
+  try {
+    await cancelGenerate(projectId)
+    // 后端会在下个检查点停止并推送 cancelled 事件
+    // onCancelled 回调会处理状态清理
+  } catch {
+    ElMessage.error('取消请求失败')
+    cancelling.value = false
+  }
 }
 
 async function handleGenerateMindmap() {
@@ -938,6 +986,19 @@ onUnmounted(() => {
 }
 .polling-alert {
   margin-bottom: 16px;
+}
+/* v3.3: 流式生成 alert 内进度文本 + 取消按钮布局 */
+.streaming-alert-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.streaming-progress-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .pagination {
   margin-top: 20px;

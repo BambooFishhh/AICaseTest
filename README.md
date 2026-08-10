@@ -352,6 +352,21 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v3.2](docs/v3.2/PRD_v3.2_用例生成流式输出.md)
 
+### v3.3 — 流式生成取消与落库保护
+
+为流式用例生成增加取消能力 + 落库保护，修补 v3.2 遗留的"生成不可中断 + 先删后存覆盖旧用例"数据安全风险。
+
+- 后端: 新建 `GenerationCancelledException` 异常类
+- 后端: `TestCaseService` 新增 `cancellationFlags` 注册表 + `cancelGeneration` + `restoreProjectStatus`；`runGenerateStream` 新增 `cancelled` 标志，catch 取消异常后跳过 deleteAll+save（落库保护）
+- 后端: `OrchestratorAgent.generateStreaming` 透传 `cancelled` 标志
+- 后端: `TestGeneratorAgent` 新增 `checkCancelled` helper，在 LLM 调用前/状态机循环迭代前检查取消标志
+- 后端: `ProjectController` 新增 `POST /api/projects/{id}/testcases/generate-cancel` 取消端点
+- 后端: 客户端断开（onCompletion/onTimeout/onError）同时触发取消，不只跳过 send
+- 前端: `api/testcase.js` 新增 `cancelGenerate` + `cancelled` 事件监听 + `onCancelled` 回调
+- 前端: `TestCaseList.vue` 取消生成按钮（二次确认）+ `cancelling` 状态 + warning 提示区分取消与失败
+
+详见：[PRD v3.3](docs/v3.3/PRD_v3.3_流式生成取消与落库保护.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -382,6 +397,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v3.0 | PRD 驱动流程改造（sourcePath 改可选/PRD 面板上提/生成前置校验） | ✅ 完成 |
 | v3.1 | 目录选择器与界面优化（DirSelector 组件/FilesystemController/表单优化） | ✅ 完成 |
 | v3.2 | 用例生成流式输出（SSE Stream/逐条推送/实时入表/EventSource 消费） | ✅ 完成 |
+| v3.3 | 流式生成取消与落库保护（取消端点/检查点/落库保护/客户端断开自动取消） | ✅ 完成 |
 
 ## API 概览
 
@@ -394,7 +410,8 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | POST | `/api/projects/{id}/analyze` | 触发代码分析 |
 | GET | `/api/projects/{id}/analysis` | 获取分析结果 |
 | POST | `/api/projects/{id}/testcases/generate` | 触发用例生成 |
-| GET | `/api/projects/{id}/testcases/generate-stream` | 流式生成用例（SSE，推送 progress/case/complete/error，v3.2） |
+| GET | `/api/projects/{id}/testcases/generate-stream` | 流式生成用例（SSE，推送 progress/case/complete/cancelled/error，v3.2） |
+| POST | `/api/projects/{id}/testcases/generate-cancel` | 取消流式生成（v3.3） |
 | GET | `/api/projects/{id}/prd` | 查询 PRD 内容 |
 | PUT | `/api/projects/{id}/prd` | 更新文本 PRD |
 | POST | `/api/projects/{id}/prd/upload` | 上传 PDF（PDFBox 解析） |

@@ -18,6 +18,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * v1.10: 用例生成编排 Agent。
@@ -64,13 +65,15 @@ public class OrchestratorAgent {
 
     /**
      * v3.2: 流式编排生成。与 generate 行为一致，额外通过 caseCb 在每条用例解析完成时回调（用于 SSE 推送）。
+     * v3.3: 新增 cancelled 参数，透传给 TestGeneratorAgent 用于取消检查。
      */
     public List<TestCase> generateStreaming(String projectId,
                                             TestGeneratorAgent.ProgressCallback progressCallback,
-                                            TestGeneratorAgent.CaseCallback caseCallback) {
+                                            TestGeneratorAgent.CaseCallback caseCallback,
+                                            AtomicBoolean cancelled) {
         GenContext ctx = loadGenerationContext(projectId, progressCallback);
         return testGeneratorAgent.generateStreaming(ctx.prdResult(), ctx.stateMachines(), ctx.backendResult(),
-                ctx.frontendResult(), progressCallback, caseCallback);
+                ctx.frontendResult(), progressCallback, caseCallback, cancelled);
     }
 
     // v3.2: 抽取生成上下文加载（PRD 解析 + 代码/前端结果加载），供 generate 与 generateStreaming 复用

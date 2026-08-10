@@ -4,6 +4,44 @@
 
 ---
 
+## v3.3 — 流式生成取消与落库保护
+
+**日期**: 2026-08-11
+**基线**: v3.2
+**迭代主题**: 为流式用例生成增加取消能力 + 落库保护，修补 v3.2 遗留的"生成不可中断 + 先删后存覆盖旧用例"数据安全风险
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `common/GenerationCancelledException.java` | 新建 | 取消异常类型，生成线程在检查点抛出，`runGenerateStream` catch 后跳过落库 |
+| `service/TestCaseService.java` | 修改 | 新增 `cancellationFlags` 注册表（ConcurrentHashMap）+ `cancelGeneration(projectId)` + `restoreProjectStatus`；`runGenerateStream` 新增 `cancelled` 标志，客户端断开/cancel 端点触发取消，catch `GenerationCancelledException` 跳过 deleteAll+save（落库保护），finally 清理注册表 |
+| `agent/OrchestratorAgent.java` | 修改 | `generateStreaming` 新增 `cancelled` 参数，透传给 TestGeneratorAgent |
+| `agent/TestGeneratorAgent.java` | 修改 | 新增 `checkCancelled` helper；`generateStreaming`/`generateCodeDrivenCases`/`generateByLlmWithPrd`/`generateByLlmForStateMachine` 新增 `cancelled` 参数，在 LLM 调用前/状态机循环迭代前检查取消标志；`GenerationCancelledException` 向上传播不触发 fallback |
+| `controller/ProjectController.java` | 修改 | 新增 `POST /{projectId}/testcases/generate-cancel` 取消端点 |
+
+#### 前端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `api/testcase.js` | 修改 | 新增 `cancelGenerate(projectId)`；`streamGenerate` 新增 `cancelled` 事件监听 + `onCancelled` 回调，区分"取消"（warning）与"失败"（error） |
+| `views/TestCaseList.vue` | 修改 | 新增 `cancelling` 状态 + 取消生成按钮（el-button danger，流式 alert 内）+ `handleCancelGenerate`（二次确认 + 调 cancelGenerate）+ `onCancelled` 回调（warning 提示 + 刷新列表显示旧用例）+ streaming-alert-body 样式 |
+
+### 验证
+- 后端编译: `mvn compile` BUILD SUCCESS (87 source files)
+- 前端构建: `npm run build` 成功（TestCaseList chunk 24.98 kB）
+
+### 说明
+- **落库保护**：取消时跳过 `deleteAll` + `save`，旧用例（含人工修改）完整保留
+- **客户端断开 → 取消**：关闭页面/路由切换/网络断开时，后端自动取消生成并保留旧用例（v3.2 是继续跑完并覆盖）
+- **检查点**：PRD 驱动 LLM 调用前、代码驱动状态机循环每次迭代前、分模块 LLM 调用前、落库前
+- **向后兼容**：非流式 `runGenerate` 不受影响（无 cancelled 参数）；原有 SSE 事件不变，仅新增 cancelled 事件
+- LLM 同步调用本身无法中途 abort，在调用前检查取消标志；LLM 返回后若已取消则丢弃结果不落库
+
+---
+
 ## v3.2 — 用例生成流式输出（SSE Stream）
 
 **日期**: 2026-08-11

@@ -23,6 +23,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import com.testagent.common.GenerationCancelledException;
 
 @Component
 public class TestGeneratorAgent {
@@ -40,6 +43,13 @@ public class TestGeneratorAgent {
     @FunctionalInterface
     public interface CaseCallback {
         void onCase(TestCase tc);
+    }
+
+    // v3.3: 取消检查。cancelled 为 null（非流式调用）或 false 时跳过。
+    private void checkCancelled(AtomicBoolean cancelled) {
+        if (cancelled != null && cancelled.get()) {
+            throw new GenerationCancelledException("用例生成已取消");
+        }
     }
 
     // v1.4: 结构化分段 system prompt
@@ -199,7 +209,7 @@ public class TestGeneratorAgent {
                 progressCallback.update("基于 PRD 生成用例...");
             }
             try {
-                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, null);
+                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, null, null);
             } catch (Exception e) {
                 log.warn("PRD-driven generation failed, fallback to code-driven: {}", e.getMessage());
                 result = new ArrayList<>();
@@ -208,7 +218,7 @@ public class TestGeneratorAgent {
 
         // 代码驱动分支（PRD 为空或 PRD 生成失败时）
         if (result.isEmpty()) {
-            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, null);
+            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, null, null);
         }
 
         if (progressCallback != null) {
@@ -227,17 +237,22 @@ public class TestGeneratorAgent {
 
     // v3.2: 流式生成重载。与 generate 行为一致（PRD 驱动/代码驱动分支、去重、质量评分、编号），
     // 额外通过 caseCb 在每条用例解析完成时回调（去重前），用于 SSE 推送
+    // v3.3: 新增 cancelled 参数，在 LLM 调用前/状态机循环迭代前检查取消标志
     public List<TestCase> generateStreaming(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                              BackendResult backendResult, FrontendResult frontendResult,
-                                             ProgressCallback progressCallback, CaseCallback caseCb) {
+                                             ProgressCallback progressCallback, CaseCallback caseCb,
+                                             AtomicBoolean cancelled) {
         List<TestCase> result = new ArrayList<>();
 
         if (prdResult != null && !prdResult.isEmpty()) {
+            checkCancelled(cancelled);  // v3.3: PRD 驱动分支前检查
             if (progressCallback != null) {
                 progressCallback.update("基于 PRD 生成用例...");
             }
             try {
-                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, caseCb);
+                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, caseCb, cancelled);
+            } catch (GenerationCancelledException e) {
+                throw e;  // v3.3: 取消异常向上传播，不触发 fallback
             } catch (Exception e) {
                 log.warn("PRD-driven streaming generation failed, fallback to code-driven: {}", e.getMessage());
                 result = new ArrayList<>();
@@ -245,7 +260,7 @@ public class TestGeneratorAgent {
         }
 
         if (result.isEmpty()) {
-            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, caseCb);
+            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, caseCb, cancelled);
         }
 
         if (progressCallback != null) {
@@ -265,25 +280,30 @@ public class TestGeneratorAgent {
     // v1.10: 原代码驱动生成逻辑（状态机/endpoint），从 generate 抽出供 PRD 失败时复用
     // v1.11: 新增 frontendResult 参数
     // v3.2: 新增 caseCb 参数，规则回退与 LLM 解析均透传回调
+    // v3.3: 新增 cancelled 参数，每模块循环迭代前检查取消标志
     private List<TestCase> generateCodeDrivenCases(List<StateMachine> stateMachines, BackendResult backendResult,
                                                     FrontendResult frontendResult,
-                                                    ProgressCallback progressCallback, CaseCallback caseCb) {
+                                                    ProgressCallback progressCallback, CaseCallback caseCb,
+                                                    AtomicBoolean cancelled) {
         List<TestCase> result = new ArrayList<>();
 
         if (stateMachines != null && !stateMachines.isEmpty()) {
             int total = stateMachines.size();
             for (int i = 0; i < total; i++) {
+                checkCancelled(cancelled);  // v3.3: 每模块前检查
                 StateMachine sm = stateMachines.get(i);
                 if (progressCallback != null) {
                     progressCallback.update(String.format("正在生成第 %d/%d 个模块: %s", i + 1, total, sm.getName()));
                 }
                 List<TestCase> moduleCases;
                 try {
-                    moduleCases = generateByLlmForStateMachine(sm, backendResult, frontendResult, caseCb);
+                    moduleCases = generateByLlmForStateMachine(sm, backendResult, frontendResult, caseCb, cancelled);
                     if (moduleCases == null || moduleCases.isEmpty()) {
                         log.warn("LLM returned empty for state machine {}, using rules", sm.getName());
                         moduleCases = generateByRulesForStateMachine(sm, backendResult, caseCb);
                     }
+                } catch (GenerationCancelledException e) {
+                    throw e;  // v3.3: 取消异常向上传播，不触发 rules fallback
                 } catch (Exception e) {
                     log.warn("LLM generation failed for state machine {}, falling back to rules: {}",
                             sm.getName(), e.getMessage());
@@ -307,8 +327,10 @@ public class TestGeneratorAgent {
 
     // v1.11: 新增 frontendResult 参数
     // v3.2: 新增 caseCb 参数，透传给 parseTestCases 用于流式回调
+    // v3.3: 新增 cancelled 参数，LLM 调用前检查取消标志
     private List<TestCase> generateByLlmForStateMachine(StateMachine sm, BackendResult backendResult,
-                                                         FrontendResult frontendResult, CaseCallback caseCb) {
+                                                         FrontendResult frontendResult, CaseCallback caseCb,
+                                                         AtomicBoolean cancelled) {
         Map<String, Object> context = new LinkedHashMap<>();
 
         Map<String, Object> smMap = new LinkedHashMap<>();
@@ -351,6 +373,7 @@ public class TestGeneratorAgent {
                     + "\n\n请基于上下文生成测试用例。";
         }
 
+        checkCancelled(cancelled);  // v3.3: LLM 调用前检查（耗时操作，最关键的取消点）
         String response = llmService.chat(systemPrompt, userPrompt, 0.4);
         String json = extractJsonArray(response);
 
@@ -360,10 +383,11 @@ public class TestGeneratorAgent {
     // v1.10: PRD 驱动的 LLM 生成（PRD 为主、代码为辅）
     // v1.11: 新增 frontendResult 参数，前端上下文作为辅助信息
     // v3.2: 新增 caseCb 参数，透传给 parseTestCases 用于流式回调
+    // v3.3: 新增 cancelled 参数，LLM 调用前检查取消标志
     private List<TestCase> generateByLlmWithPrd(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                                  BackendResult backendResult,
                                                  FrontendResult frontendResult,
-                                                 CaseCallback caseCb) throws Exception {
+                                                 CaseCallback caseCb, AtomicBoolean cancelled) throws Exception {
         Map<String, Object> context = new LinkedHashMap<>();
 
         // PRD 为主上下文
@@ -412,6 +436,7 @@ public class TestGeneratorAgent {
         String userPrompt = "上下文信息：\n" + objectMapper.writeValueAsString(context)
                 + "\n\n" + FEW_SHOT_EXAMPLES
                 + "\n\n请以 PRD 需求为纲生成测试用例，代码信息用于补充接口路径与前置状态。";
+        checkCancelled(cancelled);  // v3.3: LLM 调用前检查（耗时操作，最关键的取消点）
         String response = llmService.chat(SYSTEM_PROMPT_PRD_DRIVEN, userPrompt, 0.4);
         String json = extractJsonArray(response);
         return parseTestCases(json, caseCb);
