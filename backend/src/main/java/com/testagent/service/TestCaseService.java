@@ -82,6 +82,16 @@ public class TestCaseService {
     @Async("generationExecutor")
     public void runGenerate(String projectId, GenerateRequest req) {
         try {
+            // v3.0: 前置校验——PRD 和代码分析至少一项才能生成用例
+            Project project = projectRepository.findById(projectId)
+                    .orElseThrow(() -> new IllegalArgumentException("项目不存在: " + projectId));
+            boolean hasPrd = project.getPrdContent() != null && !project.getPrdContent().isBlank();
+            CodeAnalysis analysis = codeAnalysisRepository.findByProjectId(projectId).orElse(null);
+            boolean hasAnalysis = analysis != null && "completed".equals(analysis.getStatus());
+            if (!hasPrd && !hasAnalysis) {
+                throw new IllegalStateException("请先输入 PRD 或完成代码分析，至少需要一项才能生成用例");
+            }
+
             updateProjectStatus(projectId, "generating");
             // v1.10: 改由 OrchestratorAgent 编排（PrdAgent + 代码侧 → TestGeneratorAgent）
             List<TestCase> testCases = orchestratorAgent.generate(projectId,

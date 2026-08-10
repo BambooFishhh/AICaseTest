@@ -11,6 +11,6 @@ public class CreateProjectRequest {
 
     private String sourceType = "local_path";
 
-    @NotBlank
+    // v3.0: sourcePath 改为可选（纯 PRD 驱动时可为空）
     private String sourcePath;
 }

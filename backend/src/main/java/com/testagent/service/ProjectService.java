@@ -63,9 +63,12 @@ public class ProjectService {
 
     @Transactional
     public ProjectDTO createProject(CreateProjectRequest req) {
-        File path = new File(req.getSourcePath());
-        if (!path.exists()) {
-            throw BusinessException.pathNotFound("源码路径不存在: " + req.getSourcePath());
+        // v3.0: sourcePath 为空时跳过路径校验（纯 PRD 驱动项目）
+        if (req.getSourcePath() != null && !req.getSourcePath().isBlank()) {
+            File path = new File(req.getSourcePath());
+            if (!path.exists()) {
+                throw BusinessException.pathNotFound("源码路径不存在: " + req.getSourcePath());
+            }
         }
 
         Project project = new Project();

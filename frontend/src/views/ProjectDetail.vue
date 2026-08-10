@@ -30,11 +30,21 @@
       </el-descriptions>
     </el-card>
 
+    <!-- v3.0: PRD 面板上提为主线（v1.10 引入，v3.0 调整位置） -->
+    <PrdPanel v-if="project" :project-id="projectId" />
+
     <el-card class="action-card">
       <template #header>操作</template>
       <div class="action-buttons">
-        <el-button type="primary" :disabled="!canAnalyze" @click="handleAnalyze">开始分析</el-button>
+        <!-- v3.0: 生成用例作为主操作 -->
         <el-button type="primary" :disabled="!canGenerate" @click="handleGenerate">生成用例</el-button>
+        <!-- v3.0: 开始分析标注为可选上下文，无代码路径时禁用 -->
+        <el-button
+          type="primary"
+          :disabled="!canAnalyze"
+          :title="!hasSourcePath ? '未配置代码路径，可直接用 PRD 生成用例' : ''"
+          @click="handleAnalyze"
+        >开始分析<span v-if="!hasSourcePath" class="optional-mark">（可选）</span></el-button>
         <el-button type="primary" :disabled="!canMindmap" @click="handleMindmap">生成脑图</el-button>
         <el-button :disabled="!canDownload" @click="handleDownload">下载脑图</el-button>
         <el-button :disabled="!canViewAnalysis" @click="goAnalysis">查看分析</el-button>
@@ -42,9 +52,6 @@
         <el-button @click="goMindmap">脑图预览</el-button>
       </div>
     </el-card>
-
-    <!-- v1.10: PRD 需求文档面板 -->
-    <PrdPanel v-if="project" :project-id="projectId" />
 
     <el-alert
       v-if="pollingMessage"
@@ -119,14 +126,21 @@ const techStackList = computed(() => {
   return []
 })
 
-const canAnalyze = computed(() => {
-  const s = project.value?.status
-  return s === 'created' || s === 'failed'
+// v3.0: 是否有代码路径（无代码路径时"开始分析"禁用）
+const hasSourcePath = computed(() => {
+  return !!project.value?.sourcePath && project.value.sourcePath.trim() !== ''
 })
 
+// v3.0: 开始分析需有代码路径
+const canAnalyze = computed(() => {
+  const s = project.value?.status
+  return hasSourcePath.value && (s === 'created' || s === 'failed')
+})
+
+// v3.0: 生成用例放宽——created 状态也可生成（纯 PRD 驱动），只需不在分析/生成中
 const canGenerate = computed(() => {
   const s = project.value?.status
-  return s === 'analyzed' || s === 'completed'
+  return s !== 'analyzing' && s !== 'generating'
 })
 
 const canMindmap = computed(() => project.value?.status === 'completed')
@@ -249,6 +263,10 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+}
+.optional-mark {
+  color: #909399;
+  font-size: 12px;
 }
 .polling-alert {
   margin-top: 4px;

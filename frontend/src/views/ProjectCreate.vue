@@ -25,9 +25,10 @@
           <el-select v-model="form.sourceType" placeholder="请选择来源类型">
             <el-option label="本地路径" value="local_path" />
             <el-option label="Git 地址" value="git_url" />
+            <el-option label="无代码（纯 PRD）" value="none" />
           </el-select>
         </el-form-item>
-        <el-form-item label="项目路径" prop="sourcePath">
+        <el-form-item v-if="form.sourceType !== 'none'" label="项目路径" prop="sourcePath">
           <el-input
             v-model="form.sourcePath"
             placeholder="请输入项目源码路径"
@@ -45,7 +46,7 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { createProject } from '@/api/project'
@@ -66,9 +67,26 @@ const rules = {
     { min: 1, max: 200, message: '长度在 1 到 200 个字符', trigger: 'blur' }
   ],
   sourcePath: [
-    { required: true, message: '请输入项目路径', trigger: 'blur' }
+    {
+      // v3.0: 仅非"无代码"时必填
+      validator: (rule, value, callback) => {
+        if (form.sourceType !== 'none' && (!value || !value.trim())) {
+          callback(new Error('请输入项目路径'))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'blur'
+    }
   ]
 }
+
+// v3.0: 选"无代码"时清空路径
+watch(() => form.sourceType, (newType) => {
+  if (newType === 'none') {
+    form.sourcePath = ''
+  }
+})
 
 async function handleSubmit() {
   if (!formRef.value) return

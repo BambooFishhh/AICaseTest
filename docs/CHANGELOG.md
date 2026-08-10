@@ -4,6 +4,40 @@
 
 ---
 
+## v3.0 — PRD 驱动流程改造
+
+**日期**: 2026-08-10
+**基线**: v2.9
+**迭代主题**: 将产品流程从"代码驱动"改为"PRD 驱动"——PRD 为用例生成主线（必须），代码路径降级为可选上下文
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `dto/CreateProjectRequest.java` | 修改 | 移除 `sourcePath` 的 `@NotBlank`，改为可选（纯 PRD 驱动项目可不填代码路径） |
+| `service/ProjectService.java` | 修改 | `createProject` 在 `sourcePath` 为空时跳过路径存在校验 |
+| `service/TestCaseService.java` | 修改 | `runGenerate` 前置校验——PRD 和代码分析结果都为空时抛 `IllegalStateException` 阻止生成 |
+
+#### 前端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `views/ProjectCreate.vue` | 修改 | 来源类型新增"无代码（纯 PRD）"选项；项目路径条件显示（选"无代码"时隐藏）；`sourcePath` 校验改为动态（仅非"无代码"时必填）；watch sourceType 切换时清空路径 |
+| `views/ProjectDetail.vue` | 修改 | PRD 面板上提到操作区上方（作为主线）；"生成用例"按钮提至首位；"开始分析"按钮在无代码路径时禁用并显示"（可选）"标注；`canGenerate` 放宽为非 analyzing/generating 即可（支持 created 状态纯 PRD 生成）；新增 `hasSourcePath` computed |
+
+### 验证
+- 后端编译: `mvn compile` BUILD SUCCESS (84 source files)
+- 前端构建: `npm run build` 成功（ProjectDetail chunk 9.69 kB）
+
+### 说明
+- 后端生成链路（OrchestratorAgent/TestGeneratorAgent）v1.10 已支持纯 PRD 驱动，本迭代仅放开创建校验和生成前置校验
+- 历史项目（有 sourcePath）行为完全不变，向后兼容
+- "PRD 必填"体现在生成用例环节的校验，创建项目时不强制填 PRD（降低创建门槛，PRD 在详情页 PrdPanel 编辑）
+
+---
+
 ## v2.9 — Selenium 清理 + 录屏回放升级为视频播放
 
 **日期**: 2026-08-09
