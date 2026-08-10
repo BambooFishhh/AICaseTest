@@ -4,6 +4,43 @@
 
 ---
 
+## v3.5 — 追加生成模式
+
+**日期**: 2026-08-11
+**基线**: v3.4
+**迭代主题**: 新增"追加生成"模式——不删除现有用例，按类型追加新用例并跨去重，让用户敢于增量改进而无需担心丢失人工评审成果
+
+### 改动清单与目的
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `service/TestCaseService.java` | 修改 | 新增 `runGenerateStreamAppend(projectId, type, emitter)` 方法：不删除现有用例、type 非空时过滤、新用例 vs 现有用例跨去重、ID 从现有最大 +1 续号；新增私有 `isDuplicate(a, b)` 判重逻辑（与 TestGeneratorAgent 一致，复制以保持封装职责分离）；complete 事件携带 total/appended/dropped/existingBefore 字段；复用 cancellationFlags + GenerationCancelledException，取消时跳过落库 |
+| `controller/ProjectController.java` | 修改 | 新增 `GET /{projectId}/testcases/generate-stream-append?type={type}` SSE 端点；复用 generating 状态机互斥校验；`cancelGenerate` 端点同时适用于追加生成（共用 cancellationFlags） |
+
+#### 前端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `api/testcase.js` | 修改 | 新增 `streamGenerateAppend(projectId, type, callbacks)`：基于 EventSource，URL `generate-stream-append?type=`，complete 事件回调接收整个 data 对象（含 appended/dropped/existingBefore） |
+| `views/TestCaseList.vue` | 修改 | 工具栏新增"追加生成"按钮（warning 类型，streaming 时 disabled）；新增类型选择 el-dialog（radio: 全部/正向/异常/边界/数据）+ form-tip 说明；新增 `currentGenMode` 状态（'regenerate'/'append'/null）+ `streamingAlertTitle` 计算属性差异化流式面板标题；新增 `handleOpenAppendDialog`/`handleConfirmAppend`/`startAppendStream` 函数；`handleRegenerate` 同步设置/重置 currentGenMode；导入 Plus 图标 + streamGenerateAppend |
+
+### 验证
+- 后端编译: `mvn compile` BUILD SUCCESS (88 source files)
+- 前端构建: `npm run build` 成功（TestCaseList chunk 30.53 kB）
+
+### 说明
+- **追加 vs 重新生成**：追加保留现有用例 + 跨去重 + 续号；重新生成仍为全量覆盖（行为不变）
+- **类型过滤策略**：LLM 仍生成全类型用例，落库阶段后置过滤（避免 LLM 不遵守类型约束丢失优质用例）；type 为空时全类型追加
+- **跨去重**：新用例与现有同模块用例标题相似度 > 80% 判重（与生成阶段 isDuplicate 标准一致）
+- **续号保存**：复用 `nextTestCaseNumber`，新用例 ID 从 TC-{现有最大+1} 开始
+- **取消保护**：复用 v3.3 取消机制，追加生成取消时跳过落库，现有用例完整保留
+- **状态机互斥**：追加生成与重新生成共用 generating 状态，并发触发推送 error 事件
+- **向后兼容**：重新生成端点/前端逻辑完全不变；complete 事件新增字段，前端按存在性读取
+
+---
+
 ## v3.4 — 生成参数可配置
 
 **日期**: 2026-08-11

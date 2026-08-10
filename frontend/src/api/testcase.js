@@ -39,7 +39,49 @@ export function streamGenerate(projectId, { onProgress, onCase, onComplete, onCa
   return es
 }
 
+// v3.5: SSE 流式追加生成。复用 streamGenerate 的事件结构，
+// complete 事件携带 total/appended/dropped/existingBefore 字段。
+// type 为空时全类型追加；非空时仅追加该类型（positive/negative/boundary/data）。
+export function streamGenerateAppend(
+  projectId,
+  type,
+  { onProgress, onCase, onComplete, onCancelled, onError } = {}
+) {
+  const params = new URLSearchParams()
+  if (type) params.set('type', type)
+  const query = params.toString() ? `?${params.toString()}` : ''
+  const url = `/api/projects/${projectId}/testcases/generate-stream-append${query}`
+  const es = new EventSource(url)
+
+  es.addEventListener('progress', (e) => {
+    try { onProgress?.(JSON.parse(e.data).message) } catch {}
+  })
+  es.addEventListener('case', (e) => {
+    try { onCase?.(JSON.parse(e.data).testCase) } catch {}
+  })
+  es.addEventListener('complete', (e) => {
+    // v3.5: complete 携带 total/appended/dropped/existingBefore
+    try { onComplete?.(JSON.parse(e.data)) } catch {}
+    es.close()
+  })
+  es.addEventListener('cancelled', (e) => {
+    try { onCancelled?.(JSON.parse(e.data).message) } catch {}
+    es.close()
+  })
+  es.addEventListener('error', (e) => {
+    let msg = '追加生成连接异常'
+    if (e.data) {
+      try { msg = JSON.parse(e.data).message || msg } catch {}
+    }
+    onError?.(msg)
+    es.close()
+  })
+
+  return es
+}
+
 // v3.3: 取消流式生成。后端置取消标志，生成线程在下个检查点停止并跳过落库。
+// v3.5: 同时适用于追加生成（共用 cancellationFlags 注册表）。
 export function cancelGenerate(projectId) {
   return request.post(`/projects/${projectId}/testcases/generate-cancel`)
 }

@@ -64,7 +64,16 @@
         />
         <!-- v3.4: 生成参数配置 -->
         <el-button :icon="Setting" @click="handleOpenGenParams">生成参数</el-button>
-        <el-button type="primary" :loading="regenerating" @click="handleRegenerate">
+        <!-- v3.5: 追加生成按钮（与重新生成互斥，streaming 时禁用） -->
+        <el-button type="warning" :icon="Plus" :disabled="streaming" @click="handleOpenAppendDialog">
+          追加生成
+        </el-button>
+        <el-button
+          type="primary"
+          :loading="regenerating"
+          :disabled="streaming"
+          @click="handleRegenerate"
+        >
           重新生成
         </el-button>
         <el-button :loading="generatingMap" @click="handleGenerateMindmap">生成脑图</el-button>
@@ -230,10 +239,10 @@
       show-icon
       class="polling-alert"
     />
-    <!-- v3.2: 流式生成进度面板 -->
+    <!-- v3.2: 流式生成进度面板。v3.5: 标题按 currentGenMode 区分重新生成/追加生成 -->
     <el-alert
       v-if="streaming"
-      :title="`正在生成测试用例... 已收到 ${streamedCases.length} 条`"
+      :title="streamingAlertTitle"
       type="success"
       :closable="false"
       show-icon
@@ -420,6 +429,40 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- v3.5: 追加生成类型选择对话框 -->
+    <el-dialog
+      v-model="showAppendDialog"
+      title="追加生成"
+      width="420px"
+    >
+      <el-form label-width="80px">
+        <el-form-item label="追加类型">
+          <el-radio-group v-model="appendType">
+            <el-radio label="">全部类型</el-radio>
+            <el-radio label="positive">正向</el-radio>
+            <el-radio label="negative">异常</el-radio>
+            <el-radio label="boundary">边界</el-radio>
+            <el-radio label="data">数据</el-radio>
+          </el-radio-group>
+          <div class="form-tip">
+            追加生成不会删除现有用例，新用例 ID 从现有最大 +1 续号。
+            与现有用例标题重复的新用例会被自动去重。
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAppendDialog = false">取消</el-button>
+        <el-button
+          type="warning"
+          :icon="Plus"
+          :loading="streaming"
+          @click="handleConfirmAppend"
+        >
+          开始追加生成
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -437,11 +480,13 @@ import {
   Check,
   ArrowDown,
   VideoPlay,
-  Setting
+  Setting,
+  Plus
 } from '@element-plus/icons-vue'
 import {
   listTestCases,
   streamGenerate,
+  streamGenerateAppend,
   cancelGenerate,
   deleteTestCase,
   batchDeleteTestCases,
@@ -481,6 +526,17 @@ const streamProgress = ref('')
 const streamedCases = ref([]) // 流式期间实时累积的用例
 const cancelling = ref(false) // v3.3: 取消生成中状态
 let streamEs = null // EventSource 实例（非响应式）
+// v3.5: 当前生成模式：'regenerate' | 'append' | null（用于差异化流式面板标题与完成提示）
+const currentGenMode = ref(null)
+
+// v3.5: 流式面板标题——追加生成与重新生成文案区分
+const streamingAlertTitle = computed(() => {
+  if (!streaming.value) return ''
+  if (currentGenMode.value === 'append') {
+    return `正在追加生成测试用例... 已收到 ${streamedCases.value.length} 条`
+  }
+  return `正在生成测试用例... 已收到 ${streamedCases.value.length} 条`
+})
 
 const testCases = ref([])
 const allTestCases = ref([])
@@ -891,6 +947,7 @@ async function handleRegenerate() {
   // v3.2: 进入流式生成模式
   generationError.value = ''
   streaming.value = true
+  currentGenMode.value = 'regenerate' // v3.5: 标识模式
   streamProgress.value = '正在启动生成...'
   streamedCases.value = []
   regenerating.value = true
@@ -906,6 +963,7 @@ async function handleRegenerate() {
     onComplete: async (total) => {
       ElMessage.success(`用例生成完成，共 ${total} 条`)
       streaming.value = false
+      currentGenMode.value = null // v3.5: 重置
       streamProgress.value = ''
       regenerating.value = false
       cancelling.value = false
@@ -917,6 +975,7 @@ async function handleRegenerate() {
       // v3.3: 生成被取消，旧用例已保留
       ElMessage.warning(msg || '生成已取消，旧用例已保留')
       streaming.value = false
+      currentGenMode.value = null // v3.5: 重置
       streamProgress.value = ''
       regenerating.value = false
       cancelling.value = false
@@ -925,11 +984,80 @@ async function handleRegenerate() {
     },
     onError: (msg) => {
       streaming.value = false
+      currentGenMode.value = null // v3.5: 重置
       streamProgress.value = ''
       regenerating.value = false
       cancelling.value = false
       generationError.value = msg
       ElMessage.error('用例生成失败')
+    }
+  })
+}
+
+// v3.5: 追加生成——不删除现有用例，可选 type 过滤，跨去重，续号保存
+const showAppendDialog = ref(false)
+const appendType = ref('')
+
+function handleOpenAppendDialog() {
+  // 按钮已 disabled，此处二次校验防御
+  if (streaming.value) {
+    ElMessage.warning('正在生成中，请等待当前任务完成')
+    return
+  }
+  appendType.value = '' // 默认全类型
+  showAppendDialog.value = true
+}
+
+function handleConfirmAppend() {
+  showAppendDialog.value = false
+  startAppendStream(appendType.value)
+}
+
+function startAppendStream(type) {
+  generationError.value = ''
+  streaming.value = true
+  currentGenMode.value = 'append'
+  streamProgress.value = '正在启动追加生成...'
+  streamedCases.value = []
+
+  streamEs = streamGenerateAppend(projectId, type, {
+    onProgress: (msg) => {
+      streamProgress.value = msg
+    },
+    onCase: (tc) => {
+      streamedCases.value.unshift(tc)
+    },
+    onComplete: async (data) => {
+      // v3.5: data = { total, appended, dropped, existingBefore }
+      const appended = data?.appended ?? 0
+      const dropped = data?.dropped ?? 0
+      if (appended === 0) {
+        ElMessage.warning(`未追加新用例（生成 ${data?.total ?? 0} 条，全部被去重/过滤）`)
+      } else {
+        ElMessage.success(`追加 ${appended} 条用例，去重/过滤 ${dropped} 条`)
+      }
+      streaming.value = false
+      currentGenMode.value = null
+      streamProgress.value = ''
+      cancelling.value = false
+      page.value = 1
+      await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+    },
+    onCancelled: async (msg) => {
+      ElMessage.warning(msg || '追加生成已取消，现有用例已保留')
+      streaming.value = false
+      currentGenMode.value = null
+      streamProgress.value = ''
+      cancelling.value = false
+      await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+    },
+    onError: (msg) => {
+      streaming.value = false
+      currentGenMode.value = null
+      streamProgress.value = ''
+      cancelling.value = false
+      generationError.value = msg
+      ElMessage.error('追加生成失败')
     }
   })
 }

@@ -218,6 +218,159 @@ public class TestCaseService {
         }
     }
 
+    /**
+     * v3.5: 追加生成（SSE）。与 runGenerateStream 结构对称，但落库阶段：
+     * - 不删除现有用例
+     * - type 非空时仅保留该类型用例
+     * - 新用例与现有用例跨去重
+     * - ID 从现有最大 +1 续号
+     * complete 事件携带 total/appended/dropped/existingBefore 字段。
+     */
+    @Async("generationExecutor")
+    public void runGenerateStreamAppend(String projectId, String type, SseEmitter emitter) {
+        AtomicBoolean clientGone = new AtomicBoolean(false);
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+        emitter.onCompletion(() -> {
+            clientGone.set(true);
+            cancelled.set(true);
+            log.info("SSE client disconnected (append): {}", projectId);
+        });
+        emitter.onTimeout(() -> {
+            clientGone.set(true);
+            cancelled.set(true);
+            log.warn("SSE timeout (append): {}", projectId);
+        });
+        emitter.onError(t -> {
+            clientGone.set(true);
+            cancelled.set(true);
+            log.warn("SSE error (append): {}", projectId, t);
+        });
+        cancellationFlags.put(projectId, cancelled);
+
+        try {
+            // 前置校验（与 runGenerateStream 一致）
+            Project project = projectRepository.findById(projectId)
+                    .orElseThrow(() -> new IllegalArgumentException("项目不存在: " + projectId));
+            boolean hasPrd = project.getPrdContent() != null && !project.getPrdContent().isBlank();
+            CodeAnalysis analysis = codeAnalysisRepository.findByProjectId(projectId).orElse(null);
+            boolean hasAnalysis = analysis != null && "completed".equals(analysis.getStatus());
+            if (!hasPrd && !hasAnalysis) {
+                throw new IllegalStateException("请先输入 PRD 或完成代码分析，至少需要一项才能生成用例");
+            }
+
+            updateProjectStatus(projectId, "generating");
+
+            TestGeneratorAgent.ProgressCallback progressCb = msg -> {
+                sendSseEvent(emitter, clientGone, "progress", Map.of("message", msg));
+                projectRepository.updateProgress(projectId, msg);
+            };
+            TestGeneratorAgent.CaseCallback caseCb = tc ->
+                    sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
+
+            List<TestCase> generated = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled);
+
+            if (cancelled.get()) {
+                throw new GenerationCancelledException("用户取消追加生成");
+            }
+
+            progressCb.update("正在追加保存用例...");
+
+            // v3.5: 追加模式核心逻辑
+            List<TestCase> existing = testCaseRepository.findByProjectId(projectId);
+
+            // 1. 类型过滤（type 非空时仅保留该类型）
+            List<TestCase> filtered = (type == null || type.isBlank())
+                    ? generated
+                    : generated.stream().filter(tc -> type.equals(tc.getType())).collect(Collectors.toList());
+
+            // 2. 跨去重：新用例 vs 现有用例 + 新用例之间去重
+            List<TestCase> toAppend = new ArrayList<>();
+            for (TestCase newTc : filtered) {
+                boolean isDup = false;
+                for (TestCase exTc : existing) {
+                    if (isDuplicate(newTc, exTc)) {
+                        isDup = true;
+                        break;
+                    }
+                }
+                if (!isDup) {
+                    for (TestCase alreadyAppend : toAppend) {
+                        if (isDuplicate(newTc, alreadyAppend)) {
+                            isDup = true;
+                            break;
+                        }
+                    }
+                }
+                if (!isDup) toAppend.add(newTc);
+            }
+
+            // 3. 续号保存
+            int startNo = nextTestCaseNumber(projectId);
+            for (TestCase tc : toAppend) {
+                tc.setId(String.format("TC-%03d", startNo++));
+                tc.setProjectId(projectId);
+                tc.setCreatedAt(LocalDateTime.now());
+                testCaseRepository.save(tc);
+            }
+
+            projectRepository.updateProgress(projectId, null);
+            updateProjectStatus(projectId, "completed");
+
+            int total = generated.size();
+            int appended = toAppend.size();
+            int dropped = total - appended;
+            Map<String, Object> completeData = new LinkedHashMap<>();
+            completeData.put("total", total);
+            completeData.put("appended", appended);
+            completeData.put("dropped", dropped);
+            completeData.put("existingBefore", existing.size());
+            sendSseEvent(emitter, clientGone, "complete", completeData);
+            safeSseComplete(emitter, clientGone);
+            log.info("Append generation completed for project {}: generated={}, appended={}, dropped={}",
+                    projectId, total, appended, dropped);
+        } catch (GenerationCancelledException e) {
+            log.info("Append generation cancelled for project {}", projectId);
+            projectRepository.updateProgress(projectId, null);
+            restoreProjectStatus(projectId);
+            sendSseEvent(emitter, clientGone, "cancelled",
+                    Map.of("message", "追加生成已取消，现有用例已保留"));
+            safeSseComplete(emitter, clientGone);
+        } catch (Exception e) {
+            log.error("Append generation failed for project {}", projectId, e);
+            String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            projectRepository.updateStatusWithError(projectId, "failed", errorMsg);
+            sendSseEvent(emitter, clientGone, "error", Map.of("message", errorMsg));
+            safeSseCompleteWithError(emitter, clientGone, e);
+        } finally {
+            cancellationFlags.remove(projectId);
+        }
+    }
+
+    // v3.5: 跨去重判重逻辑（与 TestGeneratorAgent.isDuplicate 一致）
+    // 决策：复制而非提升可见性，保持 TestGeneratorAgent 封装；职责分离（生成阶段 vs 落库阶段）。
+    private boolean isDuplicate(TestCase a, TestCase b) {
+        String titleA = a.getTitle() == null ? "" : a.getTitle().trim();
+        String titleB = b.getTitle() == null ? "" : b.getTitle().trim();
+        if (titleA.isEmpty() || titleB.isEmpty()) return false;
+        if (titleA.equals(titleB)) return true;
+        String modA = a.getModule() == null ? "" : a.getModule();
+        String modB = b.getModule() == null ? "" : b.getModule();
+        if (modA.equals(modB)) {
+            if (titleA.contains(titleB) || titleB.contains(titleA)) return true;
+            if (titleA.length() <= 20 && titleB.length() <= 20) {
+                Set<Character> setA = new HashSet<>();
+                for (char c : titleA.toCharArray()) setA.add(c);
+                Set<Character> setB = new HashSet<>();
+                for (char c : titleB.toCharArray()) setB.add(c);
+                Set<Character> intersection = new HashSet<>(setA);
+                intersection.retainAll(setB);
+                int maxLen = Math.max(setA.size(), setB.size());
+                if (maxLen > 0 && (double) intersection.size() / maxLen > 0.8) return true;
+            }
+        }
+        return false;
+    }
+
     // v3.3: 取消生成（供 Controller 调用）。返回是否成功取消（有进行中的生成任务）。
     public boolean cancelGeneration(String projectId) {
         AtomicBoolean flag = cancellationFlags.get(projectId);

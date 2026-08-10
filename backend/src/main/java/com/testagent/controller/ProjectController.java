@@ -100,7 +100,33 @@ public class ProjectController {
     }
 
     /**
+     * v3.5: 追加生成（SSE）。不删除现有用例，可选 type 过滤。
+     * 复用 generating 状态机，与重新生成互斥。
+     * complete 事件携带 total/appended/dropped/existingBefore 字段。
+     */
+    @GetMapping("/{projectId}/testcases/generate-stream-append")
+    public SseEmitter generateStreamAppend(@PathVariable String projectId,
+                                            @RequestParam(required = false) String type) {
+        ProjectDTO project = projectService.getProject(projectId);
+        if ("generating".equals(project.getStatus())) {
+            SseEmitter err = new SseEmitter(0L);
+            try {
+                err.send(SseEmitter.event().name("error").data(
+                        Map.of("message", "正在生成中，请等待当前任务完成"),
+                        MediaType.APPLICATION_JSON));
+                err.complete();
+            } catch (Exception ignored) {
+            }
+            return err;
+        }
+        SseEmitter emitter = new SseEmitter(5L * 60 * 1000);
+        testCaseService.runGenerateStreamAppend(projectId, type, emitter);
+        return emitter;
+    }
+
+    /**
      * v3.3: 取消流式生成。置取消标志，生成线程在下个检查点停止并跳过落库（保留旧用例）。
+     * v3.5: 同时适用于追加生成（共用 cancellationFlags 注册表）。
      */
     @PostMapping("/{projectId}/testcases/generate-cancel")
     public ApiResponse<Map<String, Object>> cancelGenerate(@PathVariable String projectId) {

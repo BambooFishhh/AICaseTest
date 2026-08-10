@@ -381,6 +381,19 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v3.4](docs/v3.4/PRD_v3.4_生成参数可配置.md)
 
+### v3.5 — 追加生成模式
+
+新增"追加生成"模式——不删除现有用例，按类型追加新用例并跨去重，让用户敢于增量改进而无需担心丢失人工评审成果。
+
+- 后端: `TestCaseService` 新增 `runGenerateStreamAppend(projectId, type, emitter)`——不删除现有用例、type 非空时过滤、新用例 vs 现有用例跨去重、ID 从现有最大 +1 续号
+- 后端: `TestCaseService` 新增私有 `isDuplicate(a, b)` 判重逻辑（与 TestGeneratorAgent 一致，复制以保持封装职责分离）
+- 后端: `ProjectController` 新增 `GET /api/projects/{id}/testcases/generate-stream-append?type={type}` SSE 端点
+- 后端: complete 事件携带 total/appended/dropped/existingBefore 字段；复用 cancellationFlags + 取消端点
+- 前端: `api/testcase.js` 新增 `streamGenerateAppend`（基于 EventSource，complete 回调接收整个 data 对象）
+- 前端: `TestCaseList.vue` 新增"追加生成"按钮 + 类型选择对话框（radio: 全部/正向/异常/边界/数据）+ `currentGenMode` 状态差异化流式面板标题
+
+详见：[PRD v3.5](docs/v3.5/PRD_v3.5_追加生成模式.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -413,6 +426,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v3.2 | 用例生成流式输出（SSE Stream/逐条推送/实时入表/EventSource 消费） | ✅ 完成 |
 | v3.3 | 流式生成取消与落库保护（取消端点/检查点/落库保护/客户端断开自动取消） | ✅ 完成 |
 | v3.4 | 生成参数可配置（caseDensity/temperature/focusTypes 项目级配置 + 动态 prompt） | ✅ 完成 |
+| v3.5 | 追加生成模式（不删除现有用例 + 类型过滤 + 跨去重 + 续号保存） | ✅ 完成 |
 
 ## API 概览
 
@@ -426,7 +440,8 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | GET | `/api/projects/{id}/analysis` | 获取分析结果 |
 | POST | `/api/projects/{id}/testcases/generate` | 触发用例生成 |
 | GET | `/api/projects/{id}/testcases/generate-stream` | 流式生成用例（SSE，推送 progress/case/complete/cancelled/error，v3.2） |
-| POST | `/api/projects/{id}/testcases/generate-cancel` | 取消流式生成（v3.3） |
+| GET | `/api/projects/{id}/testcases/generate-stream-append?type={type}` | 流式追加生成用例（SSE，不删除现有用例 + 类型过滤 + 跨去重，v3.5） |
+| POST | `/api/projects/{id}/testcases/generate-cancel` | 取消流式生成（v3.3，v3.5 同时适用于追加生成） |
 | GET | `/api/projects/{id}/prd` | 查询 PRD 内容 |
 | PUT | `/api/projects/{id}/prd` | 更新文本 PRD |
 | POST | `/api/projects/{id}/prd/upload` | 上传 PDF（PDFBox 解析） |
