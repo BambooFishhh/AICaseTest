@@ -98,7 +98,7 @@ public class TestCaseService {
             Project project = projectRepository.findById(projectId)
                     .orElseThrow(() -> new IllegalArgumentException("项目不存在: " + projectId));
             boolean hasPrd = project.getPrdContent() != null && !project.getPrdContent().isBlank();
-            CodeAnalysis analysis = codeAnalysisRepository.findByProjectId(projectId).orElse(null);
+            CodeAnalysis analysis = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId).orElse(null);
             boolean hasAnalysis = analysis != null && "completed".equals(analysis.getStatus());
             if (!hasPrd && !hasAnalysis) {
                 throw new IllegalStateException("请先输入 PRD 或完成代码分析，至少需要一项才能生成用例");
@@ -165,7 +165,7 @@ public class TestCaseService {
             Project project = projectRepository.findById(projectId)
                     .orElseThrow(() -> new IllegalArgumentException("项目不存在: " + projectId));
             boolean hasPrd = project.getPrdContent() != null && !project.getPrdContent().isBlank();
-            CodeAnalysis analysis = codeAnalysisRepository.findByProjectId(projectId).orElse(null);
+            CodeAnalysis analysis = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId).orElse(null);
             boolean hasAnalysis = analysis != null && "completed".equals(analysis.getStatus());
             if (!hasPrd && !hasAnalysis) {
                 throw new IllegalStateException("请先输入 PRD 或完成代码分析，至少需要一项才能生成用例");
@@ -256,7 +256,7 @@ public class TestCaseService {
             Project project = projectRepository.findById(projectId)
                     .orElseThrow(() -> new IllegalArgumentException("项目不存在: " + projectId));
             boolean hasPrd = project.getPrdContent() != null && !project.getPrdContent().isBlank();
-            CodeAnalysis analysis = codeAnalysisRepository.findByProjectId(projectId).orElse(null);
+            CodeAnalysis analysis = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId).orElse(null);
             boolean hasAnalysis = analysis != null && "completed".equals(analysis.getStatus());
             if (!hasPrd && !hasAnalysis) {
                 throw new IllegalStateException("请先输入 PRD 或完成代码分析，至少需要一项才能生成用例");
@@ -975,7 +975,7 @@ public class TestCaseService {
 
         // 接口覆盖率
         Set<String> totalEndpoints = new HashSet<>();
-        Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findByProjectId(projectId);
+        Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId);
         if (analysisOpt.isPresent()) {
             String backendResultJson = analysisOpt.get().getBackendResult();
             if (backendResultJson != null && !backendResultJson.isBlank()

@@ -30,7 +30,7 @@ public class AnalysisController {
 
     @GetMapping("/analysis")
     public ApiResponse<AnalysisResultDTO> getAnalysis(@PathVariable String projectId) {
-        CodeAnalysis analysis = codeAnalysisRepository.findByProjectId(projectId)
+        CodeAnalysis analysis = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId)
                 .orElseThrow(() -> BusinessException.notFound("分析结果不存在"));
         return ApiResponse.success(AnalysisResultDTO.from(analysis));
     }

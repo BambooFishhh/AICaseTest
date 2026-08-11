@@ -148,7 +148,7 @@ public class OrchestratorAgent {
 
     private BackendResult loadBackendResult(String projectId) {
         BackendResult backendResult = BackendResult.skipped();
-        Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findByProjectId(projectId);
+        Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId);
         if (analysisOpt.isPresent()) {
             String json = analysisOpt.get().getBackendResult();
             if (json != null && !json.isBlank() && !json.equals("{}")) {
@@ -164,7 +164,7 @@ public class OrchestratorAgent {
 
     // v1.11: 加载前端分析结果
     private FrontendResult loadFrontendResult(String projectId) {
-        Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findByProjectId(projectId);
+        Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId);
         if (analysisOpt.isPresent()) {
             String json = analysisOpt.get().getFrontendResult();
             if (json != null && !json.isBlank() && !json.equals("{}")) {

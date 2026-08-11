@@ -100,7 +100,7 @@ public class ProjectService {
         Project project = projectRepository.findById(id)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + id));
 
-        codeAnalysisRepository.findByProjectId(id).ifPresent(codeAnalysisRepository::delete);
+        codeAnalysisRepository.findAllByProjectId(id).forEach(codeAnalysisRepository::delete);
         stateMachineRepository.deleteByProjectId(id);
         testCaseRepository.deleteByProjectId(id);
         mindMapRepository.findAllByProjectId(id).forEach(mindMapRepository::delete);

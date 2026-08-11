@@ -52,6 +52,9 @@ public class AnalysisService {
 
     @Async("analysisExecutor")
     public void runAnalysis(String projectId, String sourcePath) {
+        // v3.9fix: 删除旧的分析记录，避免多次分析导致 NonUniqueResult
+        codeAnalysisRepository.findAllByProjectId(projectId).forEach(codeAnalysisRepository::delete);
+
         CodeAnalysis analysis = new CodeAnalysis(
                 UUID.randomUUID().toString().substring(0, 8), projectId);
         analysis.setStatus("running");
