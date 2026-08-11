@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * LLM 调用服务。
@@ -79,6 +80,47 @@ public class LlmService {
         }
         throw new BusinessException(50002,
                 "LLM调用失败（已重试" + MAX_RETRIES + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
+                HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+
+    /**
+     * v3.7: 流式调用 LLM。chunkConsumer 接收逐块文本，方法返回完整响应。
+     * 用于用例生成场景，让用户在 LLM 生成过程中即可看到逐条用例。
+     */
+    public String chatStreaming(String systemPrompt, String userPrompt,
+                               double temperature,
+                               Consumer<String> chunkConsumer) {
+        log.info("[LLM] chatStreaming() 开始, prompt长度={}", userPrompt == null ? 0 : userPrompt.length());
+        Exception lastException = null;
+        for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            try {
+                long start = System.currentTimeMillis();
+                Map<String, Object> args = new LinkedHashMap<>();
+                args.put("system_prompt", systemPrompt);
+                args.put("user_prompt", userPrompt);
+                args.put("temperature", temperature);
+                args.put("stream", true);
+
+                String result = mcpClientManager.callToolStreaming("llm", "llm_chat", args, chunkConsumer);
+                long elapsed = System.currentTimeMillis() - start;
+                log.info("[LLM] chatStreaming 完成, 耗时={}ms, 响应长度={}", elapsed, result == null ? 0 : result.length());
+                return result;
+            } catch (Exception e) {
+                lastException = e;
+                log.warn("[LLM] chatStreaming attempt {} 失败: {}", attempt + 1, e.getMessage());
+            }
+            if (attempt < MAX_RETRIES - 1) {
+                try {
+                    log.info("[LLM] 等待 {}ms 后重试...", RETRY_DELAYS_MS[attempt]);
+                    Thread.sleep(RETRY_DELAYS_MS[attempt]);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        throw new BusinessException(50002,
+                "LLM流式调用失败（已重试" + MAX_RETRIES + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
                 HttpStatus.INTERNAL_SERVER_ERROR);
     }
 

@@ -407,6 +407,18 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v3.6](docs/v3.6/PRD_v3.6_用例列表体验优化.md)
 
+### v3.7 — 真正的 LLM 流式输出
+
+将"伪流式"升级为"真流式"——LLM 逐 token 生成 → MCP Server 逐块推送 → Java 逐行解析 → 增量 JSON 解析 → SSE 逐条推送，首条用例出现时间从 40~120 秒降至 ~5 秒。
+
+- MCP Server: `llm_chat` 工具新增 `stream` 参数（默认 false），启用时 OpenAI `stream: true` + 逐块 JSON-RPC notification 推送
+- 后端: `McpConnection.callToolStreaming` 循环读取 stdout，dispatch `notifications/llm_chunk` 到回调
+- 后端: `LlmService.chatStreaming` 流式调用方法（带 chunk 回调）
+- 后端: `StreamingTestCaseParser` 增量 JSON 解析器——跟踪花括号深度检测完整用例对象后立即回调
+- 前端: 流式面板标题优化（0 条时提示"正在接收 LLM 流式响应..."）
+
+详见：[PRD v3.7](docs/v3.7/PRD_v3.7_真正LLM流式输出.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -441,6 +453,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v3.4 | 生成参数可配置（caseDensity/temperature/focusTypes 项目级配置 + 动态 prompt） | ✅ 完成 |
 | v3.5 | 追加生成模式（不删除现有用例 + 类型过滤 + 跨去重 + 续号保存） | ✅ 完成 |
 | v3.6 | 用例列表体验优化（追加不闪烁/展开行/手动添加用例/UTF-8修复） | ✅ 完成 |
+| v3.7 | 真正的 LLM 流式输出（MCP stream:true + JSON-RPC notification + 增量 JSON 解析器） | ✅ 完成 |
 
 ## API 概览
 

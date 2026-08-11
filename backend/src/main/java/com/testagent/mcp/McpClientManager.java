@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 /**
  * v2.6: MCP 多 Server 管理器。
@@ -81,6 +82,19 @@ public class McpClientManager {
             throw new IllegalArgumentException("未知 MCP Server: " + serverName);
         }
         return conn.callTool(toolName, args);
+    }
+
+    /**
+     * v3.7: 流式调用工具。路由到 McpConnection.callToolStreaming。
+     */
+    public String callToolStreaming(String serverName, String toolName,
+                                    Map<String, Object> args,
+                                    Consumer<String> chunkConsumer) throws Exception {
+        McpConnection conn = connections.get(serverName);
+        if (conn == null) {
+            throw new IllegalArgumentException("未知 MCP Server: " + serverName);
+        }
+        return conn.callToolStreaming(toolName, args, chunkConsumer);
     }
 
     /**

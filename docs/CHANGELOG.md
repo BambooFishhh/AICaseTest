@@ -4,6 +4,50 @@
 
 ---
 
+## v3.7 — 真正的 LLM 流式输出
+
+**日期**: 2026-08-11
+**基线**: v3.6
+**主题**: 将"伪流式"升级为"真流式"——MCP Server stream:true + JSON-RPC notification + Java 逐行解析 + 增量 JSON 解析器，首条用例出现时间从 40~120 秒降至 ~5 秒
+
+### 改动清单与目的
+
+#### MCP Server
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `mcp-server/index.js` | 修改 | 新增 `StreamingServer extends Server` 子类（暴露 protected `notification()` 方法）；`llm_chat` 工具新增 `stream` 参数（默认 false 向后兼容），启用时 OpenAI `stream: true` 逐块通过 JSON-RPC notification 推送，累积完整文本返回；版本号升至 v1.2.0 |
+
+#### 后端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `mcp/McpConnection.java` | 修改 | 新增 `callToolStreaming(toolName, args, chunkConsumer)` 方法——发送 JSON-RPC 请求后循环 `readLine()`，`notifications/llm_chunk` 通知 dispatch 到 `chunkConsumer`，匹配 id 的 response 返回完整结果；`synchronized` 保证 stdio 线程安全 |
+| `mcp/McpClientManager.java` | 修改 | 新增 `callToolStreaming(serverName, toolName, args, chunkConsumer)` 路由方法 |
+| `service/LlmService.java` | 修改 | 新增 `chatStreaming(systemPrompt, userPrompt, temperature, chunkConsumer)` 方法——调用 `callToolStreaming` 传入 `stream: true` 参数，`chunkConsumer` 接收逐块文本，返回完整响应；复用重试机制 |
+| `agent/TestGeneratorAgent.java` | 修改 | 新增 `StreamingTestCaseParser` 内部类——积累文本 chunk，跟踪花括号深度检测完整用例对象后立即 `caseCb.onCase` 回调；`generateByLlmWithPrd` / `generateByLlmForStateMachine` 在 `caseCb != null` 时启用流式调用 + 增量解析，完整响应兜底推送未解析的用例 |
+
+#### 前端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `views/TestCaseList.vue` | 修改 | 流式面板标题优化——0 条时提示"正在接收 LLM 流式响应..."，有数据后显示"已收到 N 条" |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS (89 source files)
+- 前端构建: ✓ built in 10.91s (TestCaseList chunk 32.40 kB)
+- 向后兼容: `callTool`/`chat`/非流式 `llm_chat` 完全不变
+
+### 说明
+
+- **数据流改造**: MCP Server 逐 token 推送 notification → McpConnection 逐行读取 dispatch → LlmService chatStreaming 回调 → StreamingTestCaseParser 增量解析 → caseCb → SSE 推送
+- **增量 JSON 解析**: `StreamingTestCaseParser` 跟踪 `inString`/`escaped`/`braceDepth` 状态机，检测花括号深度从 1→0 时提取完整对象 JSON 解析为 TestCase
+- **兜底机制**: 流式结束后用完整响应重新 `parseTestCases(json, null)`，推送流式期间未推送的用例（通过 `parser.getParsedCount()` 对比）
+- **向后兼容**: `caseCb == null`（非流式场景）走原 `chat()` 路径；MCP Server `stream` 参数默认 false
+
+---
+
 ## v3.6 — 用例列表体验优化
 
 **日期**: 2026-08-11

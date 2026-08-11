@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 /**
  * v2.6: 单个 MCP Server 连接封装。
@@ -141,6 +142,79 @@ public class McpConnection {
         }
 
         throw new RuntimeException("MCP Server [" + name + "] 返回内容为空");
+    }
+
+    /**
+     * v3.7: 流式调用工具。逐块读取 stdout，dispatch llm_chunk 通知到 chunkConsumer，
+     * 等待匹配 id 的 JSON-RPC response 后返回完整结果。
+     * 与 callTool 对称，但循环读取 notification + response。
+     */
+    public synchronized String callToolStreaming(
+            String toolName, Map<String, Object> args,
+            Consumer<String> chunkConsumer) throws Exception {
+
+        if (!initialized || process == null || !process.isAlive()) {
+            log.warn("MCP [{}] 未启动或已死, 尝试重启...", name);
+            start();
+            if (!initialized) {
+                throw new IllegalStateException("MCP Server [" + name + "] 未启动");
+            }
+        }
+
+        int id = requestId.incrementAndGet();
+        ObjectNode request = objectMapper.createObjectNode();
+        request.put("jsonrpc", "2.0");
+        request.put("id", id);
+        request.put("method", "tools/call");
+        ObjectNode params = objectMapper.createObjectNode();
+        params.put("name", toolName);
+        params.set("arguments", objectMapper.valueToTree(args));
+        request.set("params", params);
+
+        String json = objectMapper.writeValueAsString(request);
+        log.info("MCP [{}] → callToolStreaming: {}, id={}, stream=true", name, toolName, id);
+        stdin.write(json);
+        stdin.newLine();
+        stdin.flush();
+
+        // 循环读取 stdout 行：notification → dispatch，response → 匹配 id 返回
+        while (true) {
+            String line = stdout.readLine();
+            if (line == null) {
+                throw new IOException("MCP Server [" + name + "] stdout 已关闭");
+            }
+
+            JsonNode msg = objectMapper.readTree(line);
+
+            // notification: 有 method 无 id → dispatch chunk
+            if (msg.has("method") && !msg.has("id")) {
+                String method = msg.path("method").asText();
+                if ("notifications/llm_chunk".equals(method) && chunkConsumer != null) {
+                    String chunkText = msg.path("params").path("text").asText("");
+                    if (!chunkText.isEmpty()) {
+                        chunkConsumer.accept(chunkText);
+                    }
+                }
+                // 其他 notification 忽略
+                continue;
+            }
+
+            // response: 有 id → 匹配则返回
+            if (msg.has("id") && msg.path("id").asInt() == id) {
+                if (msg.has("error")) {
+                    throw new RuntimeException("MCP [" + name + "] 错误: " + msg.get("error"));
+                }
+                JsonNode content = msg.path("result").path("content");
+                if (content.isArray() && !content.isEmpty()) {
+                    String text = content.get(0).path("text").asText("");
+                    log.info("MCP [{}] callToolStreaming 完成, id={}, 长度={}", name, id, text.length());
+                    return text;
+                }
+                throw new RuntimeException("MCP Server [" + name + "] 返回内容为空");
+            }
+            // id 不匹配 → 忽略（不应在 synchronized 模式下发生）
+            log.debug("MCP [{}] 忽略不匹配的响应: {}", name, line);
+        }
     }
 
     public boolean isAvailable() {

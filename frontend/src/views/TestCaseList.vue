@@ -572,12 +572,15 @@ let streamEs = null // EventSource 实例（非响应式）
 const currentGenMode = ref(null)
 
 // v3.5: 流式面板标题——追加生成与重新生成文案区分
+// v3.7: 流式响应期间（0 条时）提示"正在接收 LLM 流式响应"
 const streamingAlertTitle = computed(() => {
   if (!streaming.value) return ''
+  const count = streamedCases.value.length
+  const countText = count === 0 ? '正在接收 LLM 流式响应...' : `已收到 ${count} 条`
   if (currentGenMode.value === 'append') {
-    return `正在追加生成测试用例... 已收到 ${streamedCases.value.length} 条`
+    return `正在追加生成测试用例... ${countText}`
   }
-  return `正在生成测试用例... 已收到 ${streamedCases.value.length} 条`
+  return `正在生成测试用例... ${countText}`
 })
 
 const testCases = ref([])

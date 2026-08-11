@@ -46,6 +46,110 @@ public class TestGeneratorAgent {
         void onCase(TestCase tc);
     }
 
+    /**
+     * v3.7: 流式 JSON 数组解析器。
+     * 积累文本 chunk，跟踪花括号深度检测完整用例对象后立即回调 caseCb。
+     * 状态机：SEARCHING_ARRAY → IN_ARRAY → IN_OBJECT → (完整对象) → IN_ARRAY → ...
+     */
+    public class StreamingTestCaseParser {
+        private final StringBuilder buffer = new StringBuilder();
+        private final CaseCallback caseCb;
+        private int scanPos = 0;
+        private int arrayStart = -1;
+        private int objStart = -1;
+        private int braceDepth = 0;
+        private boolean inString = false;
+        private boolean escaped = false;
+        private int parsedCount = 0;
+
+        public StreamingTestCaseParser(CaseCallback caseCb) {
+            this.caseCb = caseCb;
+        }
+
+        public void append(String chunk) {
+            buffer.append(chunk);
+            scan();
+        }
+
+        private void scan() {
+            String text = buffer.toString();
+            int len = text.length();
+            for (int i = scanPos; i < len; i++) {
+                char c = text.charAt(i);
+
+                if (inString) {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (c == '\\') {
+                        escaped = true;
+                    } else if (c == '"') {
+                        inString = false;
+                    }
+                    continue;
+                }
+
+                if (arrayStart == -1) {
+                    if (c == '[') {
+                        arrayStart = i;
+                    }
+                    continue;
+                }
+
+                if (c == '"') {
+                    inString = true;
+                } else if (c == '{') {
+                    if (braceDepth == 0) {
+                        objStart = i;
+                    }
+                    braceDepth++;
+                } else if (c == '}') {
+                    braceDepth--;
+                    if (braceDepth == 0 && objStart >= 0) {
+                        String objJson = text.substring(objStart, i + 1);
+                        try {
+                            parseAndCallback(objJson);
+                        } catch (Exception e) {
+                            log.warn("流式解析用例对象失败, 跳过: {}", e.getMessage());
+                        }
+                        objStart = -1;
+                    }
+                } else if (c == ']' && braceDepth == 0) {
+                    break;
+                }
+            }
+            scanPos = len;
+        }
+
+        private void parseAndCallback(String objJson) throws Exception {
+            JsonNode node = objectMapper.readTree(objJson);
+            TestCase tc = new TestCase();
+            tc.setTitle(node.path("title").asText("未命名测试用例"));
+            tc.setModule(node.path("module").asText("未分类"));
+            tc.setType(node.path("type").asText("positive"));
+            tc.setPriority(node.path("priority").asText("P1"));
+            tc.setPreconditions(serializeStringArray(node.path("preconditions")));
+            tc.setSteps(serializeStringArray(node.path("steps")));
+            tc.setExpectedResults(serializeStringArray(node.path("expectedResults")));
+            tc.setStructuredSteps(nodeToJson(node.path("structuredSteps"), "[]"));
+            tc.setApiEndpoints(nodeToJson(node.path("apiEndpoints"), "[]"));
+            tc.setTestData(nodeToJson(node.path("testData"), "{}"));
+            tc.setExecutionHints(nodeToJson(node.path("executionHints"), "{}"));
+            tc.setStateMachineRef(nodeToJson(node.path("stateMachineRef"), "{}"));
+            tc.setSource("ai_generation");
+            tc.setConfidence(0.8);
+            parsedCount++;
+            if (caseCb != null) {
+                try { caseCb.onCase(tc); } catch (Exception ex) {
+                    log.warn("caseCallback failed, continue: {}", ex.getMessage());
+                }
+            }
+        }
+
+        public int getParsedCount() {
+            return parsedCount;
+        }
+    }
+
     // v3.3: 取消检查。cancelled 为 null（非流式调用）或 false 时跳过。
     private void checkCancelled(AtomicBoolean cancelled) {
         if (cancelled != null && cancelled.get()) {
@@ -459,10 +563,24 @@ public class TestGeneratorAgent {
 
         checkCancelled(cancelled);  // v3.3: LLM 调用前检查（耗时操作，最关键的取消点）
         // v3.4: temperature 参数化（从 params 读取，null/越界默认 0.4）
+        // v3.7: caseCb 非空时启用流式调用 + 增量解析
+        if (caseCb != null) {
+            StreamingTestCaseParser parser = new StreamingTestCaseParser(caseCb);
+            String response = llmService.chatStreaming(
+                    systemPrompt, userPrompt, resolveTemperature(params), parser::append);
+            String json = extractJsonArray(response);
+            List<TestCase> all = parseTestCases(json, null);
+            for (int i = parser.getParsedCount(); i < all.size(); i++) {
+                try { caseCb.onCase(all.get(i)); } catch (Exception ex) {
+                    log.warn("兜底推送失败: {}", ex.getMessage());
+                }
+            }
+            return all;
+        }
+        // caseCb 为 null（非流式场景）：原有逻辑
         String response = llmService.chat(systemPrompt, userPrompt, resolveTemperature(params));
         String json = extractJsonArray(response);
-
-        return parseTestCases(json, caseCb);
+        return parseTestCases(json, null);
     }
 
     // v1.10: PRD 驱动的 LLM 生成（PRD 为主、代码为辅）
@@ -525,9 +643,25 @@ public class TestGeneratorAgent {
                 + "\n\n请以 PRD 需求为纲生成测试用例，代码信息用于补充接口路径与前置状态。";
         checkCancelled(cancelled);  // v3.3: LLM 调用前检查（耗时操作，最关键的取消点）
         // v3.4: 动态构建 PRD system prompt + temperature 参数化
+        // v3.7: caseCb 非空时启用流式调用 + 增量解析
+        if (caseCb != null) {
+            StreamingTestCaseParser parser = new StreamingTestCaseParser(caseCb);
+            String response = llmService.chatStreaming(
+                    buildPrdDrivenPrompt(params), userPrompt, resolveTemperature(params), parser::append);
+            // 兜底：用完整响应重新解析，推送流式期间未推送的用例
+            String json = extractJsonArray(response);
+            List<TestCase> all = parseTestCases(json, null);
+            for (int i = parser.getParsedCount(); i < all.size(); i++) {
+                try { caseCb.onCase(all.get(i)); } catch (Exception ex) {
+                    log.warn("兜底推送失败: {}", ex.getMessage());
+                }
+            }
+            return all;
+        }
+        // caseCb 为 null（非流式场景）：原有逻辑
         String response = llmService.chat(buildPrdDrivenPrompt(params), userPrompt, resolveTemperature(params));
         String json = extractJsonArray(response);
-        return parseTestCases(json, caseCb);
+        return parseTestCases(json, null);
     }
 
     // v1.11: 将前端上下文注入 context Map，截断避免 token 超限

@@ -36,8 +36,18 @@ const LOCATE_SYSTEM_PROMPT = `你是页面控件视觉识别专家。请看截�
 - confidence: 置信度 0-1
 如果找不到目标控件，found 设为 false，其他字段留空或为 0。`;
 
-const server = new Server(
-  { name: 'aicasetest-mcp-server', version: '1.1.0' },
+// v3.7: StreamingServer 子类，暴露 protected notification() 用于流式 chunk 推送
+class StreamingServer extends Server {
+  async sendChunkNotification(text, index) {
+    await this.notification({
+      method: 'notifications/llm_chunk',
+      params: { text, index },
+    });
+  }
+}
+
+const server = new StreamingServer(
+  { name: 'aicasetest-mcp-server', version: '1.2.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -53,6 +63,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           system_prompt: { type: 'string', description: '系统提示词' },
           user_prompt: { type: 'string', description: '用户输入' },
           temperature: { type: 'number', description: '温度参数（默认 0.7）', default: 0.7 },
+          stream: { type: 'boolean', description: '是否启用流式输出（v3.7）', default: false },
         },
         required: ['system_prompt', 'user_prompt'],
       },
@@ -92,7 +103,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case 'llm_chat': {
-        const { system_prompt, user_prompt, temperature = 0.7 } = args;
+        const { system_prompt, user_prompt, temperature = 0.7, stream = false } = args;
+        // v3.7: 流式模式——逐块推送 notification + 累积完整文本
+        if (stream) {
+          let fullText = '';
+          const completion = await client.chat.completions.create({
+            model,
+            temperature: parseFloat(temperature),
+            max_tokens: 8192,
+            stream: true,
+            messages: [
+              { role: 'system', content: system_prompt },
+              { role: 'user', content: user_prompt },
+            ],
+          });
+          let chunkIndex = 0;
+          for await (const chunk of completion) {
+            const delta = chunk.choices[0]?.delta?.content || '';
+            if (delta) {
+              fullText += delta;
+              await server.sendChunkNotification(delta, chunkIndex++);
+            }
+          }
+          return { content: [{ type: 'text', text: fullText }] };
+        }
+        // 非流式：原有逻辑
         const response = await client.chat.completions.create({
           model,
           temperature: parseFloat(temperature),
@@ -165,4 +200,4 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
-console.error(`[MCP Server] 启动成功 v1.1 | model=${model} | baseUrl=${baseUrl} | tools=3`);
+console.error(`[MCP Server] 启动成功 v1.2 | model=${model} | baseUrl=${baseUrl} | tools=3 | streaming=true`);
