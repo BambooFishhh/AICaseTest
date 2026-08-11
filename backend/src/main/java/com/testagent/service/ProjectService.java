@@ -103,7 +103,7 @@ public class ProjectService {
         codeAnalysisRepository.findByProjectId(id).ifPresent(codeAnalysisRepository::delete);
         stateMachineRepository.deleteByProjectId(id);
         testCaseRepository.deleteByProjectId(id);
-        mindMapRepository.findByProjectId(id).ifPresent(mindMapRepository::delete);
+        mindMapRepository.findAllByProjectId(id).forEach(mindMapRepository::delete);
         projectRepository.delete(project);
     }
 

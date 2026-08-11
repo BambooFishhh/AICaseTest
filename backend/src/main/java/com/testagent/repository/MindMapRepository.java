@@ -10,7 +10,10 @@ import java.util.Optional;
 @Repository
 public interface MindMapRepository extends JpaRepository<MindMap, String> {
 
-    Optional<MindMap> findByProjectId(String projectId);
+    // v3.9fix: 项目可能有多条脑图记录（多次生成），取最新一条
+    Optional<MindMap> findFirstByProjectIdOrderByCreatedAtDesc(String projectId);
+
+    List<MindMap> findAllByProjectId(String projectId);
 
     List<MindMap> findAllByOrderByCreatedAtDesc();
 }

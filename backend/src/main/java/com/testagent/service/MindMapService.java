@@ -101,7 +101,7 @@ public class MindMapService {
     }
 
     public ResponseEntity<Resource> downloadMindMap(String projectId) throws IOException {
-        MindMap mindMap = mindMapRepository.findByProjectId(projectId)
+        MindMap mindMap = mindMapRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId)
                 .orElseThrow(() -> BusinessException.notFound("脑图不存在，请先生成"));
 
         File file = new File(mindMap.getFilePath());
