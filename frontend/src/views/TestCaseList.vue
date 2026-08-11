@@ -227,95 +227,89 @@
     </el-alert>
 
     <el-table
-      :data="displayTestCases"
+      :data="treeData"
       border
       style="width: 100%"
+      row-key="id"
+      :tree-props="{ children: 'children' }"
+      :row-class-name="rowClassName"
+      default-expand-all
       highlight-current-row
       @row-click="handleRowClick"
       @selection-change="handleSelectionChange"
     >
       <el-table-column type="selection" width="45" />
-      <!-- v3.6: 展开行显示前置条件/步骤/预期结果 -->
-      <el-table-column type="expand">
-        <template #default="{ row }">
-          <div class="expand-content">
-            <div class="expand-section">
-              <span class="expand-label">前置条件</span>
-              <ol v-if="row.preconditions && row.preconditions.length" class="expand-list">
-                <li v-for="(p, i) in row.preconditions" :key="'pre-'+i">{{ p }}</li>
-              </ol>
-              <span v-else class="text-muted">无</span>
-            </div>
-            <div class="expand-section">
-              <span class="expand-label">测试步骤</span>
-              <ol v-if="row.steps && row.steps.length" class="expand-list">
-                <li v-for="(s, i) in row.steps" :key="'step-'+i">{{ s }}</li>
-              </ol>
-              <span v-else class="text-muted">无</span>
-            </div>
-            <div class="expand-section">
-              <span class="expand-label">预期结果</span>
-              <ol v-if="row.expectedResults && row.expectedResults.length" class="expand-list">
-                <li v-for="(e, i) in row.expectedResults" :key="'exp-'+i">{{ e }}</li>
-              </ol>
-              <span v-else class="text-muted">无</span>
-            </div>
-          </div>
-        </template>
-      </el-table-column>
       <el-table-column prop="id" label="编号" width="120">
         <template #default="{ row }">
-          <span v-if="streaming">生成中</span>
+          <span v-if="row.isModule"></span>
+          <span v-else-if="streaming">生成中</span>
           <span v-else>{{ row.id }}</span>
         </template>
       </el-table-column>
       <el-table-column prop="title" label="标题" min-width="200" />
-      <el-table-column prop="module" label="模块" width="140" />
-      <el-table-column label="类型" width="100">
+      <el-table-column label="类型" width="80">
         <template #default="{ row }">
-          <el-tag :type="typeTagType(row.type)">{{ typeText(row.type) }}</el-tag>
+          <el-tag v-if="!row.isModule" :type="typeTagType(row.type)" size="small">
+            {{ typeText(row.type) }}
+          </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="优先级" width="100">
+      <el-table-column label="优先级" width="80">
         <template #default="{ row }">
-          <el-tag :type="priorityTagType(row.priority)">{{ row.priority }}</el-tag>
+          <el-tag v-if="!row.isModule" :type="priorityTagType(row.priority)" size="small">
+            {{ row.priority }}
+          </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="质量" width="120">
+      <!-- v3.8: 前置条件/步骤/预期结果直接显示在列中 -->
+      <el-table-column label="前置条件" width="220">
+        <template #default="{ row }">
+          <span v-if="row.isModule"></span>
+          <span v-else-if="row.preconditions && row.preconditions.length" class="detail-summary">
+            {{ row.preconditions[0] }}{{ row.preconditions.length > 1 ? ` (+${row.preconditions.length - 1})` : '' }}
+          </span>
+          <span v-else class="text-muted">无</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="测试步骤" width="220">
+        <template #default="{ row }">
+          <span v-if="row.isModule"></span>
+          <span v-else-if="row.steps && row.steps.length" class="detail-summary">
+            {{ row.steps[0] }}{{ row.steps.length > 1 ? ` (+${row.steps.length - 1})` : '' }}
+          </span>
+          <span v-else class="text-muted">无</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="预期结果" width="220">
+        <template #default="{ row }">
+          <span v-if="row.isModule"></span>
+          <span v-else-if="row.expectedResults && row.expectedResults.length" class="detail-summary">
+            {{ row.expectedResults[0] }}{{ row.expectedResults.length > 1 ? ` (+${row.expectedResults.length - 1})` : '' }}
+          </span>
+          <span v-else class="text-muted">无</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="质量" width="100">
         <template #default="{ row }">
           <el-progress
-            v-if="row.qualityScore > 0"
+            v-if="!row.isModule && row.qualityScore > 0"
             :percentage="row.qualityScore"
             :color="qualityColor(row.qualityScore)"
             :stroke-width="14"
           />
-          <span v-else class="text-muted">未评分</span>
+          <span v-else-if="!row.isModule" class="text-muted">未评分</span>
         </template>
       </el-table-column>
-      <!-- v1.8: 评审状态列 -->
-      <el-table-column label="评审" width="100">
+      <el-table-column label="评审" width="80">
         <template #default="{ row }">
-          <el-tag :type="reviewTagType(row.reviewStatus)" size="small">
+          <el-tag v-if="!row.isModule" :type="reviewTagType(row.reviewStatus)" size="small">
             {{ reviewText(row.reviewStatus) }}
           </el-tag>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-pagination
-      v-if="total > 0 && !streaming"
-      class="pagination"
-      background
-      layout="total, sizes, prev, pager, next, jumper"
-      :total="total"
-      :current-page="page"
-      :page-size="pageSize"
-      :page-sizes="[10, 20, 50, 100]"
-      @current-change="handlePageChange"
-      @size-change="handleSizeChange"
-    />
-
-    <!-- 覆盖率面板（v1.2）— 可折叠紧凑模式 -->
+    <!-- v3.6: 覆盖率面板（移到列表下方，可折叠） -->
     <el-collapse v-if="coverage" v-model="coverageExpanded" class="coverage-collapse">
       <el-collapse-item name="coverage" title="覆盖率度量">
         <el-row :gutter="16">
@@ -651,6 +645,32 @@ const displayTestCases = computed(() => {
   return testCases.value.filter((tc) => tc.priority === filters.priority)
 })
 
+// v3.8: 树状数据——按模块分组
+const treeData = computed(() => {
+  const cases = displayTestCases.value
+  const moduleMap = new Map()
+  cases.forEach((tc) => {
+    const mod = tc.module || '未分类'
+    if (!moduleMap.has(mod)) moduleMap.set(mod, [])
+    moduleMap.get(mod).push(tc)
+  })
+  const tree = []
+  moduleMap.forEach((children, mod) => {
+    tree.push({
+      id: `module-${mod}`,
+      isModule: true,
+      title: `${mod} (${children.length}条)`,
+      module: mod,
+      children,
+    })
+  })
+  return tree
+})
+
+function rowClassName({ row }) {
+  return row.isModule ? 'module-row' : 'case-row'
+}
+
 function typeTagType(type) {
   return (
     { positive: 'success', negative: 'danger', boundary: 'warning', data: 'info' }[type] || 'info'
@@ -720,7 +740,8 @@ function qualityColor(score) {
 async function loadList() {
   loading.value = true
   try {
-    const params = { page: page.value, pageSize: pageSize.value }
+    // v3.8: 加载全部用例用于树状分组
+    const params = { page: 1, pageSize: 9999 }
     if (filters.module) params.module = filters.module
     if (filters.type) params.type = filters.type
     if (filters.keyword) params.keyword = filters.keyword
@@ -747,18 +768,8 @@ function handleFilter() {
   loadList()
 }
 
-function handlePageChange(p) {
-  page.value = p
-  loadList()
-}
-
-function handleSizeChange(s) {
-  pageSize.value = s
-  page.value = 1
-  loadList()
-}
-
 function handleRowClick(row) {
+  if (row.isModule) return
   currentTestCase.value = row
   dialogVisible.value = true
 }
@@ -1310,24 +1321,7 @@ onUnmounted(() => {
   color: #909399;
   margin-top: 4px;
 }
-/* v3.6: 展开行样式 */
-.expand-content {
-  padding: 12px 24px;
-}
-.expand-section {
-  margin-bottom: 12px;
-}
-.expand-label {
-  font-weight: 600;
-  color: #303133;
-  margin-right: 8px;
-}
-.expand-list {
-  margin: 4px 0 0 0;
-  padding-left: 20px;
-  color: #606266;
-  line-height: 1.8;
-}
+/* v3.8: 移除展开行样式（改为树状表格直接显示详情列） */
 .text-muted {
   color: #c0c4cc;
   font-size: 12px;
@@ -1338,5 +1332,21 @@ onUnmounted(() => {
   color: #909399;
   margin-top: 4px;
   line-height: 1.4;
+}
+/* v3.8: 树状用例列表样式 */
+.module-row {
+  font-weight: bold;
+  background-color: var(--el-fill-color-light, #f5f7fa);
+}
+.case-row {
+  cursor: pointer;
+}
+.detail-summary {
+  color: var(--el-text-color-regular, #606266);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  max-width: 200px;
 }
 </style>

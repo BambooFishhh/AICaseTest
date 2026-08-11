@@ -4,6 +4,43 @@
 
 ---
 
+## v3.8 — 树状用例列表
+
+**日期**: 2026-08-11
+**基线**: v3.7
+**主题**: 将扁平用例表格改为树状结构——按模块分组 + 前置条件/步骤/预期结果直接显示在列中（不再隐藏在展开行）
+
+### 改动清单与目的
+
+#### 前端
+
+| 文件 | 类型 | 说明 |
+|------|------|------|
+| `views/TestCaseList.vue` | 修改 | el-table 改为树状结构（`row-key` + `tree-props`），按模块分组，模块为父节点用例为子节点；新增 `treeData` computed 将 `displayTestCases` 按 module 字段分组 |
+| `views/TestCaseList.vue` | 修改 | 移除 `type="expand"` 展开列，新增 3 列直接显示前置条件/步骤/预期结果摘要（第一项 + 计数） |
+| `views/TestCaseList.vue` | 修改 | 移除分页组件 + `handlePageChange`/`handleSizeChange` 函数；`loadList` 改为 `pageSize: 9999` 加载全部用例 |
+| `views/TestCaseList.vue` | 修改 | 新增 `rowClassName` 区分模块行（加粗+背景色）和用例行（可点击）；`handleRowClick` 跳过模块行 |
+| `views/TestCaseList.vue` | 修改 | 移除 v3.6 展开行 CSS（`expand-content`/`expand-section`/`expand-label`/`expand-list`），新增树状样式（`module-row`/`case-row`/`detail-summary`） |
+
+#### 后端
+
+无改动（数据已包含 module/preconditions/steps/expectedResults 字段）
+
+### 验证结果
+
+- 前端构建: ✓ built in 10.98s (TestCaseList chunk 32.47 kB)
+- 树状分组: 模块为父节点，用例为子节点，默认展开
+- 详情可见: 前置条件/步骤/预期结果直接显示在列中（摘要 + 计数）
+- 点击用例行打开详情对话框
+
+### 说明
+
+- **根因**: v3.6 的展开行（`type="expand"`）箭头不明显，用户不知道点击展开；扁平列表看不出模块分组
+- **方案**: el-table `tree-props` 树状结构 + 详情列直接显示（不再需要展开）
+- **向后兼容**: API 不变，筛选功能不变，TestCaseCard 详情对话框不变
+
+---
+
 ## v3.7 — 真正的 LLM 流式输出
 
 **日期**: 2026-08-11

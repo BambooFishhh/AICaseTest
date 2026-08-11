@@ -114,11 +114,9 @@ Each version iteration MUST follow these steps in order:
 - Do NOT use `NotifyUser` — proceed directly to implementation after docs
 - Use `TodoWrite` to track progress throughout
 - Summarize changes table at the end (file | change | purpose)
-- **Auto-continue to next version**: After completing a version, self-evaluate what the next version should focus on and start the next iteration automatically
-- **Only ask user (via AskUserQuestion) in these cases**:
-  1. Every 5 versions (e.g., before starting v6.0 if currently at v5.x) — confirm direction
-  2. Before starting AI 用例执行 (v2.0 or equivalent) — confirm approach
-  3. Otherwise, no need to ask — just proceed autonomously
+- **Single iteration only**: Each invocation of this skill completes exactly ONE version iteration. After finishing all phases (docs + implementation + verification + git push), STOP and report the summary to the user. Do NOT auto-continue to the next version.
+- **If the user wants another iteration**, they must explicitly ask again (e.g., "继续迭代", "开始下一版")
+
 
 ### File Paths
 - Project root: `e:\java_project\AICaseTest`
