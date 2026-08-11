@@ -48,6 +48,7 @@ public class PrdAgent {
     }
 
     private PrdAnalysisResult analyzeByLlm(String prdContent) throws Exception {
+        log.info("[PRD] 开始 LLM 解析, PRD 长度={}", prdContent.length());
         String systemPrompt = """
                 你是需求分析专家。把 PRD 文档解析为结构化 JSON。
                 返回 JSON：
@@ -62,7 +63,11 @@ public class PrdAgent {
                 只返回 JSON，不要其他文字。
                 """;
         String userPrompt = "PRD 文档：\n" + prdContent;
+        log.info("[PRD] 调用 LlmService.chat() ...");
+        long start = System.currentTimeMillis();
         String response = llmService.chat(systemPrompt, userPrompt, 0.2);
+        long elapsed = System.currentTimeMillis() - start;
+        log.info("[PRD] LLM 返回, 耗时={}ms, 响应长度={}", elapsed, response == null ? 0 : response.length());
         String json = extractJsonObject(response);
         PrdAnalysisResult result = objectMapper.readValue(json, PrdAnalysisResult.class);
         log.info("PRD analyzed: modules={}, requirements={}, rules={}, flows={}",

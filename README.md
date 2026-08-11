@@ -394,6 +394,19 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v3.5](docs/v3.5/PRD_v3.5_追加生成模式.md)
 
+### v3.6 — 用例列表体验优化
+
+修复追加生成闪烁、列表信息不足、不支持手动添加三大体验问题。
+
+- 修复: 追加生成时已有用例不消失（displayTestCases 合并已有+新用例）
+- 修复: McpConnection 指定 UTF-8 编码，解决中文 LLM 响应解析失败
+- 新增: el-table 展开行显示前置条件、步骤、预期结果
+- 新增: "新增用例"按钮 + TestCaseCard 创建模式
+- 新增: `POST /api/projects/{id}/testcases` 手动创建用例端点
+- 优化: 覆盖率面板移到列表下方，可折叠
+
+详见：[PRD v3.6](docs/v3.6/PRD_v3.6_用例列表体验优化.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -427,6 +440,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v3.3 | 流式生成取消与落库保护（取消端点/检查点/落库保护/客户端断开自动取消） | ✅ 完成 |
 | v3.4 | 生成参数可配置（caseDensity/temperature/focusTypes 项目级配置 + 动态 prompt） | ✅ 完成 |
 | v3.5 | 追加生成模式（不删除现有用例 + 类型过滤 + 跨去重 + 续号保存） | ✅ 完成 |
+| v3.6 | 用例列表体验优化（追加不闪烁/展开行/手动添加用例/UTF-8修复） | ✅ 完成 |
 
 ## API 概览
 
@@ -442,6 +456,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | GET | `/api/projects/{id}/testcases/generate-stream` | 流式生成用例（SSE，推送 progress/case/complete/cancelled/error，v3.2） |
 | GET | `/api/projects/{id}/testcases/generate-stream-append?type={type}` | 流式追加生成用例（SSE，不删除现有用例 + 类型过滤 + 跨去重，v3.5） |
 | POST | `/api/projects/{id}/testcases/generate-cancel` | 取消流式生成（v3.3，v3.5 同时适用于追加生成） |
+| POST | `/api/projects/{id}/testcases` | 手动创建测试用例（v3.6） |
 | GET | `/api/projects/{id}/prd` | 查询 PRD 内容 |
 | PUT | `/api/projects/{id}/prd` | 更新文本 PRD |
 | POST | `/api/projects/{id}/prd/upload` | 上传 PDF（PDFBox 解析） |

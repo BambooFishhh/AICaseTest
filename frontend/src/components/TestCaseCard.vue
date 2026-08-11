@@ -407,7 +407,7 @@
         <template v-else>
           <el-button @click="cancelEdit">取消</el-button>
           <el-button type="primary" :icon="Check" @click="handleSave">
-            保存
+            {{ mode === 'create' ? '创建' : '保存' }}
           </el-button>
         </template>
       </div>
@@ -481,17 +481,21 @@ const props = defineProps({
   canGoNext: {
     type: Boolean,
     default: false
+  },
+  mode: {
+    type: String,
+    default: 'view'
   }
 })
 
-const emit = defineEmits(['save', 'close', 'delete', 'prev', 'next', 'versions'])
+const emit = defineEmits(['save', 'close', 'delete', 'prev', 'next', 'versions', 'create'])
 
 const route = useRoute()
 const router = useRouter()
 const projectId = route.params.id
 
 // 编辑模式状态
-const editMode = ref(false)
+const editMode = ref(props.mode === 'create')
 
 // 执行相关状态
 const executeDialogVisible = ref(false)
@@ -521,6 +525,10 @@ const confidenceInput = ref(0)
 
 // 对话框标题
 const dialogTitle = computed(() => {
+  // v3.6: 创建模式
+  if (props.mode === 'create') {
+    return '新增用例'
+  }
   const id = props.testCase?.id || ''
   const title = props.testCase?.title || ''
   if (editMode.value) {
@@ -706,6 +714,11 @@ const enterEditMode = () => {
 
 // 取消编辑
 const cancelEdit = () => {
+  // v3.6: 创建模式取消 = 关闭对话框
+  if (props.mode === 'create') {
+    handleClose()
+    return
+  }
   editMode.value = false
 }
 
@@ -808,7 +821,12 @@ const handleSave = () => {
     source: formData.source,
     confidence: formData.confidence
   }
-  emit('save', updated)
+  // v3.6: 创建模式 emit create
+  if (props.mode === 'create') {
+    emit('create', updated)
+  } else {
+    emit('save', updated)
+  }
   editMode.value = false
 }
 

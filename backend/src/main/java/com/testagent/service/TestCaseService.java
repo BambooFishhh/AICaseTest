@@ -7,6 +7,7 @@ import com.testagent.agent.TestGeneratorAgent;
 import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.EndpointInfo;
 import com.testagent.common.BusinessException;
+import com.testagent.dto.CreateTestCaseRequest;
 import com.testagent.dto.GenerateRequest;
 import com.testagent.dto.JsonHelper;
 import com.testagent.dto.TestCaseDTO;
@@ -696,6 +697,38 @@ public class TestCaseService {
             result.put("reviewer", reviewer);
         }
         return result;
+    }
+
+    // v3.6: 手动创建测试用例
+    @Transactional
+    public TestCaseDTO createTestCase(String projectId, CreateTestCaseRequest req) {
+        TestCase tc = new TestCase();
+        tc.setProjectId(projectId);
+        tc.setTitle(req.getTitle() != null ? req.getTitle() : "未命名测试用例");
+        tc.setModule(req.getModule() != null ? req.getModule() : "未分类");
+        tc.setType(req.getType() != null ? req.getType() : "positive");
+        tc.setPriority(req.getPriority() != null ? req.getPriority() : "P2");
+        tc.setPreconditions(toJson(req.getPreconditions() != null ? req.getPreconditions() : new ArrayList<>()));
+        tc.setSteps(toJson(req.getSteps() != null ? req.getSteps() : new ArrayList<>()));
+        tc.setExpectedResults(toJson(req.getExpectedResults() != null ? req.getExpectedResults() : new ArrayList<>()));
+        tc.setStructuredSteps(toJson(req.getStructuredSteps() != null ? req.getStructuredSteps() : new ArrayList<>()));
+        tc.setApiEndpoints(toJson(req.getApiEndpoints() != null ? req.getApiEndpoints() : new ArrayList<>()));
+        tc.setTestData(toJson(req.getTestData() != null ? req.getTestData() : new LinkedHashMap<>()));
+        tc.setExecutionHints(toJson(req.getExecutionHints() != null ? req.getExecutionHints() : new LinkedHashMap<>()));
+        tc.setSource("manual");
+        tc.setConfidence(1.0);
+        tc.setExecutionStatus("pending");
+        tc.setReviewStatus("draft");
+        tc.setCreatedAt(LocalDateTime.now());
+
+        // 分配编号: TC-{当前最大编号+1}
+        List<TestCase> existing = testCaseRepository.findByProjectId(projectId);
+        int nextNum = existing.size() + 1;
+        tc.setId(String.format("TC-%03d", nextNum));
+
+        testCaseRepository.save(tc);
+        log.info("手动创建用例: projectId={}, id={}", projectId, tc.getId());
+        return TestCaseDTO.from(tc);
     }
 
     @Transactional

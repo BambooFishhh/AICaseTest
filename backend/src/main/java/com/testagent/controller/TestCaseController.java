@@ -3,6 +3,7 @@ package com.testagent.controller;
 import com.testagent.common.ApiResponse;
 import com.testagent.dto.BatchDeleteRequest;
 import com.testagent.dto.CopyToRequest;
+import com.testagent.dto.CreateTestCaseRequest;
 import com.testagent.dto.ReviewRequest;
 import com.testagent.dto.TestCaseDTO;
 import com.testagent.dto.TestCaseVersionDTO;
@@ -37,6 +38,13 @@ public class TestCaseController {
 
     @Autowired
     private TestCaseService testCaseService;
+
+    @PostMapping
+    public ApiResponse<TestCaseDTO> createTestCase(
+            @PathVariable String projectId,
+            @RequestBody CreateTestCaseRequest req) {
+        return ApiResponse.success(testCaseService.createTestCase(projectId, req));
+    }
 
     @GetMapping
     public ApiResponse<TestCaseListResponse> listTestCases(

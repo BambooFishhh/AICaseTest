@@ -49,20 +49,27 @@ public class LlmService {
      * v2.6: 通过 MCP 协议调用 llm_chat 工具。
      */
     public String chat(String systemPrompt, String userPrompt, double temperature) {
+        log.info("[LLM] chat() 开始, provider={}, model={}, prompt长度={}", provider, model, userPrompt == null ? 0 : userPrompt.length());
         Exception lastException = null;
         for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
             try {
-                return mcpClientManager.callTool("llm", "llm_chat", Map.of(
+                log.info("[LLM] 调用 MCP callTool(llm, llm_chat), attempt={}", attempt + 1);
+                long start = System.currentTimeMillis();
+                String result = mcpClientManager.callTool("llm", "llm_chat", Map.of(
                         "system_prompt", systemPrompt,
                         "user_prompt", userPrompt,
                         "temperature", temperature
                 ));
+                long elapsed = System.currentTimeMillis() - start;
+                log.info("[LLM] MCP 返回, 耗时={}ms, 响应长度={}", elapsed, result == null ? 0 : result.length());
+                return result;
             } catch (Exception e) {
                 lastException = e;
-                log.warn("LLM call attempt {} failed: {}", attempt + 1, e.getMessage());
+                log.warn("[LLM] attempt {} 失败: {}", attempt + 1, e.getMessage());
             }
             if (attempt < MAX_RETRIES - 1) {
                 try {
+                    log.info("[LLM] 等待 {}ms 后重试...", RETRY_DELAYS_MS[attempt]);
                     Thread.sleep(RETRY_DELAYS_MS[attempt]);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();

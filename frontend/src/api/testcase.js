@@ -90,6 +90,11 @@ export function listTestCases(projectId, params) {
   return request.get(`/projects/${projectId}/testcases`, { params })
 }
 
+// v3.6: 手动创建测试用例
+export function createTestCase(projectId, data) {
+  return request.post(`/projects/${projectId}/testcases`, data)
+}
+
 export function getTestCase(projectId, tcId) {
   return request.get(`/projects/${projectId}/testcases/${tcId}`)
 }

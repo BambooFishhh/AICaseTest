@@ -4,6 +4,44 @@
 
 ---
 
+## v3.6 — 用例列表体验优化
+
+**日期**: 2026-08-11
+**基线**: v3.5
+**主题**: 追加生成闪烁修复 + 列表展开行 + 手动添加用例
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| dto/CreateTestCaseRequest.java | 新增 | 创建用例请求 DTO |
+| controller/TestCaseController.java | 新增 POST 端点 | `POST /api/projects/{projectId}/testcases` |
+| service/TestCaseService.java | 新增 createTestCase 方法 | 手动创建用例，自动分配 TC 编号 |
+| mcp/McpConnection.java | 修复编码 | InputStreamReader/OutputStreamWriter 指定 UTF-8 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| TestCaseList.vue | 修复 displayTestCases | 追加模式合并已有用例+新用例，不闪烁 |
+| TestCaseList.vue | 新增展开行 | el-table type=expand 显示前置条件/步骤/预期结果 |
+| TestCaseList.vue | 新增按钮 | "新增用例"按钮 + 创建对话框 |
+| TestCaseList.vue | 覆盖率面板优化 | 移到列表下方，可折叠 |
+| TestCaseCard.vue | 新增 mode prop | 支持 mode='create' 创建模式 |
+| TestCaseCard.vue | 修改 handleSave | 创建模式 emit('create') |
+| TestCaseCard.vue | 修改 cancelEdit | 创建模式取消=关闭对话框 |
+| api/testcase.js | 新增 createTestCase | 调用 POST 创建 API |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS
+- 前端构建: ✓ built in 14.25s
+- 追加生成不闪烁: 追加模式 displayTestCases 合并已有+新用例
+- 展开行: 显示前置条件、步骤、预期结果
+- 手动添加: 新增按钮 → 空表单 → 保存 → 列表刷新
+
+---
+
 ## v3.5 — 追加生成模式
 
 **日期**: 2026-08-11

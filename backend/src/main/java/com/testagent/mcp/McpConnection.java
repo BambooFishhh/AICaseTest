@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -66,8 +67,8 @@ public class McpConnection {
             pb.environment().putAll(env);
 
             process = pb.start();
-            stdin = new BufferedWriter(new OutputStreamWriter(process.getOutputStream()));
-            stdout = new BufferedReader(new InputStreamReader(process.getInputStream()));
+            stdin = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
+            stdout = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
 
             log.info("MCP Server [{}] 进程已启动: {} {}", name, nodePath, fullPath);
 
@@ -111,12 +112,14 @@ public class McpConnection {
     public synchronized String callTool(String toolName, Map<String, Object> args) throws Exception {
         if (!initialized || process == null || !process.isAlive()) {
             // 尝试重启
+            log.warn("MCP [{}] 未启动或已死, 尝试重启...", name);
             start();
             if (!initialized) {
                 throw new IllegalStateException("MCP Server [" + name + "] 未启动");
             }
         }
 
+        log.info("MCP [{}] callTool: {}, args keys={}", name, toolName, args.keySet());
         ObjectNode params = objectMapper.createObjectNode();
         params.put("name", toolName);
         params.set("arguments", objectMapper.valueToTree(args));
@@ -132,7 +135,9 @@ public class McpConnection {
 
         JsonNode content = response.path("result").path("content");
         if (content.isArray() && !content.isEmpty()) {
-            return content.get(0).path("text").asText("");
+            String text = content.get(0).path("text").asText("");
+            log.info("MCP [{}] callTool 返回, 长度={}", name, text.length());
+            return text;
         }
 
         throw new RuntimeException("MCP Server [" + name + "] 返回内容为空");
@@ -160,17 +165,17 @@ public class McpConnection {
         }
 
         String json = objectMapper.writeValueAsString(request);
-        log.debug("MCP [{}] →: {}", name, json);
+        log.info("MCP [{}] → sendRequest method={}, id={}, 等待响应...", name, method, id);
         stdin.write(json);
         stdin.newLine();
         stdin.flush();
 
-        // 读取响应（单行 JSON）
+        // 读取响应（单行 JSON）— 阻塞读取
         String line = stdout.readLine();
         if (line == null) {
             throw new IOException("MCP Server [" + name + "] stdout 已关闭");
         }
-        log.debug("MCP [{}] ←: {}", name, line);
+        log.info("MCP [{}] ← 收到响应, method={}, id={}, 长度={}", name, method, id, line.length());
         return objectMapper.readTree(line);
     }
 

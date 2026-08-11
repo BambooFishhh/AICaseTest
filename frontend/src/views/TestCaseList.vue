@@ -77,6 +77,8 @@
           重新生成
         </el-button>
         <el-button :loading="generatingMap" @click="handleGenerateMindmap">生成脑图</el-button>
+        <!-- v3.6: 手动新增用例 -->
+        <el-button type="success" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
       </div>
     </div>
 
@@ -112,37 +114,6 @@
         </div>
       </el-col>
     </el-row>
-
-    <!-- 覆盖率面板（v1.2） -->
-    <el-card v-if="coverage" class="coverage-card">
-      <template #header>覆盖率度量</template>
-      <el-row :gutter="16">
-        <el-col :span="12">
-          <div class="coverage-item">
-            <div class="coverage-label">状态转换覆盖率</div>
-            <el-progress
-              :percentage="Math.round(coverage.stateTransition.rate * 100)"
-              :color="coverageColor(coverage.stateTransition.rate)"
-            />
-            <div class="coverage-detail">
-              {{ coverage.stateTransition.covered }} / {{ coverage.stateTransition.total }}
-            </div>
-          </div>
-        </el-col>
-        <el-col :span="12">
-          <div class="coverage-item">
-            <div class="coverage-label">接口覆盖率</div>
-            <el-progress
-              :percentage="Math.round(coverage.apiEndpoint.rate * 100)"
-              :color="coverageColor(coverage.apiEndpoint.rate)"
-            />
-            <div class="coverage-detail">
-              {{ coverage.apiEndpoint.covered }} / {{ coverage.apiEndpoint.total }}
-            </div>
-          </div>
-        </el-col>
-      </el-row>
-    </el-card>
 
     <el-card class="filter-card">
       <el-row :gutter="16">
@@ -215,13 +186,6 @@
       </el-row>
     </el-card>
 
-    <!-- v1.5: 覆盖率矩阵 -->
-    <CoverageMatrix
-      v-if="coverageMatrix"
-      :matrix="coverageMatrix"
-      @filter-by-ids="handleFilterByIds"
-    />
-
     <el-alert
       v-if="progressText"
       :title="progressText"
@@ -271,6 +235,34 @@
       @selection-change="handleSelectionChange"
     >
       <el-table-column type="selection" width="45" />
+      <!-- v3.6: 展开行显示前置条件/步骤/预期结果 -->
+      <el-table-column type="expand">
+        <template #default="{ row }">
+          <div class="expand-content">
+            <div class="expand-section">
+              <span class="expand-label">前置条件</span>
+              <ol v-if="row.preconditions && row.preconditions.length" class="expand-list">
+                <li v-for="(p, i) in row.preconditions" :key="'pre-'+i">{{ p }}</li>
+              </ol>
+              <span v-else class="text-muted">无</span>
+            </div>
+            <div class="expand-section">
+              <span class="expand-label">测试步骤</span>
+              <ol v-if="row.steps && row.steps.length" class="expand-list">
+                <li v-for="(s, i) in row.steps" :key="'step-'+i">{{ s }}</li>
+              </ol>
+              <span v-else class="text-muted">无</span>
+            </div>
+            <div class="expand-section">
+              <span class="expand-label">预期结果</span>
+              <ol v-if="row.expectedResults && row.expectedResults.length" class="expand-list">
+                <li v-for="(e, i) in row.expectedResults" :key="'exp-'+i">{{ e }}</li>
+              </ol>
+              <span v-else class="text-muted">无</span>
+            </div>
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column prop="id" label="编号" width="120">
         <template #default="{ row }">
           <span v-if="streaming">生成中</span>
@@ -323,6 +315,45 @@
       @size-change="handleSizeChange"
     />
 
+    <!-- 覆盖率面板（v1.2）— 可折叠紧凑模式 -->
+    <el-collapse v-if="coverage" v-model="coverageExpanded" class="coverage-collapse">
+      <el-collapse-item name="coverage" title="覆盖率度量">
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <div class="coverage-item">
+              <div class="coverage-label">状态转换覆盖率</div>
+              <el-progress
+                :percentage="Math.round(coverage.stateTransition.rate * 100)"
+                :color="coverageColor(coverage.stateTransition.rate)"
+              />
+              <div class="coverage-detail">
+                {{ coverage.stateTransition.covered }} / {{ coverage.stateTransition.total }}
+              </div>
+            </div>
+          </el-col>
+          <el-col :span="12">
+            <div class="coverage-item">
+              <div class="coverage-label">接口覆盖率</div>
+              <el-progress
+                :percentage="Math.round(coverage.apiEndpoint.rate * 100)"
+                :color="coverageColor(coverage.apiEndpoint.rate)"
+              />
+              <div class="coverage-detail">
+                {{ coverage.apiEndpoint.covered }} / {{ coverage.apiEndpoint.total }}
+              </div>
+            </div>
+          </el-col>
+        </el-row>
+      </el-collapse-item>
+    </el-collapse>
+
+    <!-- v1.5: 覆盖率矩阵 -->
+    <CoverageMatrix
+      v-if="coverageMatrix"
+      :matrix="coverageMatrix"
+      @filter-by-ids="handleFilterByIds"
+    />
+
     <el-dialog
       v-model="dialogVisible"
       width="700px"
@@ -342,6 +373,16 @@
         @versions="handleOpenVersions"
       />
     </el-dialog>
+
+    <!-- v3.6: 新增用例对话框（TestCaseCard 作为独立对话框） -->
+    <TestCaseCard
+      v-if="createDialogVisible"
+      :visible="createDialogVisible"
+      :test-case="{}"
+      mode="create"
+      @create="handleSaveNewTestCase"
+      @close="createDialogVisible = false"
+    />
 
     <!-- v1.9: 历史版本抽屉 -->
     <TestCaseVersionDrawer
@@ -488,6 +529,7 @@ import {
   streamGenerate,
   streamGenerateAppend,
   cancelGenerate,
+  createTestCase,
   deleteTestCase,
   batchDeleteTestCases,
   exportTestCases,
@@ -541,6 +583,7 @@ const streamingAlertTitle = computed(() => {
 const testCases = ref([])
 const allTestCases = ref([])
 const coverage = ref(null)
+const coverageExpanded = ref([])  // 默认折叠
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
@@ -594,8 +637,12 @@ const stats = computed(() => {
 // v3.2: 流式期间展示 streamedCases（实时累积），否则展示分页数据
 const displayTestCases = computed(() => {
   if (streaming.value) {
-    if (!filters.priority) return streamedCases.value
-    return streamedCases.value.filter((tc) => tc.priority === filters.priority)
+    // v3.6: 追加模式合并已有用例 + 新用例；重新生成模式仅展示新用例
+    const base = currentGenMode.value === 'append'
+      ? [...streamedCases.value, ...testCases.value]
+      : streamedCases.value
+    if (!filters.priority) return base
+    return base.filter((tc) => tc.priority === filters.priority)
   }
   if (!filters.priority) return testCases.value
   return testCases.value.filter((tc) => tc.priority === filters.priority)
@@ -744,6 +791,24 @@ async function handleDeleteTestCase(testcaseId) {
 async function handleSaveTestCase() {
   dialogVisible.value = false
   await Promise.all([loadList(), loadAllForStats()])
+}
+
+// v3.6: 手动新增用例
+const createDialogVisible = ref(false)
+
+function handleCreateTestCase() {
+  createDialogVisible.value = true
+}
+
+async function handleSaveNewTestCase(formData) {
+  try {
+    await createTestCase(projectId, formData)
+    ElMessage.success('用例创建成功')
+    createDialogVisible.value = false
+    await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+  } catch (e) {
+    ElMessage.error('创建用例失败: ' + (e.message || ''))
+  }
 }
 
 // v1.4: 批量删除
@@ -1226,6 +1291,9 @@ onUnmounted(() => {
 .coverage-card {
   margin-bottom: 20px;
 }
+.coverage-collapse {
+  margin-top: 20px;
+}
 .coverage-item {
   margin-bottom: 8px;
 }
@@ -1238,6 +1306,24 @@ onUnmounted(() => {
   font-size: 12px;
   color: #909399;
   margin-top: 4px;
+}
+/* v3.6: 展开行样式 */
+.expand-content {
+  padding: 12px 24px;
+}
+.expand-section {
+  margin-bottom: 12px;
+}
+.expand-label {
+  font-weight: 600;
+  color: #303133;
+  margin-right: 8px;
+}
+.expand-list {
+  margin: 4px 0 0 0;
+  padding-left: 20px;
+  color: #606266;
+  line-height: 1.8;
 }
 .text-muted {
   color: #c0c4cc;
