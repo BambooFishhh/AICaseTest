@@ -88,6 +88,9 @@ public class TestCaseService {
     @Autowired
     private ProjectRepository projectRepository;
 
+    @Autowired
+    private XmindService xmindService;
+
     @Async("generationExecutor")
     public void runGenerate(String projectId, GenerateRequest req) {
         try {
@@ -562,6 +565,45 @@ public class TestCaseService {
             tc.setId(String.format("TC-%03d", startNo++));
             tc.setProjectId(projectId);
             tc.setSource("imported");
+            tc.setCreatedAt(LocalDateTime.now());
+            testCaseRepository.save(tc);
+            imported++;
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("imported", imported);
+        result.put("skipped", parsed.size() - imported);
+        return result;
+    }
+
+    /**
+     * v3.9: 从 XMind 文件导入用例（追加模式，重新编号）。
+     */
+    @Transactional
+    public Map<String, Object> importFromXmind(String projectId, MultipartFile file) {
+        projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        if (file == null || file.isEmpty()) {
+            throw BusinessException.invalidParam("导入文件为空");
+        }
+
+        List<TestCase> parsed;
+        try {
+            parsed = xmindService.parseXmind(file.getInputStream());
+        } catch (Exception e) {
+            log.warn("XMind 解析失败 project={}", projectId, e);
+            throw BusinessException.invalidParam("XMind 解析失败: " + e.getMessage());
+        }
+
+        int startNo = nextTestCaseNumber(projectId);
+        int imported = 0;
+        for (TestCase tc : parsed) {
+            if (tc.getTitle() == null || tc.getTitle().isBlank()) {
+                continue;
+            }
+            tc.setId(String.format("TC-%03d", startNo++));
+            tc.setProjectId(projectId);
+            tc.setSource("xmind_import");
             tc.setCreatedAt(LocalDateTime.now());
             testCaseRepository.save(tc);
             imported++;

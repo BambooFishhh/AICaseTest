@@ -430,6 +430,19 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v3.8](docs/v3.8/PRD_v3.8_树状用例列表.md)
 
+### v3.9 — XMind 导入与脑图查看入口
+
+移除 JSON/CSV 导入导出按钮，改为 XMind 导入（逆向解析）+ 生成脑图后查看入口。
+
+- 后端: XmindService 新增 `parseXmind(InputStream)` — 解压 ZIP → 读 content.json → 遍历树（模块→类型→用例→详情）→ List<TestCase>
+- 后端: TestCaseService 新增 `importFromXmind` — 追加模式导入，重新编号 TC-XXX
+- 后端: 新增 `POST /api/projects/{id}/testcases/import-xmind` multipart 端点
+- 前端: 移除导出JSON/导出CSV/导入JSON/复制到 按钮 + 对应函数
+- 前端: 新增"导入XMind"按钮 + 文件上传
+- 前端: 生成脑图后显示"查看脑图"按钮，点击跳转 MindMapPreview 页面
+
+详见：[PRD v3.9](docs/v3.9/PRD_v3.9_XMind导入与脑图查看.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -466,6 +479,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v3.6 | 用例列表体验优化（追加不闪烁/展开行/手动添加用例/UTF-8修复） | ✅ 完成 |
 | v3.7 | 真正的 LLM 流式输出（MCP stream:true + JSON-RPC notification + 增量 JSON 解析器） | ✅ 完成 |
 | v3.8 | 树状用例列表（按模块分组 + 详情列直接显示 + 移除分页） | ✅ 完成 |
+| v3.9 | XMind 导入与脑图查看入口（逆向解析 XMind + 移除 JSON/CSV + 查看脑图按钮） | ✅ 完成 |
 
 ## API 概览
 
@@ -496,6 +510,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | DELETE | `/api/projects/{id}/testcases/batch` | 批量删除用例 |
 | GET | `/api/projects/{id}/testcases/export?format=json\|csv&ids=` | 导出用例（JSON/CSV 文件下载） |
 | POST | `/api/projects/{id}/testcases/import` | 导入 JSON 用例文件（multipart） |
+| POST | `/api/projects/{id}/testcases/import-xmind` | 导入 XMind 文件（v3.9） |
 | POST | `/api/projects/{id}/testcases/copy-to` | 复制选中用例到其他项目 |
 | POST | `/api/projects/{id}/testcases/review` | 批量改评审状态 |
 | GET | `/api/projects/{id}/testcases/{tcId}/versions` | 用例历史版本列表 |

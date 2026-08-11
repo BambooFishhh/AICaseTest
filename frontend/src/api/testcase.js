@@ -148,6 +148,15 @@ export function copyToProject(projectId, ids, targetProjectId) {
   })
 }
 
+// v3.9: 导入 XMind 文件
+export function importXmind(projectId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  return request.post(`/projects/${projectId}/testcases/import-xmind`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
 // v1.8: 批量改评审状态
 export function reviewTestCases(projectId, ids, status, reviewer) {
   return request.post(`/projects/${projectId}/testcases/review`, {

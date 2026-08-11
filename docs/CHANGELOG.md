@@ -4,6 +4,36 @@
 
 ---
 
+## v3.9 — XMind 导入与脑图查看入口
+
+**日期**: 2026-08-12
+**基线**: v3.8
+**主题**: 移除 JSON/CSV 导入导出按钮，改为 XMind 导入（逆向解析）+ 生成脑图后查看入口
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| service/XmindService.java | 新增 parseXmind | 逆向解析 XMind ZIP+JSON 树 → List<TestCase> |
+| service/TestCaseService.java | 新增 importFromXmind | 从 XMind 导入用例（追加模式，重新编号） |
+| controller/TestCaseController.java | 新增 POST 端点 | `POST /api/projects/{id}/testcases/import-xmind` |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| TestCaseList.vue | 移除按钮 | 导出JSON/导出CSV/导入JSON/复制到 + 对应函数 |
+| TestCaseList.vue | 新增按钮 | 导入XMind + 查看脑图（生成后显示） |
+| TestCaseList.vue | 修改 | handleGenerateMindmap 成功后设置 mindmapGenerated |
+| api/testcase.js | 新增 importXmind | 调用 POST import-xmind API |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS (89 source files)
+- 前端构建: ✓ built in 15.78s (TestCaseList 30.67 kB)
+
+---
+
 ## v3.8 — 树状用例列表
 
 **日期**: 2026-08-11

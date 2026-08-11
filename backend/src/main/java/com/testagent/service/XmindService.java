@@ -1,5 +1,6 @@
 package com.testagent.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.dto.JsonHelper;
 import com.testagent.dto.MindMapPreviewNode;
@@ -10,12 +11,14 @@ import org.springframework.stereotype.Service;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
 @Service
@@ -69,6 +72,125 @@ public class XmindService {
         }
 
         return file.getAbsolutePath();
+    }
+
+    /**
+     * v3.9: 逆向解析 XMind 文件 → TestCase 列表。
+     * 解压 ZIP → 读 content.json → 遍历树（模块→类型→用例→详情）。
+     */
+    public List<TestCase> parseXmind(InputStream inputStream) throws IOException {
+        List<TestCase> result = new ArrayList<>();
+
+        // 1. 解压 ZIP 找 content.json
+        String contentJson = null;
+        try (ZipInputStream zis = new ZipInputStream(inputStream)) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if ("content.json".equals(entry.getName())) {
+                    contentJson = new String(zis.readAllBytes(), StandardCharsets.UTF_8);
+                    break;
+                }
+            }
+        }
+        if (contentJson == null) {
+            throw new IOException("XMind 文件中未找到 content.json");
+        }
+
+        // 2. 解析 JSON 树
+        JsonNode root = objectMapper.readTree(contentJson);
+        if (!root.isArray() || root.isEmpty()) {
+            throw new IOException("content.json 格式无效");
+        }
+
+        JsonNode rootTopic = root.get(0).path("rootTopic");
+        JsonNode modules = rootTopic.path("children").path("attached");
+
+        // 3. 遍历模块 → 类型 → 用例 → 详情
+        for (JsonNode moduleNode : modules) {
+            String moduleName = moduleNode.path("title").asText("未分类");
+            JsonNode types = moduleNode.path("children").path("attached");
+
+            for (JsonNode typeNode : types) {
+                String typeName = typeNode.path("title").asText("");
+                String typeCode = mapGroupToTypeCode(typeName);
+                JsonNode testCases = typeNode.path("children").path("attached");
+
+                for (JsonNode tcNode : testCases) {
+                    TestCase tc = parseTestCaseNode(tcNode, moduleName, typeCode);
+                    if (tc != null) {
+                        result.add(tc);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private TestCase parseTestCaseNode(JsonNode tcNode, String moduleName, String typeCode) {
+        String fullTitle = tcNode.path("title").asText("");
+        // title 格式: "TC-001 用例标题" → 按首个空格拆分
+        String title = fullTitle;
+        int spaceIdx = fullTitle.indexOf(' ');
+        if (spaceIdx > 0) {
+            title = fullTitle.substring(spaceIdx + 1);
+        }
+        if (title.isBlank()) return null;
+
+        TestCase tc = new TestCase();
+        tc.setTitle(title);
+        tc.setModule(moduleName);
+        tc.setType(typeCode);
+        tc.setPriority("P1");
+
+        // 解析详情子节点
+        JsonNode details = tcNode.path("children").path("attached");
+        List<String> preconditions = new ArrayList<>();
+        List<String> steps = new ArrayList<>();
+        List<String> expectedResults = new ArrayList<>();
+
+        for (JsonNode detail : details) {
+            String detailTitle = detail.path("title").asText("");
+            List<String> items = extractLeafItems(detail);
+            if (detailTitle.contains("前置条件")) {
+                preconditions.addAll(items);
+            } else if (detailTitle.contains("步骤")) {
+                steps.addAll(items);
+            } else if (detailTitle.contains("预期")) {
+                expectedResults.addAll(items);
+            }
+        }
+
+        try {
+            tc.setPreconditions(objectMapper.writeValueAsString(preconditions));
+            tc.setSteps(objectMapper.writeValueAsString(steps));
+            tc.setExpectedResults(objectMapper.writeValueAsString(expectedResults));
+        } catch (Exception e) {
+            // 序列化失败用空列表
+        }
+        return tc;
+    }
+
+    private List<String> extractLeafItems(JsonNode node) {
+        List<String> items = new ArrayList<>();
+        JsonNode children = node.path("children").path("attached");
+        for (JsonNode child : children) {
+            String text = child.path("title").asText("");
+            if (!text.isBlank()) {
+                items.add(text);
+            }
+        }
+        return items;
+    }
+
+    private String mapGroupToTypeCode(String groupName) {
+        if (groupName == null) return "positive";
+        return switch (groupName) {
+            case "正向" -> "positive";
+            case "异常" -> "negative";
+            case "边界" -> "boundary";
+            case "数据" -> "data";
+            default -> "positive";
+        };
     }
 
     public MindMapPreviewNode buildPreviewTree(List<TestCase> testCases, String projectName) {

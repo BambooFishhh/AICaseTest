@@ -107,6 +107,14 @@ public class TestCaseController {
         return ApiResponse.success(testCaseService.importTestCases(projectId, file));
     }
 
+    // v3.9: 导入 XMind 文件
+    @PostMapping(value = "/import-xmind", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<Map<String, Object>> importXmind(
+            @PathVariable String projectId,
+            @RequestParam("file") MultipartFile file) {
+        return ApiResponse.success(testCaseService.importFromXmind(projectId, file));
+    }
+
     // v1.7: 复制选中用例到其他项目
     @PostMapping("/copy-to")
     public ApiResponse<Map<String, Object>> copyToProject(
