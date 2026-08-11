@@ -2,11 +2,23 @@
   <div class="project-detail" v-loading="loading">
     <div class="page-header">
       <h2>{{ project?.name || '项目详情' }}</h2>
-      <el-button @click="goList">返回列表</el-button>
+      <el-button :icon="ArrowLeft" @click="goList">返回列表</el-button>
     </div>
 
     <el-card v-if="project" class="info-card">
-      <template #header>基本信息</template>
+      <template #header>
+        <div class="info-header">
+          <span>基本信息</span>
+          <el-tag
+            :type="statusTagType(project.status)"
+            size="small"
+            effect="light"
+            round
+          >
+            {{ statusText(project.status) }}
+          </el-tag>
+        </div>
+      </template>
       <el-descriptions :column="2" border>
         <el-descriptions-item label="项目名称">{{ project.name }}</el-descriptions-item>
         <el-descriptions-item label="项目状态">
@@ -23,6 +35,7 @@
               :key="tech"
               class="tech-tag"
               type="info"
+              effect="plain"
             >{{ tech }}</el-tag>
           </template>
           <span v-else>-</span>
@@ -30,26 +43,70 @@
       </el-descriptions>
     </el-card>
 
+    <!-- v3.10: 迭代流程步骤条 -->
+    <el-card v-if="project" class="flow-card">
+      <template #header>迭代流程</template>
+      <el-steps
+        :active="activeStep"
+        align-center
+        finish-status="success"
+        process-status="process"
+        class="flow-steps"
+      >
+        <el-step title="创建项目" :icon="Finished" />
+        <el-step title="代码分析" :icon="Aim" />
+        <el-step title="用例生成" :icon="MagicStick" />
+        <el-step title="脑图导出" :icon="Share" />
+      </el-steps>
+    </el-card>
+
     <!-- v3.0: PRD 面板上提为主线（v1.10 引入，v3.0 调整位置） -->
     <PrdPanel v-if="project" :project-id="projectId" />
 
     <el-card class="action-card">
       <template #header>操作</template>
-      <div class="action-buttons">
-        <!-- v3.0: 生成用例作为主操作 -->
-        <el-button type="primary" :disabled="!canGenerate" @click="handleGenerate">生成用例</el-button>
-        <!-- v3.0: 开始分析标注为可选上下文，无代码路径时禁用 -->
-        <el-button
-          type="primary"
-          :disabled="!canAnalyze"
-          :title="!hasSourcePath ? '未配置代码路径，可直接用 PRD 生成用例' : ''"
-          @click="handleAnalyze"
-        >开始分析<span v-if="!hasSourcePath" class="optional-mark">（可选）</span></el-button>
-        <el-button type="primary" :disabled="!canMindmap" @click="handleMindmap">生成脑图</el-button>
-        <el-button :disabled="!canDownload" @click="handleDownload">下载脑图</el-button>
-        <el-button :disabled="!canViewAnalysis" @click="goAnalysis">查看分析</el-button>
-        <el-button :disabled="!canViewTestcases" @click="goTestcases">查看用例</el-button>
-        <el-button @click="goMindmap">脑图预览</el-button>
+      <div class="action-groups">
+        <div class="action-group">
+          <span class="group-label">主线操作</span>
+          <div class="action-buttons">
+            <!-- v3.0: 开始分析标注为可选上下文，无代码路径时禁用 -->
+            <el-button
+              type="primary"
+              :icon="Aim"
+              :disabled="!canAnalyze"
+              :title="!hasSourcePath ? '未配置代码路径，可直接用 PRD 生成用例' : ''"
+              @click="handleAnalyze"
+            >开始分析<span v-if="!hasSourcePath" class="optional-mark">（可选）</span></el-button>
+            <!-- v3.0: 生成用例作为主操作 -->
+            <el-button
+              type="primary"
+              :icon="MagicStick"
+              :disabled="!canGenerate"
+              @click="handleGenerate"
+            >生成用例</el-button>
+            <el-button
+              type="primary"
+              :icon="Share"
+              :disabled="!canMindmap"
+              @click="handleMindmap"
+            >生成脑图</el-button>
+            <el-button :icon="Download" :disabled="!canDownload" @click="handleDownload">
+              下载脑图
+            </el-button>
+          </div>
+        </div>
+        <div class="action-group">
+          <span class="group-label">查看</span>
+          <div class="action-buttons">
+            <el-button :icon="DataAnalysis" :disabled="!canViewAnalysis" @click="goAnalysis">
+              查看分析
+            </el-button>
+            <el-button :icon="Document" :disabled="!canViewTestcases" @click="goTestcases">
+              查看用例
+            </el-button>
+            <el-button :icon="Share" @click="goMindmap">脑图预览</el-button>
+          </div>
+        </div>
       </div>
     </el-card>
 
@@ -68,6 +125,16 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import {
+  ArrowLeft,
+  Aim,
+  MagicStick,
+  Share,
+  Download,
+  DataAnalysis,
+  Document,
+  Finished
+} from '@element-plus/icons-vue'
 import { getProject } from '@/api/project'
 import PrdPanel from '@/components/PrdPanel.vue'
 import { triggerAnalysis } from '@/api/analysis'
@@ -83,6 +150,15 @@ const loading = ref(false)
 const pollingMessage = ref('')
 
 const project = computed(() => projectStore.currentProject)
+
+// v3.10: 迭代流程步骤条 active 索引（0=创建项目 1=代码分析 2=用例生成 3=脑图导出）
+const activeStep = computed(() => {
+  const s = project.value?.status
+  if (s === 'analyzed') return 2
+  if (s === 'generating') return 2
+  if (s === 'completed') return 4
+  return 1
+})
 
 const statusTypeMap = {
   created: 'info',
@@ -222,39 +298,82 @@ onUnmounted(() => {
 })
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .project-detail {
-  padding: 20px;
+  padding: 4px 0;
 }
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-.page-header h2 {
-  margin: 0;
-}
+
 .info-card {
   margin-bottom: 20px;
+
+  .info-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
 }
+
+.flow-card {
+  margin-bottom: 20px;
+
+  .flow-steps {
+    padding: 10px 4px 4px;
+  }
+}
+
 .tech-tag {
   margin-right: 6px;
   margin-bottom: 4px;
 }
+
 .action-card {
   margin-bottom: 20px;
+
+  .action-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .action-group {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+
+    .group-label {
+      flex-shrink: 0;
+      width: 60px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      letter-spacing: 1px;
+    }
+
+    .action-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+  }
 }
-.action-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
+
 .optional-mark {
   color: #909399;
   font-size: 12px;
 }
+
 .polling-alert {
   margin-top: 4px;
+}
+
+@media (max-width: 768px) {
+  .action-group {
+    flex-direction: column;
+    align-items: flex-start;
+
+    .group-label {
+      width: auto;
+    }
+  }
 }
 </style>

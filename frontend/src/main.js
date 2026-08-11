@@ -2,6 +2,8 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import './style.css'
+// v3.10: 接入全局设计系统（此前 styles/index.scss 未被引用）
+import './styles/index.scss'
 import router from './router'
 
 // Element Plus 全量引入

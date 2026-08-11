@@ -443,6 +443,19 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v3.9](docs/v3.9/PRD_v3.9_XMind导入与脑图查看.md)
 
+### v3.10 — 前端界面优化（视觉升级）
+
+前端整体视觉升级——建立全局设计系统并接入入口，让界面从"能用"变"好看"。
+
+- 前端: `styles/index.scss` 由死代码接入为全局设计系统（主题色/渐变背景/卡片/统计卡/表格统一视觉）
+- 前端: `App.vue` 顶部导航重设计（渐变头部+光斑、渐变 Logo、图标导航胶囊 active）
+- 前端: `ProjectList.vue` 项目卡片重设计（状态色条 + 图标头像 + 信息层级）
+- 前端: `ProjectDetail.vue` 新增迭代流程步骤条（创建→分析→生成→脑图，按状态高亮）+ 操作按钮分组
+- 前端: `TestCaseList.vue` 工具栏按生成/批量/用例分组、统计卡图标化（渐变语义色）、树状模块行文件夹图标+数量徽标
+- 前端: 新增自定义 favicon（渐变 AI 方块）
+
+详见：[PRD v3.10](docs/v3.10/PRD_v3.10_前端界面优化.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -480,6 +493,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v3.7 | 真正的 LLM 流式输出（MCP stream:true + JSON-RPC notification + 增量 JSON 解析器） | ✅ 完成 |
 | v3.8 | 树状用例列表（按模块分组 + 详情列直接显示 + 移除分页） | ✅ 完成 |
 | v3.9 | XMind 导入与脑图查看入口（逆向解析 XMind + 移除 JSON/CSV + 查看脑图按钮） | ✅ 完成 |
+| v3.10 | 前端界面优化（全局设计系统/导航/项目卡片/流程条/用例列表视觉升级） | ✅ 完成 |
 
 ## API 概览
 

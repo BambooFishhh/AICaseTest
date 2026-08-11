@@ -2,105 +2,132 @@
   <div class="testcase-list" v-loading="loading">
     <div class="page-header">
       <h2>测试用例</h2>
+      <!-- v3.10: 工具栏按语义分组 -->
       <div class="header-actions">
-        <el-button
-          type="danger"
-          :icon="Delete"
-          :disabled="selectedRows.length === 0"
-          @click="handleBatchDelete"
-        >
-          批量删除<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
-        </el-button>
-        <!-- v2.1: 批量执行 -->
-        <el-button
-          type="success"
-          :icon="VideoPlay"
-          :disabled="selectedRows.length === 0"
-          @click="openBatchExecuteDialog"
-        >
-          批量执行<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
-        </el-button>
-        <el-button
-          :icon="Download"
-          :disabled="selectedRows.length === 0"
-          @click="handleExportSelected"
-        >
-          导出选中<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
-        </el-button>
-        <!-- v3.9: 导入 XMind -->
-        <el-button :icon="Upload" @click="triggerImportXmind">导入XMind</el-button>
-        <!-- v1.8: 批量评审下拉 -->
-        <el-dropdown @command="handleReviewCommand" :disabled="selectedRows.length === 0">
-          <el-button :icon="Check">
-            批量评审<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
-            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+        <div class="tb-group">
+          <!-- v3.4: 生成参数配置 -->
+          <el-button :icon="Setting" @click="handleOpenGenParams">生成参数</el-button>
+          <!-- v3.5: 追加生成按钮（与重新生成互斥，streaming 时禁用） -->
+          <el-button type="warning" :icon="Plus" :disabled="streaming" @click="handleOpenAppendDialog">
+            追加生成
           </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="reviewed">标记为已评审</el-dropdown-item>
-              <el-dropdown-item command="approved">标记为已批准</el-dropdown-item>
-              <el-dropdown-item command="rejected">标记为已拒绝</el-dropdown-item>
-              <el-dropdown-item command="draft">重置为草稿</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <input
-          ref="xmindFileInput"
-          type="file"
-          accept=".xmind"
-          style="display: none"
-          @change="handleImportXmind"
-        />
-        <!-- v3.4: 生成参数配置 -->
-        <el-button :icon="Setting" @click="handleOpenGenParams">生成参数</el-button>
-        <!-- v3.5: 追加生成按钮（与重新生成互斥，streaming 时禁用） -->
-        <el-button type="warning" :icon="Plus" :disabled="streaming" @click="handleOpenAppendDialog">
-          追加生成
-        </el-button>
-        <el-button
-          type="primary"
-          :loading="regenerating"
-          :disabled="streaming"
-          @click="handleRegenerate"
-        >
-          重新生成
-        </el-button>
-        <el-button :loading="generatingMap" @click="handleGenerateMindmap">生成脑图</el-button>
-        <el-button v-if="mindmapGenerated" type="info" :icon="View" @click="handleViewMindmap">查看脑图</el-button>
-        <!-- v3.6: 手动新增用例 -->
-        <el-button type="success" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
+          <el-button
+            type="primary"
+            :icon="RefreshRight"
+            :loading="regenerating"
+            :disabled="streaming"
+            @click="handleRegenerate"
+          >
+            重新生成
+          </el-button>
+          <el-button :icon="Share" :loading="generatingMap" @click="handleGenerateMindmap">
+            生成脑图
+          </el-button>
+          <el-button v-if="mindmapGenerated" type="success" :icon="View" @click="handleViewMindmap">
+            查看脑图
+          </el-button>
+        </div>
+        <div class="tb-group">
+          <el-button
+            type="danger"
+            :icon="Delete"
+            :disabled="selectedRows.length === 0"
+            @click="handleBatchDelete"
+          >
+            批量删除<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
+          </el-button>
+          <!-- v2.1: 批量执行 -->
+          <el-button
+            type="success"
+            :icon="VideoPlay"
+            :disabled="selectedRows.length === 0"
+            @click="openBatchExecuteDialog"
+          >
+            批量执行<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
+          </el-button>
+          <el-button
+            :icon="Download"
+            :disabled="selectedRows.length === 0"
+            @click="handleExportSelected"
+          >
+            导出选中<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
+          </el-button>
+          <!-- v1.8: 批量评审下拉 -->
+          <el-dropdown @command="handleReviewCommand" :disabled="selectedRows.length === 0">
+            <el-button :icon="Check">
+              批量评审<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
+              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="reviewed">标记为已评审</el-dropdown-item>
+                <el-dropdown-item command="approved">标记为已批准</el-dropdown-item>
+                <el-dropdown-item command="rejected">标记为已拒绝</el-dropdown-item>
+                <el-dropdown-item command="draft">重置为草稿</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+        <div class="tb-group">
+          <!-- v3.9: 导入 XMind -->
+          <el-button :icon="Upload" @click="triggerImportXmind">导入XMind</el-button>
+          <!-- v3.6: 手动新增用例 -->
+          <el-button type="success" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
+          <input
+            ref="xmindFileInput"
+            type="file"
+            accept=".xmind"
+            style="display: none"
+            @change="handleImportXmind"
+          />
+        </div>
       </div>
     </div>
 
     <el-row :gutter="16" class="stats-bar">
       <el-col :xs="12" :sm="6" :md="4">
-        <div class="stat-card">
-          <div class="stat-label">总计</div>
-          <div class="stat-value">{{ stats.total }}</div>
+        <div class="stat-card stat-total">
+          <div class="stat-icon"><el-icon :size="18"><Files /></el-icon></div>
+          <div class="stat-body">
+            <div class="stat-value">{{ stats.total }}</div>
+            <div class="stat-label">总计</div>
+          </div>
         </div>
       </el-col>
       <el-col :xs="12" :sm="6" :md="5">
-        <div class="stat-card">
-          <div class="stat-label">正向</div>
-          <div class="stat-value">{{ stats.positive }}</div>
+        <div class="stat-card stat-positive">
+          <div class="stat-icon"><el-icon :size="18"><CircleCheck /></el-icon></div>
+          <div class="stat-body">
+            <div class="stat-value">{{ stats.positive }}</div>
+            <div class="stat-label">正向</div>
+          </div>
         </div>
       </el-col>
       <el-col :xs="12" :sm="6" :md="5">
-        <div class="stat-card">
-          <div class="stat-label">异常</div>
-          <div class="stat-value">{{ stats.negative }}</div>
+        <div class="stat-card stat-negative">
+          <div class="stat-icon"><el-icon :size="18"><CircleClose /></el-icon></div>
+          <div class="stat-body">
+            <div class="stat-value">{{ stats.negative }}</div>
+            <div class="stat-label">异常</div>
+          </div>
         </div>
       </el-col>
       <el-col :xs="12" :sm="6" :md="5">
-        <div class="stat-card">
-          <div class="stat-label">边界</div>
-          <div class="stat-value">{{ stats.boundary }}</div>
+        <div class="stat-card stat-boundary">
+          <div class="stat-icon"><el-icon :size="18"><Aim /></el-icon></div>
+          <div class="stat-body">
+            <div class="stat-value">{{ stats.boundary }}</div>
+            <div class="stat-label">边界</div>
+          </div>
         </div>
       </el-col>
       <el-col :xs="12" :sm="6" :md="5">
-        <div class="stat-card">
-          <div class="stat-label">数据</div>
-          <div class="stat-value">{{ stats.data }}</div>
+        <div class="stat-card stat-data">
+          <div class="stat-icon"><el-icon :size="18"><Coin /></el-icon></div>
+          <div class="stat-body">
+            <div class="stat-value">{{ stats.data }}</div>
+            <div class="stat-label">数据</div>
+          </div>
         </div>
       </el-col>
     </el-row>
@@ -236,7 +263,16 @@
           <span v-else>{{ row.id }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="title" label="标题" min-width="200" />
+      <el-table-column prop="title" label="标题" min-width="200">
+        <template #default="{ row }">
+          <span v-if="row.isModule" class="module-label">
+            <el-icon class="module-icon" :size="16"><FolderOpened /></el-icon>
+            <span class="module-name">{{ row.title }}</span>
+            <span class="module-count">{{ row.count }}</span>
+          </span>
+          <span v-else>{{ row.title }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="类型" width="80">
         <template #default="{ row }">
           <el-tag v-if="!row.isModule" :type="typeTagType(row.type)" size="small">
@@ -505,7 +541,15 @@ import {
   VideoPlay,
   Setting,
   Plus,
-  View
+  View,
+  RefreshRight,
+  Share,
+  Files,
+  CircleCheck,
+  CircleClose,
+  Aim,
+  Coin,
+  FolderOpened
 } from '@element-plus/icons-vue'
 import {
   listTestCases,
@@ -648,7 +692,8 @@ const treeData = computed(() => {
     tree.push({
       id: `module-${mod}`,
       isModule: true,
-      title: `${mod} (${children.length}条)`,
+      title: mod,
+      count: children.length,
       module: mod,
       children,
     })
@@ -1174,30 +1219,103 @@ onUnmounted(() => {
 
 <style scoped>
 .testcase-list {
-  padding: 20px;
+  padding: 4px 0;
 }
 .page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 .page-header h2 {
   margin: 0;
 }
+/* v3.10: 工具栏分组 */
 .header-actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.tb-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+  padding: 0 10px;
+  border-right: 1px solid var(--el-border-color-lighter);
+}
+.tb-group:last-child {
+  border-right: none;
+  padding-right: 0;
 }
 .stats-bar {
   margin-bottom: 20px;
 }
+/* v3.10: 统计卡图标化 */
 .stat-card {
-  background: #f5f7fa;
-  border-radius: 6px;
-  padding: 16px;
-  text-align: center;
-  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  padding: 14px 16px;
+
+  .stat-icon {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    color: #fff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  }
+
+  .stat-body {
+    min-width: 0;
+  }
+
+  .stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+
+  .stat-label {
+    margin: 2px 0 0;
+  }
+}
+
+.stat-total .stat-icon { background: linear-gradient(135deg, #7a92ff, #4c6fff); }
+.stat-positive .stat-icon { background: linear-gradient(135deg, #7ed67e, #58b24c); }
+.stat-negative .stat-icon { background: linear-gradient(135deg, #f78989, #e84b4b); }
+.stat-boundary .stat-icon { background: linear-gradient(135deg, #ffb85c, #e6a23c); }
+.stat-data .stat-icon { background: linear-gradient(135deg, #b39dff, #8b5cf6); }
+
+.stat-total .stat-value { color: #4c6fff; }
+.stat-positive .stat-value { color: #58b24c; }
+.stat-negative .stat-value { color: #e84b4b; }
+.stat-boundary .stat-value { color: #e6a23c; }
+.stat-data .stat-value { color: #8b5cf6; }
+
+.stat-total { background: linear-gradient(180deg, #f3f5ff, #fff); }
+.stat-positive { background: linear-gradient(180deg, #f2fbf2, #fff); }
+.stat-negative { background: linear-gradient(180deg, #fdf3f3, #fff); }
+.stat-boundary { background: linear-gradient(180deg, #fdf7ee, #fff); }
+.stat-data { background: linear-gradient(180deg, #f6f3ff, #fff); }
+
+.stat-label {
+  color: #909399;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.stat-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: #303133;
 }
 .stat-label {
   color: #909399;
@@ -1267,10 +1385,42 @@ onUnmounted(() => {
 /* v3.8: 树状用例列表样式 */
 .module-row {
   font-weight: bold;
-  background-color: var(--el-fill-color-light, #f5f7fa);
+  background-color: #f6f8ff;
+
+  td.el-table__cell {
+    background-color: #f6f8ff;
+  }
 }
 .case-row {
   cursor: pointer;
+}
+.module-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #2c3f8f;
+
+  .module-icon {
+    color: #4c6fff;
+  }
+
+  .module-name {
+    font-weight: 600;
+  }
+
+  .module-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 9px;
+    background: var(--el-color-primary-light-8);
+    color: var(--el-color-primary);
+    font-size: 12px;
+    font-weight: 600;
+  }
 }
 .detail-summary {
   color: var(--el-text-color-regular, #606266);
@@ -1279,5 +1429,12 @@ onUnmounted(() => {
   text-overflow: ellipsis;
   display: inline-block;
   max-width: 200px;
+}
+
+@media (max-width: 768px) {
+  .tb-group {
+    border-right: none;
+    padding: 0;
+  }
 }
 </style>

@@ -1,3 +1,39 @@
+/* ============================================================
+   v3.10 全局设计系统
+   入口：src/main.js（本文件此前未被引入，属死代码，v3.10 接入）
+   ============================================================ */
+
+/* ===== 设计令牌 ===== */
+:root {
+  --brand-primary: #4c6fff;
+  --brand-primary-dark: #3a56d4;
+  --brand-secondary: #7c5cff;
+  --brand-gradient: linear-gradient(135deg, #4c6fff 0%, #7c5cff 100%);
+  --bg-base: #f3f5fb;
+  --card-border: #e8ecf5;
+  --text-main: #1f2937;
+  --text-secondary: #6b7280;
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-card-hover: 0 8px 24px rgba(76, 111, 255, 0.12), 0 2px 6px rgba(16, 24, 40, 0.06);
+
+  /* Element Plus 主题覆盖 */
+  --el-color-primary: #4c6fff;
+  --el-color-primary-light-3: #7a92ff;
+  --el-color-primary-light-5: #a3b4ff;
+  --el-color-primary-light-7: #c9d3ff;
+  --el-color-primary-light-8: #dce3ff;
+  --el-color-primary-light-9: #eef1ff;
+  --el-color-primary-dark-2: #3d59d9;
+  --el-border-radius-base: 8px;
+  --el-border-color: #e4e9f2;
+  --el-border-color-light: #ebeff6;
+  --el-border-color-lighter: #f0f3f9;
+  --el-fill-color-light: #f6f8fc;
+  --el-text-color-primary: #1f2937;
+  --el-text-color-regular: #374151;
+  --el-text-color-secondary: #6b7280;
+}
+
 /* ===== 重置与全局基础样式 ===== */
 * {
   margin: 0;
@@ -17,8 +53,12 @@ body {
     sans-serif;
   font-size: 14px;
   line-height: 1.5;
-  color: #303133;
-  background-color: #f5f7fa;
+  color: var(--text-main);
+  background-color: var(--bg-base);
+  background-image:
+    radial-gradient(1100px 460px at 88% -8%, rgba(124, 92, 255, 0.08), transparent 62%),
+    radial-gradient(900px 420px at -8% 2%, rgba(76, 111, 255, 0.1), transparent 58%);
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -29,12 +69,12 @@ body {
 }
 
 a {
-  color: #409eff;
+  color: var(--el-color-primary);
   text-decoration: none;
   transition: color 0.2s ease;
 
   &:hover {
-    color: #66b1ff;
+    color: var(--el-color-primary-light-3);
   }
 }
 
@@ -50,17 +90,17 @@ ol {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: #f1f3f8;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c0c4cc;
+  background: #c3c9d8;
   border-radius: 4px;
   transition: background 0.2s ease;
 
   &:hover {
-    background: #909399;
+    background: #9aa3b8;
   }
 }
 
@@ -80,11 +120,36 @@ ol {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
 
   .page-title {
     font-size: 22px;
     font-weight: 600;
-    color: #303133;
+    color: var(--text-main);
+  }
+
+  h2 {
+    position: relative;
+    margin: 0;
+    padding-left: 14px;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-main);
+    letter-spacing: 0.3px;
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 4px;
+      height: 18px;
+      border-radius: 2px;
+      background: var(--brand-gradient);
+      box-shadow: 0 0 8px rgba(76, 111, 255, 0.45);
+    }
   }
 
   .page-actions {
@@ -94,25 +159,63 @@ ol {
   }
 }
 
-/* ===== 卡片 hover 效果 ===== */
+/* ===== 卡片 ===== */
 .el-card {
-  transition: all 0.3s ease;
-  border-radius: 8px;
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  box-shadow: var(--shadow-card);
 
-  &:hover {
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-    transform: translateY(-2px);
+  .el-card__header {
+    border-bottom: 1px solid var(--el-border-color-lighter);
+    font-weight: 600;
+    color: var(--text-main);
   }
 }
 
 .project-card {
   cursor: pointer;
-  transition: all 0.3s ease;
+  overflow: hidden;
+  position: relative;
+  transition: all 0.25s ease;
 
   &:hover {
-    box-shadow: 0 6px 20px rgba(64, 158, 255, 0.15);
+    box-shadow: var(--shadow-card-hover);
     transform: translateY(-3px);
-    border-color: #409eff;
+    border-color: rgba(76, 111, 255, 0.45);
+  }
+}
+
+/* ===== 统计卡（TestCaseList / MindMapPreview 共用） ===== */
+.stat-card {
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  text-align: center;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
+
+  &:hover {
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-2px);
+  }
+
+  .stat-label {
+    color: var(--text-secondary);
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+
+  .stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-main);
+    line-height: 1.2;
   }
 }
 
@@ -137,7 +240,6 @@ ol {
     background: currentColor;
   }
 
-  // 创建中 / 初始
   &.status-created,
   &.status-pending {
     color: #909399;
@@ -145,7 +247,6 @@ ol {
     border: 1px solid #d3d4d6;
   }
 
-  // 分析中 / 进行中 / 生成中
   &.status-analyzing,
   &.status-pending_analysis,
   &.status-generating,
@@ -156,7 +257,6 @@ ol {
     border: 1px solid #f5dab1;
   }
 
-  // 分析完成 / 已分析 / 已完成 / 成功
   &.status-analyzed,
   &.status-completed,
   &.status-success,
@@ -166,7 +266,6 @@ ol {
     border: 1px solid #c2e7b0;
   }
 
-  // 失败 / 错误
   &.status-failed,
   &.status-error {
     color: #f56c6c;
@@ -174,18 +273,31 @@ ol {
     border: 1px solid #fbc4c4;
   }
 
-  // 警告
   &.status-warning {
     color: #e6a23c;
     background: #fdf6ec;
     border: 1px solid #f5dab1;
   }
 
-  // 信息 / 默认
   &.status-info {
-    color: #409eff;
-    background: #ecf5ff;
-    border: 1px solid #b3d8ff;
+    color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+    border: 1px solid var(--el-color-primary-light-7);
+  }
+}
+
+/* ===== 表格统一风格 ===== */
+.el-table {
+  --el-table-header-bg-color: #f7f9fd;
+  --el-table-header-text-color: #475069;
+  --el-table-border-color: #eef1f6;
+  --el-table-row-hover-bg-color: #f6f8ff;
+
+  border-radius: 8px;
+
+  th.el-table__cell {
+    font-weight: 600;
+    background-color: #f7f9fd;
   }
 }
 
