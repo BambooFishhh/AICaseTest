@@ -32,6 +32,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import jakarta.annotation.PostConstruct;
+
 @Service
 public class MindMapService {
 
@@ -49,6 +51,30 @@ public class MindMapService {
 
     @Autowired
     private ProjectRepository projectRepository;
+
+    /**
+     * v3.9fix: 启动时清理重复的 MindMap 记录（每个项目只保留最新一条）。
+     */
+    @PostConstruct
+    public void cleanupDuplicateMindMaps() {
+        List<String> projectIds = projectRepository.findAll().stream()
+                .map(Project::getId)
+                .collect(Collectors.toList());
+        int cleaned = 0;
+        for (String pid : projectIds) {
+            List<MindMap> all = mindMapRepository.findAllByProjectId(pid);
+            if (all.size() > 1) {
+                all.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
+                for (int i = 1; i < all.size(); i++) {
+                    mindMapRepository.delete(all.get(i));
+                    cleaned++;
+                }
+            }
+        }
+        if (cleaned > 0) {
+            log.info("Cleanup: removed {} duplicate MindMap records", cleaned);
+        }
+    }
 
     public MindMapDTO generateMindMap(String projectId, List<String> testcaseIds) {
         Project project = projectRepository.findById(projectId)

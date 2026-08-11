@@ -22,6 +22,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
+
+import jakarta.annotation.PostConstruct;
 
 @Service
 public class AnalysisService {
@@ -49,6 +52,31 @@ public class AnalysisService {
 
     @Autowired
     private StateMachineAgent stateMachineAgent;
+
+    /**
+     * v3.9fix: 启动时清理重复的 CodeAnalysis 记录（每个项目只保留最新一条）。
+     */
+    @PostConstruct
+    public void cleanupDuplicateAnalysis() {
+        List<String> projectIds = projectRepository.findAll().stream()
+                .map(Project::getId)
+                .collect(Collectors.toList());
+        int cleaned = 0;
+        for (String pid : projectIds) {
+            List<CodeAnalysis> all = codeAnalysisRepository.findAllByProjectId(pid);
+            if (all.size() > 1) {
+                // 保留最新一条（createdAt 最大），删除其余
+                all.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
+                for (int i = 1; i < all.size(); i++) {
+                    codeAnalysisRepository.delete(all.get(i));
+                    cleaned++;
+                }
+            }
+        }
+        if (cleaned > 0) {
+            log.info("Cleanup: removed {} duplicate CodeAnalysis records", cleaned);
+        }
+    }
 
     @Async("analysisExecutor")
     public void runAnalysis(String projectId, String sourcePath) {
