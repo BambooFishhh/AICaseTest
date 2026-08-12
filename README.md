@@ -456,6 +456,17 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v3.10](docs/v3.10/PRD_v3.10_前端界面优化.md)
 
+### v3.11 — 执行闭环补全
+
+打通"生成→执行→结果→回看"闭环。
+
+- 后端: 执行启动/结束时回写用例执行状态（running/passed/failed），单条/批量、agent/程序化模式全覆盖
+- 前端: 新增"执行历史"页（统计卡 + 记录表格 + 详情/报告入口），路由 `/projects/:id/executions`
+- 前端: 项目详情与用例列表新增"执行历史"入口
+- 前端: 修复覆盖率矩阵"关联用例"跳转（内存按 ID 筛选 + 清除筛选横幅）
+
+详见：[PRD v3.11](docs/v3.11/PRD_v3.11_执行闭环补全.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -494,6 +505,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v3.8 | 树状用例列表（按模块分组 + 详情列直接显示 + 移除分页） | ✅ 完成 |
 | v3.9 | XMind 导入与脑图查看入口（逆向解析 XMind + 移除 JSON/CSV + 查看脑图按钮） | ✅ 完成 |
 | v3.10 | 前端界面优化（全局设计系统/导航/项目卡片/流程条/用例列表视觉升级） | ✅ 完成 |
+| v3.11 | 执行闭环补全（执行状态回写 + 执行历史页 + 覆盖率矩阵跳转修复） | ✅ 完成 |
 
 ## API 概览
 
@@ -536,7 +548,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | PUT | `/api/settings` | 更新设置 |
 | POST | `/api/projects/{pid}/testcases/{caseId}/execute?mode=agent` | 触发用例执行（v2.0，v2.1 加 Agent 模式） |
 | GET | `/api/executions/{eid}` | 查询执行结果（v2.0） |
-| GET | `/api/projects/{pid}/executions` | 执行历史列表（v2.0） |
+| GET | `/api/projects/{pid}/executions` | 执行历史列表（v2.0，v3.11 前端接入执行历史页） |
 | GET | `/api/executions/{eid}/steps` | 执行步骤详情（v2.0） |
 | GET | `/api/executions/{eid}/video` | 下载执行录屏视频 WebM（v2.8） |
 | POST | `/api/projects/{pid}/testcases/batch-execute` | 批量执行（v2.1） |

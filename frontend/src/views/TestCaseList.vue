@@ -26,6 +26,8 @@
         <el-button v-if="mindmapGenerated" type="success" :icon="View" @click="handleViewMindmap">
           查看脑图
         </el-button>
+        <!-- v3.11: 执行历史入口 -->
+        <el-button :icon="Clock" @click="goExecutions">执行历史</el-button>
       </div>
     </header>
 
@@ -212,6 +214,15 @@
         />
       </div>
     </section>
+
+    <!-- v3.11: 覆盖率关联用例筛选横幅 -->
+    <div v-if="idFilter.length > 0" class="coverage-filter-banner">
+      <el-icon :size="16"><Filter /></el-icon>
+      <span class="coverage-filter-text">已按覆盖率关联用例筛选（{{ idFilter.length }} 条）</span>
+      <el-button type="primary" link size="small" @click="clearCoverageFilter">
+        清除筛选
+      </el-button>
+    </div>
 
     <!-- 用例树状表格 -->
     <section class="table-section">
@@ -530,7 +541,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Delete, Download, Upload, Check, ArrowDown, VideoPlay,
   Setting, Plus, View, RefreshRight, Share, Files, CircleCheck,
-  CircleClose, Aim, Coin, FolderOpened, ArrowLeft, Loading, DataAnalysis
+  CircleClose, Aim, Coin, FolderOpened, ArrowLeft, Loading, DataAnalysis,
+  Clock, Filter
 } from '@element-plus/icons-vue'
 import {
   listTestCases, streamGenerate, streamGenerateAppend,
@@ -586,6 +598,8 @@ const page = ref(1)
 const pageSize = ref(20)
 
 const filters = reactive({ module: '', type: '', priority: '', keyword: '', reviewStatus: '' })
+// v3.11: 覆盖率矩阵关联用例的内存 ID 筛选（独立于 filters，避免依赖 keyword 搜索）
+const idFilter = ref([])
 
 const dialogVisible = ref(false)
 const currentTestCase = ref(null)
@@ -629,15 +643,21 @@ const stats = computed(() => {
 })
 
 const displayTestCases = computed(() => {
+  let base
   if (streaming.value) {
-    const base = currentGenMode.value === 'append'
+    base = currentGenMode.value === 'append'
       ? [...streamedCases.value, ...testCases.value]
       : streamedCases.value
-    if (!filters.priority) return base
-    return base.filter((tc) => tc.priority === filters.priority)
+  } else {
+    base = testCases.value
   }
-  if (!filters.priority) return testCases.value
-  return testCases.value.filter((tc) => tc.priority === filters.priority)
+  if (idFilter.value.length > 0) {
+    base = base.filter((tc) => idFilter.value.includes(tc.id))
+  }
+  if (filters.priority) {
+    base = base.filter((tc) => tc.priority === filters.priority)
+  }
+  return base
 })
 
 const treeData = computed(() => {
@@ -871,11 +891,18 @@ async function handleImportXmind(e) {
 }
 
 function handleFilterByIds(ids) {
-  const all = allTestCases.value.filter((tc) => ids.includes(tc.id))
-  if (ids.length > 0) {
-    filters.keyword = ids[0]
-    handleFilter()
-  }
+  idFilter.value = ids || []
+  filters.keyword = ''
+}
+
+// v3.11: 清除覆盖率关联用例筛选
+function clearCoverageFilter() {
+  idFilter.value = []
+}
+
+// v3.11: 跳转执行历史
+function goExecutions() {
+  router.push(`/projects/${projectId}/executions`)
 }
 
 const versionDrawerVisible = ref(false)
@@ -1328,6 +1355,25 @@ onUnmounted(() => {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
+  }
+}
+
+/* ===== v3.11: 覆盖率关联用例筛选横幅 ===== */
+.coverage-filter-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--color-info-bg);
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-md);
+  color: var(--brand-primary);
+
+  .coverage-filter-text {
+    flex: 1;
+    font-size: 13px;
+    font-weight: 500;
   }
 }
 

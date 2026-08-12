@@ -36,6 +36,12 @@ const routes = [
     meta: { title: '测试用例' }
   },
   {
+    path: '/projects/:id/executions',
+    name: 'ExecutionHistory',
+    component: () => import('@/views/ExecutionHistory.vue'),
+    meta: { title: '执行历史' }
+  },
+  {
     path: '/projects/:id/executions/:eid',
     name: 'ExecutionResult',
     component: () => import('@/views/ExecutionResult.vue'),

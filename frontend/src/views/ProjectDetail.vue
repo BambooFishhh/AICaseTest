@@ -136,6 +136,8 @@
                 查看用例
               </el-button>
               <el-button :icon="Share" @click="goMindmap">脑图预览</el-button>
+              <!-- v3.11: 执行历史入口 -->
+              <el-button :icon="Clock" @click="goExecutions">执行历史</el-button>
             </div>
           </div>
         </div>
@@ -158,7 +160,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   ArrowLeft, Aim, MagicStick, Share, Download,
-  DataAnalysis, Document, Loading, Check, View, Operation
+  DataAnalysis, Document, Loading, Check, View, Operation, Clock
 } from '@element-plus/icons-vue'
 import { getProject } from '@/api/project'
 import PrdPanel from '@/components/PrdPanel.vue'
@@ -296,6 +298,11 @@ function goTestcases() {
 
 function goMindmap() {
   router.push(`/projects/${projectId}/mindmap`)
+}
+
+// v3.11: 执行历史
+function goExecutions() {
+  router.push(`/projects/${projectId}/executions`)
 }
 
 onMounted(async () => {

@@ -74,6 +74,14 @@ public class ExecutionService {
                 .build();
         executionRecordRepository.save(record);
 
+        // v3.11: 执行启动时回写用例执行状态
+        try {
+            testCase.setExecutionStatus("running");
+            testCaseRepository.save(testCase);
+        } catch (Exception e) {
+            log.warn("Failed to mark test case {} as running: {}", testCaseId, e.getMessage());
+        }
+
         // 异步执行
         if ("agent".equals(mode)) {
             runAgentAsync(executionId, testCase, targetUrl);
@@ -210,6 +218,9 @@ public class ExecutionService {
             finalRecord.setRecordingVideoPath(videoPath);
             executionRecordRepository.save(finalRecord);
         }
+
+        // v3.11: 执行结束回写用例执行状态
+        updateTestCaseExecutionStatus(testCase.getId(), status);
 
         // 保存证据
         try {
@@ -388,6 +399,9 @@ public class ExecutionService {
             executionRecordRepository.save(finalRecord);
         }
 
+        // v3.11: 执行结束回写用例执行状态
+        updateTestCaseExecutionStatus(testCase.getId(), status);
+
         // 保存证据
         try {
             Map<String, Object> evidence = new LinkedHashMap<>();
@@ -419,5 +433,20 @@ public class ExecutionService {
 
     public List<ExecutionStep> getExecutionSteps(String executionId) {
         return executionStepRepository.findByExecutionIdOrderByStepIndexAsc(executionId);
+    }
+
+    /**
+     * v3.11: 回写用例执行状态（running/passed/failed）。
+     * 失败仅告警，不影响执行记录与证据落库。
+     */
+    private void updateTestCaseExecutionStatus(String testCaseId, String status) {
+        try {
+            testCaseRepository.findById(testCaseId).ifPresent(tc -> {
+                tc.setExecutionStatus(status);
+                testCaseRepository.save(tc);
+            });
+        } catch (Exception e) {
+            log.warn("Failed to update test case {} execution status: {}", testCaseId, e.getMessage());
+        }
     }
 }
