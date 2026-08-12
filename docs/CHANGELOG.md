@@ -4,6 +4,38 @@
 
 ---
 
+## v4.1 — 安全校验与权限
+
+**日期**: 2026-08-12
+**基线**: v4.0
+**主题**: 登录防爆破 + 密码策略与改密 + CORS 收敛 + 审计完善
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| service/LoginAttemptService.java | 新增防爆破 | 5 次失败锁定 5 分钟 |
+| dto/ChangePasswordRequest + AuthService/Controller | 修改密码 | 校验旧密码 + 新密码策略 |
+| dto/RegisterRequest.java | 密码策略 | ≥8 位含字母和数字 |
+| config/WebConfig + application.yml | CORS 白名单 | 默认 localhost:3000/5173/8080 |
+| entity/ExecutionRecord + ExecutionService | 操作人 | 执行记录记录登录用户名 |
+| service/TestCaseService | 评审人取登录态 | 不再信任前端传参；移除异步生成误报 401 的断言 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| App.vue + api/auth.js | 修改密码弹窗 | 用户菜单入口 |
+| views/Register.vue | 密码规则更新 | 8-64 位含字母数字 |
+| views/TestCaseList.vue | 移除评审人输入 | 后端取登录态 |
+
+### 验证结果
+
+- 后端测试: Tests run 2, Failures 0, BUILD SUCCESS
+- 前端构建: ✓ built in 12.12s
+
+---
+
 ## v4.0 — 账号体系与登录
 
 **日期**: 2026-08-12

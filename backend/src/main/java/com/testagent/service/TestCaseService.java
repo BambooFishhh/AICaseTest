@@ -26,6 +26,7 @@ import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.TestCaseVersionRepository;
 import com.testagent.service.ProjectAccessService;
 import com.testagent.service.XmindService;
+import com.testagent.security.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -98,7 +99,6 @@ public class TestCaseService {
 
     @Async("generationExecutor")
     public void runGenerate(String projectId, GenerateRequest req) {
-        projectAccessService.assertProjectAccess(projectId);
         try {
             // v3.0: 前置校验——PRD 和代码分析至少一项才能生成用例
             Project project = projectRepository.findById(projectId)
@@ -767,9 +767,9 @@ public class TestCaseService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("updated", updated);
         result.put("status", status);
-        if (reviewer != null && !reviewer.isBlank()) {
-            result.put("reviewer", reviewer);
-        }
+        // v4.1: 评审人取登录态，不信任前端传参
+        String operator = SecurityUtils.currentUsername();
+        result.put("reviewer", operator == null || operator.isBlank() ? "system" : operator);
         return result;
     }
 

@@ -4,6 +4,7 @@ import com.testagent.common.ApiResponse;
 import com.testagent.dto.LoginRequest;
 import com.testagent.dto.RegisterRequest;
 import com.testagent.dto.UserDTO;
+import com.testagent.dto.ChangePasswordRequest;
 import com.testagent.security.SecurityUtils;
 import com.testagent.service.AuthService;
 import jakarta.validation.Valid;
@@ -36,5 +37,15 @@ public class AuthController {
     @GetMapping("/me")
     public ApiResponse<UserDTO> me() {
         return ApiResponse.success(authService.me(SecurityUtils.currentUsername()));
+    }
+
+    // v4.1: 修改密码
+    @PostMapping("/change-password")
+    public ApiResponse<Void> changePassword(@Valid @RequestBody ChangePasswordRequest req) {
+        authService.changePassword(
+                SecurityUtils.currentUsername(),
+                req.getOldPassword(),
+                req.getNewPassword());
+        return ApiResponse.success(null, "密码已修改");
     }
 }

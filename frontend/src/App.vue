@@ -80,6 +80,7 @@
                 <el-dropdown-item disabled>
                   {{ authStore.user.username }}（{{ authStore.user.role === 'ADMIN' ? '管理员' : '用户' }}）
                 </el-dropdown-item>
+                <el-dropdown-item command="password">修改密码</el-dropdown-item>
                 <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -106,6 +107,25 @@
         </router-view>
       </main>
     </div>
+
+    <!-- v4.1: 修改密码弹窗 -->
+    <el-dialog v-model="pwdDialogVisible" title="修改密码" width="440px">
+      <el-form ref="pwdFormRef" :model="pwdForm" :rules="pwdRules" label-width="90px">
+        <el-form-item label="原密码" prop="oldPassword">
+          <el-input v-model="pwdForm.oldPassword" type="password" show-password />
+        </el-form-item>
+        <el-form-item label="新密码" prop="newPassword">
+          <el-input v-model="pwdForm.newPassword" type="password" show-password placeholder="8-64 位，包含字母和数字" />
+        </el-form-item>
+        <el-form-item label="确认新密码" prop="confirmPassword">
+          <el-input v-model="pwdForm.confirmPassword" type="password" show-password />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="pwdDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="changingPwd" @click="handleChangePassword">确认修改</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -119,6 +139,8 @@ import {
 // v3.18: 版本号动态化
 import pkg from '../package.json'
 import { useAuthStore } from '@/stores/auth'
+import { changePassword } from '@/api/auth'
+import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -162,10 +184,65 @@ const userInitial = computed(() => {
 })
 
 function handleUserCommand(command) {
+  if (command === 'password') {
+    pwdDialogVisible.value = true
+    return
+  }
   if (command === 'logout') {
     authStore.logout()
     window.location.href = '/login'
   }
+}
+
+// v4.1: 修改密码
+const pwdDialogVisible = ref(false)
+const pwdFormRef = ref()
+const changingPwd = ref(false)
+const pwdForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' })
+const pwdRules = {
+  oldPassword: [{ required: true, message: '请输入原密码', trigger: 'blur' }],
+  newPassword: [
+    { required: true, message: '请输入新密码', trigger: 'blur' },
+    {
+      pattern: /^(?=.*[A-Za-z])(?=.*\d).{8,64}$/,
+      message: '密码需 8-64 位且包含字母和数字',
+      trigger: 'blur'
+    }
+  ],
+  confirmPassword: [
+    { required: true, message: '请再次输入新密码', trigger: 'blur' },
+    {
+      validator: (rule, value, callback) => {
+        if (value !== pwdForm.value.newPassword) {
+          callback(new Error('两次输入的密码不一致'))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'blur'
+    }
+  ]
+}
+
+async function handleChangePassword() {
+  if (!pwdFormRef.value) return
+  await pwdFormRef.value.validate(async (valid) => {
+    if (!valid) return
+    changingPwd.value = true
+    try {
+      await changePassword({
+        oldPassword: pwdForm.value.oldPassword,
+        newPassword: pwdForm.value.newPassword
+      })
+      ElMessage.success('密码已修改，下次登录请使用新密码')
+      pwdDialogVisible.value = false
+      pwdForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
+    } catch {
+      // 错误已由响应拦截器统一提示
+    } finally {
+      changingPwd.value = false
+    }
+  })
 }
 
 // v3.17: 面包屑

@@ -32,6 +32,9 @@ public class AuthService {
     @Autowired
     private JwtUtil jwtUtil;
 
+    @Autowired
+    private LoginAttemptService loginAttemptService;
+
     @Transactional
     public Map<String, Object> register(RegisterRequest req) {
         String username = req.getUsername().trim();
@@ -50,12 +53,31 @@ public class AuthService {
     }
 
     public Map<String, Object> login(LoginRequest req) {
-        User user = userRepository.findByUsername(req.getUsername().trim())
+        String username = req.getUsername().trim();
+        loginAttemptService.checkLocked(username);
+        User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new BusinessException(40102, "用户名或密码错误", HttpStatus.UNAUTHORIZED));
         if (!passwordEncoder.matches(req.getPassword(), user.getPasswordHash())) {
+            loginAttemptService.loginFailed(username);
             throw new BusinessException(40102, "用户名或密码错误", HttpStatus.UNAUTHORIZED);
         }
+        loginAttemptService.loginSucceeded(username);
         return buildAuthResponse(user);
+    }
+
+    // v4.1: 修改密码
+    @Transactional
+    public void changePassword(String username, String oldPassword, String newPassword) {
+        if (username == null) {
+            throw new BusinessException(40100, "未登录", HttpStatus.UNAUTHORIZED);
+        }
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new BusinessException(40103, "用户不存在", HttpStatus.UNAUTHORIZED));
+        if (!passwordEncoder.matches(oldPassword, user.getPasswordHash())) {
+            throw new BusinessException(40105, "原密码错误", HttpStatus.BAD_REQUEST);
+        }
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
     }
 
     public UserDTO me(String username) {

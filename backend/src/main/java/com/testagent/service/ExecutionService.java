@@ -11,6 +11,7 @@ import com.testagent.repository.TestCaseRepository;
 import com.testagent.agent.ExecutionAgent;
 import com.testagent.skill.PlaywrightRecordSkill;
 import com.testagent.skill.EvidenceSkill;
+import com.testagent.security.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -75,6 +76,7 @@ public class ExecutionService {
                 .startTime(LocalDateTime.now())
                 .mode(mode)
                 .batchId(batchId)
+                .operator(SecurityUtils.currentUsername())
                 .build();
         // v3.16: 记录执行时用例快照（回溯执行内容）
         try {

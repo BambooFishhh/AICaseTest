@@ -12,3 +12,8 @@ export function login(data) {
 export function getMe() {
   return request.get('/auth/me')
 }
+
+// v4.1: 修改密码
+export function changePassword(data) {
+  return request.post('/auth/change-password', data)
+}

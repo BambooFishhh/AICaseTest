@@ -60,4 +60,7 @@ public class ExecutionRecord {
     /** v3.16: 执行时用例快照（JSON，用于回溯"当时跑的什么用例"） */
     @Column(name = "test_case_snapshot", columnDefinition = "TEXT")
     private String testCaseSnapshot;
+
+    /** v4.1: 执行操作人（登录用户名） */
+    private String operator;
 }

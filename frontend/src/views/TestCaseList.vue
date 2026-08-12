@@ -1017,21 +1017,10 @@ async function handleReviewCommand(command) {
   } catch {
     return
   }
-  // v3.16: 审计——记录评审人
-  let reviewer = 'local'
   try {
-    const { value } = await ElMessageBox.prompt(
-      '请输入评审人名称（留空使用 local）',
-      '批量评审',
-      { confirmButtonText: '确定', cancelButtonText: '取消', inputValue: '' }
-    )
-    reviewer = (value && value.trim()) ? value.trim() : 'local'
-  } catch {
-    return
-  }
-  try {
-    const res = await reviewTestCases(projectId, ids, command, reviewer)
-    ElMessage.success(`评审人 ${reviewer}：已更新 ${res.data.updated} 条用例状态为「${text}」`)
+    // v4.1: 评审人由后端取登录态
+    const res = await reviewTestCases(projectId, ids, command, null)
+    ElMessage.success(`已更新 ${res.data.updated} 条用例状态为「${text}」`)
     await Promise.all([loadList(), loadAllForStats()])
   } catch {
     // 错误已由响应拦截器统一提示

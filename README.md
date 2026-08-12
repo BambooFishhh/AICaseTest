@@ -561,6 +561,17 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v4.0](docs/v4.0/PRD_v4.0_账号体系与登录.md)
 
+### v4.1 — 安全校验与权限
+
+安全加固与审计完善。
+
+- 后端: 登录防爆破（5 次失败锁定 5 分钟）；密码策略 ≥8 位含字母数字
+- 后端: 新增修改密码接口；CORS 收敛为配置白名单
+- 后端: 执行记录新增操作人；批量评审人取登录态；修复异步生成误报 401
+- 前端: 用户菜单"修改密码"弹窗；注册页密码规则同步
+
+详见：[PRD v4.1](docs/v4.1/PRD_v4.1_安全校验与权限.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -608,6 +619,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v3.17 | 平台化打磨（仪表盘 + 默认参数 + API文档 + 抽屉 + 项目导航） | ✅ 完成 |
 | v3.18 | 前端体验打磨（列设置/密度/深色主题/窄屏/空状态/PNG导出等） | ✅ 完成 |
 | v4.0 | 账号体系与登录（注册/登录/JWT + 数据归属隔离 + 存量迁移） | ✅ 完成 |
+| v4.1 | 安全校验与权限（防爆破/密码策略/改密/CORS收敛/审计） | ✅ 完成 |
 
 ## API 概览
 
@@ -616,6 +628,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | POST | `/api/auth/register` | 注册（v4.0） |
 | POST | `/api/auth/login` | 登录，返回 token + user（v4.0） |
 | GET | `/api/auth/me` | 当前用户（v4.0） |
+| POST | `/api/auth/change-password` | 修改密码（v4.1） |
 | GET | `/api/projects` | 项目列表 |
 | POST | `/api/projects` | 创建项目 |
 | GET | `/api/projects/{id}` | 项目详情 |

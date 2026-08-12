@@ -22,6 +22,8 @@ llm:
 app:
   output-dir: outputs
   projects-dir: projects
+  cors:
+    allowed-origins: ${APP_CORS_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:8080}
   # v4.0: JWT 与默认管理员配置
   jwt:
     secret: ${APP_JWT_SECRET:aicasetest-dev-secret-change-me-please-0123456789}
