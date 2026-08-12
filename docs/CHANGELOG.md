@@ -4,6 +4,38 @@
 
 ---
 
+## v3.16 — 数据与协作
+
+**日期**: 2026-08-12
+**基线**: v3.15
+**主题**: XMind 模板与导入校验明细 + 执行时用例快照 + 评审审计 + 项目导出备份
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| entity/ExecutionRecord.java | 新增 testCaseSnapshot | 执行时用例快照 |
+| service/ExecutionService.java | 保存快照 | 启动执行时写入 |
+| service/XmindService.java | 模板文件 | 生成含示例用例的模板 |
+| service/TestCaseService.java | 导入跳过明细 | skippedDetails（标题为空） |
+| controller/TestCaseController.java | 模板端点 | GET /testcases/xmind-template |
+| service/BackupService.java + controller | 项目导出备份 | ZIP 含 5 类数据 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| views/TestCaseList.vue | 模板下载 + 跳过明细 + 评审人录入 | 导入结果可视化、审计留痕 |
+| views/ProjectDetail.vue | 导出备份按钮 | 下载项目 ZIP |
+| views/ExecutionResult.vue | 执行快照折叠区 | 回溯"当时跑的什么用例" |
+
+### 验证结果
+
+- 后端测试: Tests run 2, Failures 0, BUILD SUCCESS
+- 前端构建: ✓ built in 12.13s
+
+---
+
 ## v3.15 — 回归与统计
 
 **日期**: 2026-08-12

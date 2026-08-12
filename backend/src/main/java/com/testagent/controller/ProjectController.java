@@ -5,12 +5,15 @@ import com.testagent.dto.CreateProjectRequest;
 import com.testagent.dto.GenerateRequest;
 import com.testagent.dto.GenerationParams;
 import com.testagent.dto.ProjectDTO;
+import com.testagent.service.BackupService;
 import com.testagent.service.ProjectService;
 import com.testagent.service.TestCaseService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,6 +40,9 @@ public class ProjectController {
 
     @Autowired
     private TestCaseService testCaseService;
+
+    @Autowired
+    private BackupService backupService;
 
     @GetMapping
     public ApiResponse<List<ProjectDTO>> listProjects() {
@@ -158,6 +164,19 @@ public class ProjectController {
             @PathVariable String projectId,
             @RequestBody Map<String, Object> payload) {
         return ApiResponse.success(projectService.updateExecutionEnvironments(projectId, payload));
+    }
+
+    // v3.16: 项目导出备份（ZIP：project.json + prd.md + testcases.json + coverage.json + executions.json）
+    @GetMapping("/{projectId}/export")
+    public ResponseEntity<ByteArrayResource> exportProject(@PathVariable String projectId) throws Exception {
+        byte[] bytes = backupService.buildProjectBackup(projectId);
+        ByteArrayResource resource = new ByteArrayResource(bytes);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"project_" + projectId + "_backup.zip\"")
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .contentLength(bytes.length)
+                .body(resource);
     }
 
     // v1.10: 查询 PRD

@@ -139,6 +139,8 @@
               <el-button :icon="Share" @click="goMindmap">脑图预览</el-button>
               <!-- v3.11: 执行历史入口 -->
               <el-button :icon="Clock" @click="goExecutions">执行历史</el-button>
+              <!-- v3.16: 项目导出备份 -->
+              <el-button :icon="Download" @click="exportProject">导出备份</el-button>
             </div>
           </div>
         </div>
@@ -318,6 +320,11 @@ function goMindmap() {
 // v3.11: 执行历史
 function goExecutions() {
   router.push(`/projects/${projectId}/executions`)
+}
+
+// v3.16: 项目导出备份（ZIP）
+function exportProject() {
+  window.open(`/api/projects/${projectId}/export`, '_blank')
 }
 
 onMounted(async () => {

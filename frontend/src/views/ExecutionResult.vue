@@ -80,6 +80,38 @@
         </Transition>
       </section>
 
+      <!-- v3.16: 执行时用例快照 -->
+      <section v-if="executionSnapshot" class="snapshot-section">
+        <el-collapse>
+          <el-collapse-item name="snapshot">
+            <template #title>
+              <div class="snapshot-title">
+                <el-icon :size="16"><Document /></el-icon>
+                <span>执行时用例快照</span>
+              </div>
+            </template>
+            <div class="snapshot-grid">
+              <div class="snapshot-item">
+                <div class="snapshot-label">标题</div>
+                <div class="snapshot-value">{{ executionSnapshot.title || '-' }}</div>
+              </div>
+              <div class="snapshot-item">
+                <div class="snapshot-label">模块</div>
+                <div class="snapshot-value">{{ executionSnapshot.module || '-' }}</div>
+              </div>
+              <div class="snapshot-item">
+                <div class="snapshot-label">类型</div>
+                <div class="snapshot-value">{{ executionSnapshot.type || '-' }}</div>
+              </div>
+              <div class="snapshot-item">
+                <div class="snapshot-label">优先级</div>
+                <div class="snapshot-value">{{ executionSnapshot.priority || '-' }}</div>
+              </div>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </section>
+
       <!-- 步骤列表 -->
       <section v-if="steps.length > 0" class="steps-section">
         <div class="section-head">
@@ -248,6 +280,18 @@ const loading = ref(true)
 const execution = ref(null)
 const steps = ref([])
 let pollTimer = null
+
+// v3.16: 执行时用例快照（JSON 字符串 → 对象）
+const executionSnapshot = computed(() => {
+  const raw = execution.value?.testCaseSnapshot
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+})
 
 // 录屏播放状态
 const currentFrameIndex = ref(0)
@@ -635,6 +679,50 @@ onUnmounted(() => {
   border-radius: var(--radius-md);
   font-size: 13px;
   font-weight: 500;
+}
+
+/* ===== v3.16: 执行时用例快照 ===== */
+.snapshot-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 8px 16px;
+  box-shadow: var(--shadow-xs);
+  margin-bottom: var(--space-lg);
+}
+
+.snapshot-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.snapshot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.snapshot-item {
+  padding: 10px 12px;
+  background: var(--bg-base);
+  border-radius: var(--radius-md);
+  min-width: 0;
+
+  .snapshot-label {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-bottom: 4px;
+  }
+
+  .snapshot-value {
+    font-size: 13px;
+    color: var(--text-primary);
+    word-break: break-all;
+  }
 }
 
 /* ===== 步骤列表 ===== */

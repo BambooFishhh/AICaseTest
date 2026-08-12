@@ -56,4 +56,8 @@ public class ExecutionRecord {
 
     /** v2.8: 录屏视频文件路径（WebM 格式，Playwright recordVideo） */
     private String recordingVideoPath;
+
+    /** v3.16: 执行时用例快照（JSON，用于回溯"当时跑的什么用例"） */
+    @Column(name = "test_case_snapshot", columnDefinition = "TEXT")
+    private String testCaseSnapshot;
 }

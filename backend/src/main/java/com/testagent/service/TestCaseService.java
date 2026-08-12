@@ -605,8 +605,13 @@ public class TestCaseService {
 
         int startNo = nextTestCaseNumber(projectId);
         int imported = 0;
+        // v3.16: 跳过明细（标题为空等原因）
+        List<Map<String, String>> skippedDetails = new ArrayList<>();
         for (TestCase tc : parsed) {
             if (tc.getTitle() == null || tc.getTitle().isBlank()) {
+                skippedDetails.add(Map.of(
+                        "title", tc.getTitle() == null ? "(无标题)" : tc.getTitle(),
+                        "reason", "标题为空"));
                 continue;
             }
             tc.setId(String.format("TC-%03d", startNo++));
@@ -620,6 +625,7 @@ public class TestCaseService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("imported", imported);
         result.put("skipped", parsed.size() - imported);
+        result.put("skippedDetails", skippedDetails);
         return result;
     }
 

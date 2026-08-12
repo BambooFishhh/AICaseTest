@@ -72,6 +72,21 @@ public class ExecutionService {
                 .mode(mode)
                 .batchId(batchId)
                 .build();
+        // v3.16: 记录执行时用例快照（回溯执行内容）
+        try {
+            Map<String, Object> snapshot = new LinkedHashMap<>();
+            snapshot.put("title", testCase.getTitle());
+            snapshot.put("module", testCase.getModule());
+            snapshot.put("type", testCase.getType());
+            snapshot.put("priority", testCase.getPriority());
+            snapshot.put("preconditions", testCase.getPreconditions());
+            snapshot.put("steps", testCase.getSteps());
+            snapshot.put("expectedResults", testCase.getExpectedResults());
+            snapshot.put("structuredSteps", testCase.getStructuredSteps());
+            record.setTestCaseSnapshot(objectMapper.writeValueAsString(snapshot));
+        } catch (Exception e) {
+            log.warn("Failed to build test case snapshot for {}", testCaseId, e);
+        }
         executionRecordRepository.save(record);
 
         // v3.11: 执行启动时回写用例执行状态

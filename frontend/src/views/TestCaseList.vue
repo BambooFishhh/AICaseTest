@@ -217,6 +217,8 @@
     <section class="action-toolbar">
       <div class="action-left">
         <el-button :icon="Upload" @click="triggerImportXmind">导入 XMind</el-button>
+        <!-- v3.16: XMind 导入模板 -->
+        <el-button :icon="Download" @click="downloadXmindTemplate">模板</el-button>
         <el-button type="success" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
         <!-- v3.12: 快捷批量执行 -->
         <el-button
@@ -933,9 +935,21 @@ async function handleReviewCommand(command) {
   } catch {
     return
   }
+  // v3.16: 审计——记录评审人
+  let reviewer = 'local'
   try {
-    const res = await reviewTestCases(projectId, ids, command, null)
-    ElMessage.success(`已更新 ${res.data.updated} 条用例状态为「${text}」`)
+    const { value } = await ElMessageBox.prompt(
+      '请输入评审人名称（留空使用 local）',
+      '批量评审',
+      { confirmButtonText: '确定', cancelButtonText: '取消', inputValue: '' }
+    )
+    reviewer = (value && value.trim()) ? value.trim() : 'local'
+  } catch {
+    return
+  }
+  try {
+    const res = await reviewTestCases(projectId, ids, command, reviewer)
+    ElMessage.success(`评审人 ${reviewer}：已更新 ${res.data.updated} 条用例状态为「${text}」`)
     await Promise.all([loadList(), loadAllForStats()])
   } catch {
     // 错误已由响应拦截器统一提示
@@ -1090,12 +1104,30 @@ function triggerImportXmind() {
   xmindFileInput.value?.click()
 }
 
+// v3.16: 下载 XMind 导入模板
+function downloadXmindTemplate() {
+  window.open(`/api/projects/${projectId}/testcases/xmind-template`, '_blank')
+}
+
 async function handleImportXmind(e) {
   const file = e.target.files?.[0]
   if (!file) return
   try {
     const res = await importXmind(projectId, file)
     ElMessage.success(`导入完成：成功 ${res.data.imported} 条，跳过 ${res.data.skipped} 条`)
+    // v3.16: 跳过明细
+    const details = res.data?.skippedDetails
+    if (Array.isArray(details) && details.length > 0) {
+      const html = details
+        .slice(0, 10)
+        .map((d) => `· ${d.title || '(无标题)'}：${d.reason}`)
+        .join('<br/>')
+      ElMessageBox.alert(
+        html + (details.length > 10 ? `<br/>… 共 ${details.length} 条跳过` : ''),
+        `跳过 ${details.length} 条用例`,
+        { dangerouslyUseHTMLString: true, confirmButtonText: '知道了', type: 'warning' }
+      )
+    }
     await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
   } catch {
     // 错误已由响应拦截器统一提示
