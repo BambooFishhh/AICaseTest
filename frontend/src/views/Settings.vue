@@ -6,6 +6,10 @@
         <h1 class="page-title">系统设置</h1>
         <p class="page-subtitle">配置 LLM 服务参数以启用 AI 用例生成</p>
       </div>
+      <!-- v3.17: 内嵌 API 文档入口 -->
+      <div class="page-actions">
+        <el-button :icon="Document" @click="openApiDocs">API 文档</el-button>
+      </div>
     </header>
 
     <!-- 加载骨架屏 -->
@@ -100,6 +104,57 @@
         </div>
       </Transition>
     </section>
+
+    <!-- v3.17: 默认生成参数 -->
+    <section class="settings-section gen-default-section">
+      <div class="section-head">
+        <div class="section-head-text">
+          <h2 class="section-title">默认生成参数</h2>
+          <p class="section-desc">新建项目时使用的初始生成参数，项目内可单独覆盖</p>
+        </div>
+        <el-icon :size="28" class="section-icon"><MagicStick /></el-icon>
+      </div>
+      <el-form label-position="top" class="settings-form">
+        <div class="form-grid">
+          <el-form-item label="用例密度">
+            <el-radio-group v-model="defaultParams.caseDensity">
+              <el-radio-button label="low">精简</el-radio-button>
+              <el-radio-button label="medium">标准</el-radio-button>
+              <el-radio-button label="high">详尽</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="默认执行 URL">
+            <el-input
+              v-model="defaultParams.defaultTargetUrl"
+              placeholder="例如 http://localhost:5173"
+              size="large"
+            />
+          </el-form-item>
+          <el-form-item label="创造性">
+            <el-slider
+              v-model="defaultParams.temperature"
+              :min="0.2"
+              :max="0.6"
+              :step="0.1"
+              :marks="{ 0.2: '严谨', 0.4: '标准', 0.6: '发散' }"
+            />
+          </el-form-item>
+          <el-form-item label="聚焦类型">
+            <el-checkbox-group v-model="defaultParams.focusTypes">
+              <el-checkbox label="positive">正向</el-checkbox>
+              <el-checkbox label="negative">异常</el-checkbox>
+              <el-checkbox label="boundary">边界</el-checkbox>
+              <el-checkbox label="data">数据</el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+        </div>
+        <div class="form-actions">
+          <el-button type="primary" size="large" :loading="savingDefaults" @click="saveDefaultParams">
+            保存默认参数
+          </el-button>
+        </div>
+      </el-form>
+    </section>
   </div>
 </template>
 
@@ -107,15 +162,26 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  Setting, Close, CircleCheckFilled, CircleCloseFilled
+  Setting, Close, CircleCheckFilled, CircleCloseFilled, Document, MagicStick
 } from '@element-plus/icons-vue'
-import { getSettings, updateSettings, testLlm } from '@/api/settings'
+import {
+  getSettings, updateSettings, testLlm,
+  getDefaultGenerationParams, updateDefaultGenerationParams
+} from '@/api/settings'
 
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
 const testResult = ref(null)
 const originalApiKey = ref('')
+// v3.17: 默认生成参数
+const savingDefaults = ref(false)
+const defaultParams = ref({
+  caseDensity: 'medium',
+  temperature: 0.4,
+  focusTypes: [],
+  defaultTargetUrl: ''
+})
 
 const form = reactive({
   llmProvider: '',
@@ -137,6 +203,39 @@ async function loadSettings() {
   } finally {
     loading.value = false
   }
+}
+
+// v3.17: 默认生成参数
+async function loadDefaultParams() {
+  try {
+    const res = await getDefaultGenerationParams()
+    const data = res.data || {}
+    defaultParams.value = {
+      caseDensity: data.caseDensity || 'medium',
+      temperature: typeof data.temperature === 'number' ? data.temperature : 0.4,
+      focusTypes: Array.isArray(data.focusTypes) ? data.focusTypes : [],
+      defaultTargetUrl: data.defaultTargetUrl || ''
+    }
+  } catch {
+    // 保持默认
+  }
+}
+
+async function saveDefaultParams() {
+  savingDefaults.value = true
+  try {
+    await updateDefaultGenerationParams(defaultParams.value)
+    ElMessage.success('默认生成参数已保存')
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    savingDefaults.value = false
+  }
+}
+
+// v3.17: 打开内嵌 API 文档
+function openApiDocs() {
+  window.open('/swagger-ui/index.html', '_blank')
 }
 
 function buildPayload() {
@@ -174,7 +273,10 @@ async function handleTest() {
   }
 }
 
-onMounted(loadSettings)
+onMounted(() => {
+  loadSettings()
+  loadDefaultParams()
+})
 </script>
 
 <style scoped lang="scss">
@@ -214,6 +316,10 @@ onMounted(loadSettings)
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
+}
+
+.gen-default-section {
+  margin-top: var(--space-lg);
 }
 
 .section-head {

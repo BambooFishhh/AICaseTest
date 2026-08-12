@@ -454,13 +454,12 @@
       @filter-by-ids="handleFilterByIds"
     />
 
-    <!-- 用例详情/编辑对话框 -->
-    <el-dialog
+    <!-- v3.17: 用例详情/编辑抽屉 -->
+    <el-drawer
       v-model="dialogVisible"
-      width="900px"
+      size="62%"
       :title="currentTestCase ? currentTestCase.title : '用例详情'"
-      class="case-dialog"
-      :style="{ maxWidth: '95vw' }"
+      class="case-drawer"
     >
       <test-case-card
         v-if="currentTestCase"
@@ -476,7 +475,7 @@
         @next="handleNext"
         @versions="handleOpenVersions"
       />
-    </el-dialog>
+    </el-drawer>
 
     <!-- 新增用例对话框 -->
     <TestCaseCard

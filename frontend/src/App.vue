@@ -22,6 +22,21 @@
         </router-link>
       </nav>
 
+      <!-- v3.17: 项目内二级导航 -->
+      <div v-if="projectId && !sidebarCollapsed" class="sidebar-subnav">
+        <div class="subnav-title">当前项目</div>
+        <router-link
+          v-for="item in projectSubNav"
+          :key="item.path"
+          :to="item.path"
+          class="subnav-item"
+          :class="{ active: route.path === item.path }"
+        >
+          <el-icon :size="15"><component :is="item.icon" /></el-icon>
+          <span>{{ item.label }}</span>
+        </router-link>
+      </div>
+
       <div class="sidebar-footer">
         <button class="collapse-btn" @click="sidebarCollapsed = !sidebarCollapsed">
           <el-icon :size="16">
@@ -37,7 +52,20 @@
       <!-- 顶栏 -->
       <header class="app-topbar">
         <div class="topbar-left">
-          <span class="topbar-title">{{ currentPageTitle }}</span>
+          <!-- v3.17: 面包屑 -->
+          <nav class="breadcrumb">
+            <template v-for="(crumb, idx) in breadcrumbs" :key="idx">
+              <span v-if="idx > 0" class="breadcrumb-sep">/</span>
+              <router-link
+                v-if="idx < breadcrumbs.length - 1 && crumbLink(idx, crumb)"
+                :to="crumbLink(idx, crumb)"
+                class="breadcrumb-link"
+              >
+                {{ crumb }}
+              </router-link>
+              <span v-else class="breadcrumb-current">{{ crumb }}</span>
+            </template>
+          </nav>
         </div>
         <div class="topbar-right">
           <span class="version-tag">v4.0</span>
@@ -55,17 +83,46 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { FolderOpened, Setting, Fold, Expand } from '@element-plus/icons-vue'
+import {
+  FolderOpened, Setting, Fold, Expand, DataAnalysis, View, Document, Clock, Share, Picture
+} from '@element-plus/icons-vue'
 
 const route = useRoute()
 const sidebarCollapsed = ref(false)
 
 const navItems = [
+  { path: '/dashboard', label: '仪表盘', icon: DataAnalysis },
   { path: '/projects', label: '项目列表', icon: FolderOpened },
   { path: '/settings', label: '系统设置', icon: Setting }
 ]
 
-const currentPageTitle = computed(() => route.meta?.title || 'AI 测试用例生成系统')
+// v3.17: 面包屑
+const breadcrumbs = computed(() => {
+  const bc = route.meta?.breadcrumb
+  return Array.isArray(bc) && bc.length ? bc : [route.meta?.title || 'AI 测试用例生成系统']
+})
+
+function crumbLink(idx, crumb) {
+  if (crumb === '项目列表') return '/projects'
+  if (crumb === '项目详情' && route.params.id) return `/projects/${route.params.id}`
+  return ''
+}
+
+// v3.17: 项目内二级导航
+const projectId = computed(() => route.params.id || '')
+
+const projectSubNav = computed(() => {
+  const id = projectId.value
+  if (!id) return []
+  return [
+    { path: `/projects/${id}`, label: '项目详情', icon: View },
+    { path: `/projects/${id}/testcases`, label: '测试用例', icon: Document },
+    { path: `/projects/${id}/executions`, label: '执行历史', icon: Clock },
+    { path: `/projects/${id}/analysis`, label: '代码分析', icon: DataAnalysis },
+    { path: `/projects/${id}/state-machines`, label: '状态机覆盖', icon: Share },
+    { path: `/projects/${id}/mindmap`, label: '脑图预览', icon: Picture }
+  ]
+})
 </script>
 
 <style scoped>
@@ -132,6 +189,7 @@ const currentPageTitle = computed(() => route.meta?.title || 'AI 测试用例生
   display: flex;
   flex-direction: column;
   gap: 4px;
+  overflow-y: auto;
 }
 
 .nav-item {
@@ -160,6 +218,42 @@ const currentPageTitle = computed(() => route.meta?.title || 'AI 测试用例生
 
   .nav-label {
     white-space: nowrap;
+  }
+}
+
+/* v3.17: 项目内二级导航 */
+.sidebar-subnav {
+  padding: 4px 12px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 4px;
+
+  .subnav-title {
+    font-size: 11px;
+    color: #64748b;
+    letter-spacing: 1px;
+    padding: 8px 10px 6px;
+  }
+
+  .subnav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: var(--radius-md);
+    color: #94a3b8;
+    text-decoration: none;
+    font-size: 13px;
+    transition: all var(--transition-fast);
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: #e2e8f0;
+    }
+
+    &.active {
+      background: rgba(79, 70, 229, 0.35);
+      color: #fff;
+    }
   }
 }
 
@@ -208,10 +302,31 @@ const currentPageTitle = computed(() => route.meta?.title || 'AI 测试用例生
   box-shadow: var(--shadow-xs);
 }
 
-.topbar-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
+/* v3.17: 面包屑 */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+
+  .breadcrumb-sep {
+    color: var(--text-tertiary);
+  }
+
+  .breadcrumb-link {
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: color var(--transition-fast);
+
+    &:hover {
+      color: var(--brand-primary);
+    }
+  }
+
+  .breadcrumb-current {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
 }
 
 .version-tag {

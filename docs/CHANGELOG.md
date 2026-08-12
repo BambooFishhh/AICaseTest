@@ -4,6 +4,36 @@
 
 ---
 
+## v3.17 — 平台化打磨
+
+**日期**: 2026-08-12
+**基线**: v3.16
+**主题**: 全局仪表盘 + 系统级默认生成参数 + 内嵌 API 文档 + 用例抽屉 + 项目内导航/面包屑
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| controller/StatsController.java | 新增全局统计 | GET /api/stats/overview |
+| service/SettingsService.java + controller | 默认生成参数 | 新建项目自动初始化 |
+| pom.xml | springdoc 依赖 | 内嵌 Swagger UI |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| views/Dashboard.vue | 新增仪表盘 | 统计卡 + 类型分布饼图 + 项目覆盖率柱状图 |
+| views/Settings.vue | 默认参数 + API 文档入口 | 系统级默认生成参数配置 |
+| App.vue + router | 仪表盘导航 + 项目二级导航 + 面包屑 | 层级导航 |
+| views/TestCaseList.vue | 用例详情抽屉 | el-dialog → el-drawer |
+
+### 验证结果
+
+- 后端测试: Tests run 2, Failures 0, BUILD SUCCESS
+- 前端构建: ✓ built in 12.52s
+
+---
+
 ## v3.16 — 数据与协作
 
 **日期**: 2026-08-12

@@ -41,6 +41,9 @@ public class ProjectService {
     private ProjectRepository projectRepository;
 
     @Autowired
+    private SettingsService settingsService;
+
+    @Autowired
     private CodeAnalysisRepository codeAnalysisRepository;
 
     @Autowired
@@ -86,6 +89,15 @@ public class ProjectService {
         project.setStatus("created");
         project.setTechStack("{}");
         project.setSettings("{}");
+        // v3.17: 新建项目初始化系统级默认生成参数
+        try {
+            GenerationParams defaults = settingsService.getDefaultGenerationParams();
+            ObjectNode settings = (ObjectNode) objectMapper.readTree("{}");
+            settings.set("generationParams", objectMapper.valueToTree(defaults));
+            project.setSettings(objectMapper.writeValueAsString(settings));
+        } catch (Exception ignored) {
+            // 初始化失败保持空 settings
+        }
         projectRepository.save(project);
         return ProjectDTO.from(project);
     }

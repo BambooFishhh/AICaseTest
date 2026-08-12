@@ -6,70 +6,76 @@ const routes = [
     redirect: '/projects'
   },
   {
+    path: '/dashboard',
+    name: 'Dashboard',
+    component: () => import('@/views/Dashboard.vue'),
+    meta: { title: '仪表盘', breadcrumb: ['仪表盘'] }
+  },
+  {
     path: '/projects',
     name: 'ProjectList',
     component: () => import('@/views/ProjectList.vue'),
-    meta: { title: '项目列表' }
+    meta: { title: '项目列表', breadcrumb: ['项目列表'] }
   },
   {
     path: '/projects/create',
     name: 'ProjectCreate',
     component: () => import('@/views/ProjectCreate.vue'),
-    meta: { title: '创建项目' }
+    meta: { title: '创建项目', breadcrumb: ['项目列表', '创建项目'] }
   },
   {
     path: '/projects/:id',
     name: 'ProjectDetail',
     component: () => import('@/views/ProjectDetail.vue'),
-    meta: { title: '项目详情' }
+    meta: { title: '项目详情', breadcrumb: ['项目列表', '项目详情'] }
   },
   {
     path: '/projects/:id/analysis',
     name: 'CodeAnalysis',
     component: () => import('@/views/CodeAnalysis.vue'),
-    meta: { title: '代码分析' }
+    meta: { title: '代码分析', breadcrumb: ['项目列表', '项目详情', '代码分析'] }
   },
   {
     path: '/projects/:id/testcases',
     name: 'TestCaseList',
     component: () => import('@/views/TestCaseList.vue'),
-    meta: { title: '测试用例' }
+    meta: { title: '测试用例', breadcrumb: ['项目列表', '项目详情', '测试用例'] }
   },
   {
     path: '/projects/:id/executions',
     name: 'ExecutionHistory',
     component: () => import('@/views/ExecutionHistory.vue'),
-    meta: { title: '执行历史' }
+    meta: { title: '执行历史', breadcrumb: ['项目列表', '项目详情', '执行历史'] }
   },
   {
     path: '/projects/:id/executions/:eid',
     name: 'ExecutionResult',
     component: () => import('@/views/ExecutionResult.vue'),
-    meta: { title: '执行结果' }
+    meta: { title: '执行结果', breadcrumb: ['项目列表', '项目详情', '执行结果'] }
   },
   {
     path: '/projects/:id/batches/:batchId',
     name: 'BatchResult',
     component: () => import('@/views/BatchResult.vue'),
-    meta: { title: '批次执行结果' }
+    meta: { title: '批次执行结果', breadcrumb: ['项目列表', '项目详情', '批次执行结果'] }
   },
   {
     path: '/projects/:id/state-machines',
     name: 'StateMachineOverview',
     component: () => import('@/views/StateMachineOverview.vue'),
-    meta: { title: '状态机覆盖图' }
+    meta: { title: '状态机覆盖图', breadcrumb: ['项目列表', '项目详情', '状态机覆盖图'] }
   },
   {
     path: '/projects/:id/mindmap',
     name: 'MindMapPreview',
     component: () => import('@/views/MindMapPreview.vue'),
-    meta: { title: '思维导图' }
+    meta: { title: '思维导图', breadcrumb: ['项目列表', '项目详情', '思维导图'] }
   },
   {
     path: '/settings',
     name: 'Settings',
     component: () => import('@/views/Settings.vue'),
-    meta: { title: '系统设置' }
+    meta: { title: '系统设置', breadcrumb: ['系统设置'] }
   }
 ]
 
