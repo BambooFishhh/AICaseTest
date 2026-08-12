@@ -1,123 +1,154 @@
 <template>
-  <div class="project-detail" v-loading="loading">
-    <div class="page-header">
-      <h2>{{ project?.name || '项目详情' }}</h2>
-      <el-button :icon="ArrowLeft" @click="goList">返回列表</el-button>
-    </div>
-
-    <el-card v-if="project" class="info-card">
-      <template #header>
-        <div class="info-header">
-          <span>基本信息</span>
-          <el-tag
-            :type="statusTagType(project.status)"
-            size="small"
-            effect="light"
-            round
-          >
-            {{ statusText(project.status) }}
-          </el-tag>
-        </div>
-      </template>
-      <el-descriptions :column="2" border>
-        <el-descriptions-item label="项目名称">{{ project.name }}</el-descriptions-item>
-        <el-descriptions-item label="项目状态">
-          <el-tag :type="statusTagType(project.status)">
-            {{ statusText(project.status) }}
-          </el-tag>
-        </el-descriptions-item>
-        <el-descriptions-item label="源码路径">{{ project.sourcePath }}</el-descriptions-item>
-        <el-descriptions-item label="创建时间">{{ formatDate(project.createdAt) }}</el-descriptions-item>
-        <el-descriptions-item label="技术栈" :span="2">
-          <template v-if="techStackList.length">
-            <el-tag
-              v-for="tech in techStackList"
-              :key="tech"
-              class="tech-tag"
-              type="info"
-              effect="plain"
-            >{{ tech }}</el-tag>
-          </template>
-          <span v-else>-</span>
-        </el-descriptions-item>
-      </el-descriptions>
-    </el-card>
-
-    <!-- v3.10: 迭代流程步骤条 -->
-    <el-card v-if="project" class="flow-card">
-      <template #header>迭代流程</template>
-      <el-steps
-        :active="activeStep"
-        align-center
-        finish-status="success"
-        process-status="process"
-        class="flow-steps"
-      >
-        <el-step title="创建项目" :icon="Finished" />
-        <el-step title="代码分析" :icon="Aim" />
-        <el-step title="用例生成" :icon="MagicStick" />
-        <el-step title="脑图导出" :icon="Share" />
-      </el-steps>
-    </el-card>
-
-    <!-- v3.0: PRD 面板上提为主线（v1.10 引入，v3.0 调整位置） -->
-    <PrdPanel v-if="project" :project-id="projectId" />
-
-    <el-card class="action-card">
-      <template #header>操作</template>
-      <div class="action-groups">
-        <div class="action-group">
-          <span class="group-label">主线操作</span>
-          <div class="action-buttons">
-            <!-- v3.0: 开始分析标注为可选上下文，无代码路径时禁用 -->
-            <el-button
-              type="primary"
-              :icon="Aim"
-              :disabled="!canAnalyze"
-              :title="!hasSourcePath ? '未配置代码路径，可直接用 PRD 生成用例' : ''"
-              @click="handleAnalyze"
-            >开始分析<span v-if="!hasSourcePath" class="optional-mark">（可选）</span></el-button>
-            <!-- v3.0: 生成用例作为主操作 -->
-            <el-button
-              type="primary"
-              :icon="MagicStick"
-              :disabled="!canGenerate"
-              @click="handleGenerate"
-            >生成用例</el-button>
-            <el-button
-              type="primary"
-              :icon="Share"
-              :disabled="!canMindmap"
-              @click="handleMindmap"
-            >生成脑图</el-button>
-            <el-button :icon="Download" :disabled="!canDownload" @click="handleDownload">
-              下载脑图
-            </el-button>
-          </div>
-        </div>
-        <div class="action-group">
-          <span class="group-label">查看</span>
-          <div class="action-buttons">
-            <el-button :icon="DataAnalysis" :disabled="!canViewAnalysis" @click="goAnalysis">
-              查看分析
-            </el-button>
-            <el-button :icon="Document" :disabled="!canViewTestcases" @click="goTestcases">
-              查看用例
-            </el-button>
-            <el-button :icon="Share" @click="goMindmap">脑图预览</el-button>
-          </div>
+  <div class="project-detail page-container" v-loading="loading">
+    <!-- 页头 -->
+    <header class="page-header">
+      <div class="page-header-main">
+        <el-button text :icon="ArrowLeft" @click="goList">返回列表</el-button>
+        <div class="title-block">
+          <h1 class="page-title">{{ project?.name || '项目详情' }}</h1>
+          <span v-if="project" class="status-pill" :class="`status-${project.status}`">
+            <i class="status-dot"></i>{{ statusText(project.status) }}
+          </span>
         </div>
       </div>
-    </el-card>
+    </header>
 
-    <el-alert
-      v-if="pollingMessage"
-      :title="pollingMessage"
-      type="info"
-      :closable="false"
-      show-icon
-      class="polling-alert"
-    />
+    <template v-if="project">
+      <!-- 流程步骤条 -->
+      <section class="flow-section">
+        <div class="flow-steps">
+          <div
+            v-for="(step, idx) in flowSteps"
+            :key="step.key"
+            class="flow-step"
+            :class="{
+              active: idx === activeStep,
+              done: idx < activeStep,
+              pending: idx > activeStep
+            }"
+          >
+            <div class="step-marker">
+              <el-icon v-if="idx < activeStep" :size="18"><Check /></el-icon>
+              <span v-else>{{ idx + 1 }}</span>
+            </div>
+            <div class="step-info">
+              <div class="step-title">{{ step.title }}</div>
+              <div class="step-desc">{{ step.desc }}</div>
+            </div>
+            <div v-if="idx < flowSteps.length - 1" class="step-connector"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 基本信息 -->
+      <section class="info-section">
+        <div class="section-head">
+          <h2 class="section-title">基本信息</h2>
+        </div>
+        <div class="info-grid">
+          <div class="info-item">
+            <div class="info-label">项目名称</div>
+            <div class="info-value">{{ project.name }}</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">源码路径</div>
+            <div class="info-value mono">{{ project.sourcePath || '纯 PRD 模式' }}</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">创建时间</div>
+            <div class="info-value">{{ formatDate(project.createdAt) }}</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">技术栈</div>
+            <div class="info-value">
+              <div v-if="techStackList.length" class="tech-tags">
+                <span v-for="tech in techStackList" :key="tech" class="tech-tag">{{ tech }}</span>
+              </div>
+              <span v-else class="text-muted">尚未分析</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PRD 面板 -->
+      <PrdPanel :project-id="projectId" />
+
+      <!-- 操作面板 -->
+      <section class="actions-section">
+        <div class="section-head">
+          <h2 class="section-title">操作</h2>
+        </div>
+        <div class="action-grid">
+          <!-- 主线操作 -->
+          <div class="action-card primary-action">
+            <div class="action-card-head">
+              <el-icon :size="18"><Operation /></el-icon>
+              <span class="action-card-title">主线操作</span>
+            </div>
+            <div class="action-buttons">
+              <el-button
+                type="primary"
+                :icon="Aim"
+                :disabled="!canAnalyze"
+                :title="!hasSourcePath ? '未配置代码路径，可直接用 PRD 生成用例' : ''"
+                @click="handleAnalyze"
+              >
+                开始分析
+                <span v-if="!hasSourcePath" class="optional-tag">可选</span>
+              </el-button>
+              <el-button
+                type="primary"
+                :icon="MagicStick"
+                :disabled="!canGenerate"
+                @click="handleGenerate"
+              >
+                生成用例
+              </el-button>
+              <el-button
+                type="primary"
+                :icon="Share"
+                :disabled="!canMindmap"
+                @click="handleMindmap"
+              >
+                生成脑图
+              </el-button>
+              <el-button
+                :icon="Download"
+                :disabled="!canDownload"
+                @click="handleDownload"
+              >
+                下载脑图
+              </el-button>
+            </div>
+          </div>
+
+          <!-- 查看操作 -->
+          <div class="action-card">
+            <div class="action-card-head">
+              <el-icon :size="18"><View /></el-icon>
+              <span class="action-card-title">查看</span>
+            </div>
+            <div class="action-buttons">
+              <el-button :icon="DataAnalysis" :disabled="!canViewAnalysis" @click="goAnalysis">
+                查看分析
+              </el-button>
+              <el-button :icon="Document" :disabled="!canViewTestcases" @click="goTestcases">
+                查看用例
+              </el-button>
+              <el-button :icon="Share" @click="goMindmap">脑图预览</el-button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 轮询状态提示 -->
+      <Transition name="fade">
+        <div v-if="pollingMessage" class="polling-banner">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>{{ pollingMessage }}</span>
+        </div>
+      </Transition>
+    </template>
   </div>
 </template>
 
@@ -126,14 +157,8 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  ArrowLeft,
-  Aim,
-  MagicStick,
-  Share,
-  Download,
-  DataAnalysis,
-  Document,
-  Finished
+  ArrowLeft, Aim, MagicStick, Share, Download,
+  DataAnalysis, Document, Loading, Check, View, Operation
 } from '@element-plus/icons-vue'
 import { getProject } from '@/api/project'
 import PrdPanel from '@/components/PrdPanel.vue'
@@ -151,7 +176,13 @@ const pollingMessage = ref('')
 
 const project = computed(() => projectStore.currentProject)
 
-// v3.10: 迭代流程步骤条 active 索引（0=创建项目 1=代码分析 2=用例生成 3=脑图导出）
+const flowSteps = [
+  { key: 'create', title: '创建项目', desc: '填写项目基础信息' },
+  { key: 'analyze', title: '代码分析', desc: '解析技术栈与状态机' },
+  { key: 'generate', title: '用例生成', desc: '基于上下文生成用例' },
+  { key: 'mindmap', title: '脑图导出', desc: '生成 XMind 脑图' }
+]
+
 const activeStep = computed(() => {
   const s = project.value?.status
   if (s === 'analyzed') return 2
@@ -160,26 +191,13 @@ const activeStep = computed(() => {
   return 1
 })
 
-const statusTypeMap = {
-  created: 'info',
-  analyzing: 'warning',
-  analyzed: 'success',
-  generating: 'warning',
-  completed: 'success',
-  failed: 'danger'
-}
-
 const statusTextMap = {
   created: '已创建',
-  analyzing: '分析中...',
+  analyzing: '分析中',
   analyzed: '已分析',
-  generating: '生成中...',
+  generating: '生成中',
   completed: '已完成',
   failed: '失败'
-}
-
-function statusTagType(status) {
-  return statusTypeMap[status] || 'info'
 }
 
 function statusText(status) {
@@ -201,18 +219,15 @@ const techStackList = computed(() => {
   return []
 })
 
-// v3.0: 是否有代码路径（无代码路径时"开始分析"禁用）
 const hasSourcePath = computed(() => {
   return !!project.value?.sourcePath && project.value.sourcePath.trim() !== ''
 })
 
-// v3.0: 开始分析需有代码路径
 const canAnalyze = computed(() => {
   const s = project.value?.status
   return hasSourcePath.value && (s === 'created' || s === 'failed')
 })
 
-// v3.0: 生成用例放宽——created 状态也可生成（纯 PRD 驱动），只需不在分析/生成中
 const canGenerate = computed(() => {
   const s = project.value?.status
   return s !== 'analyzing' && s !== 'generating'
@@ -249,7 +264,6 @@ async function handleAnalyze() {
   }
 }
 
-// v3.2: 跳转 TestCaseList 并自动触发流式生成（SSE），生成进度与用例实时呈现
 function handleGenerate() {
   router.push(`/projects/${projectId}/testcases?generate=1`)
 }
@@ -300,80 +314,331 @@ onUnmounted(() => {
 
 <style scoped lang="scss">
 .project-detail {
-  padding: 4px 0;
+  padding: var(--space-lg) var(--space-xl);
+  max-width: 1280px;
+  margin: 0 auto;
 }
 
-.info-card {
-  margin-bottom: 20px;
+.page-header-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
 
-  .info-header {
+.title-block {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  &.status-created { color: #64748b; background: #f1f5f9; }
+  &.status-analyzing, &.status-generating { 
+    color: #f59e0b; 
+    background: #fef3c7;
+    .status-dot { animation: pulse 1.5s ease-in-out infinite; }
+  }
+  &.status-analyzed, &.status-completed { color: #10b981; background: #d1fae5; }
+  &.status-failed { color: #ef4444; background: #fee2e2; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ===== 流程步骤条 ===== */
+.flow-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-xl);
+  padding: var(--space-xl);
+  margin-bottom: var(--space-lg);
+  box-shadow: var(--shadow-xs);
+}
+
+.flow-steps {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  position: relative;
+}
+
+.flow-step {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  position: relative;
+  min-width: 0;
+
+  &:last-child {
+    flex: 0;
+  }
+
+  .step-marker {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 2px solid var(--card-border);
+    background: var(--bg-surface);
+    color: var(--text-tertiary);
+    font-weight: 600;
+    font-size: 14px;
+    transition: all var(--transition-normal);
+    z-index: 1;
+  }
+
+  .step-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .step-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .step-desc {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+  }
+
+  .step-connector {
+    position: absolute;
+    top: 16px;
+    left: 44px;
+    right: -12px;
+    height: 2px;
+    background: var(--card-border);
+    z-index: 0;
+  }
+
+  &.done {
+    .step-marker {
+      background: var(--color-success);
+      border-color: var(--color-success);
+      color: #fff;
+    }
+    .step-connector {
+      background: var(--color-success);
+    }
+    .step-title { color: var(--text-primary); }
+  }
+
+  &.active {
+    .step-marker {
+      background: var(--brand-primary);
+      border-color: var(--brand-primary);
+      color: #fff;
+      box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.15);
+    }
+    .step-title { color: var(--brand-primary); }
   }
 }
 
-.flow-card {
-  margin-bottom: 20px;
+/* ===== 信息区 ===== */
+.info-section, .actions-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-xl);
+  padding: var(--space-lg) var(--space-xl);
+  margin-bottom: var(--space-lg);
+  box-shadow: var(--shadow-xs);
+}
 
-  .flow-steps {
-    padding: 10px 4px 4px;
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+
+  .section-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
   }
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-md);
+}
+
+.info-item {
+  padding: 12px 14px;
+  background: var(--bg-base);
+  border-radius: var(--radius-md);
+  min-width: 0;
+  overflow: hidden;
+
+  .info-label {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-bottom: 4px;
+  }
+
+  .info-value {
+    font-size: 14px;
+    color: var(--text-primary);
+    word-break: break-word;
+    overflow-wrap: break-word;
+
+    &.mono {
+      font-family: 'Consolas', 'Monaco', monospace;
+      font-size: 13px;
+      word-break: break-all;
+      overflow-wrap: break-word;
+      line-height: 1.5;
+    }
+  }
+}
+
+.tech-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .tech-tag {
-  margin-right: 6px;
-  margin-bottom: 4px;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  background: var(--el-color-primary-light-9);
+  color: var(--brand-primary);
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* ===== 操作区 ===== */
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-md);
 }
 
 .action-card {
-  margin-bottom: 20px;
+  padding: var(--space-md);
+  background: var(--bg-base);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--card-border-light);
+  transition: all var(--transition-normal);
 
-  .action-groups {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
+  &:hover {
+    border-color: var(--brand-primary-lighter);
+    box-shadow: var(--shadow-sm);
   }
 
-  .action-group {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-
-    .group-label {
-      flex-shrink: 0;
-      width: 60px;
-      font-size: 12px;
-      color: var(--text-secondary);
-      letter-spacing: 1px;
-    }
-
-    .action-buttons {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
+  &.primary-action {
+    background: linear-gradient(135deg, var(--el-color-primary-light-9), transparent);
+    border-color: var(--el-color-primary-light-8);
   }
 }
 
-.optional-mark {
-  color: #909399;
-  font-size: 12px;
+.action-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.polling-alert {
-  margin-top: 4px;
+.action-card-title {
+  color: var(--text-secondary);
 }
 
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.optional-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 6px;
+  background: rgba(148, 163, 184, 0.15);
+  color: #64748b;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* ===== 轮询提示横幅 ===== */
+.polling-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--color-info-bg);
+  color: var(--color-info);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  margin-top: var(--space-md);
+
+  .is-loading {
+    animation: spin 1s linear infinite;
+  }
+}
+
+/* ===== 过渡动画 ===== */
+.fade-enter-active, .fade-leave-active {
+  transition: all var(--transition-normal);
+}
+
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+/* ===== 响应式 ===== */
 @media (max-width: 768px) {
-  .action-group {
-    flex-direction: column;
-    align-items: flex-start;
+  .project-detail {
+    padding: var(--space-md);
+  }
 
-    .group-label {
-      width: auto;
-    }
+  .flow-steps {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .flow-step {
+    width: 100%;
+    .step-connector { display: none; }
+  }
+
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .action-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

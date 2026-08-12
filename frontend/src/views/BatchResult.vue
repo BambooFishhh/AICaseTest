@@ -1,113 +1,154 @@
 <template>
-  <div class="batch-result" v-loading="loading">
-    <div class="page-header">
-      <h2>批次执行结果</h2>
-      <el-button :icon="ArrowLeft" @click="goBack">返回</el-button>
-    </div>
-
-    <!-- 批次概览 -->
-    <el-card v-if="batch" class="overview-card">
-      <template #header>
-        <div class="card-header">
-          <div class="header-left">
-            <span>批次概览</span>
-            <span v-if="isRunning" class="running-hint">
-              <el-icon class="is-loading"><Loading /></el-icon>
-              执行中，自动刷新...
-            </span>
-          </div>
-          <el-button type="primary" :icon="Download" @click="downloadReport">
-            下载批次报告
-          </el-button>
+  <div class="batch-result page-container" v-loading="loading">
+    <!-- 页头 -->
+    <header class="page-header">
+      <div class="page-header-main">
+        <el-button text :icon="ArrowLeft" @click="goBack">返回</el-button>
+        <div class="title-block">
+          <h1 class="page-title">批次执行结果</h1>
+          <p class="page-subtitle">查看批次执行的进度与各用例状态</p>
         </div>
-      </template>
-      <el-row :gutter="16">
-        <el-col :xs="24" :sm="12">
-          <div class="progress-section">
-            <div class="progress-label">
-              进度：{{ completedCount }} / {{ totalCount }}
-            </div>
-            <el-progress
-              :percentage="progressPercent"
-              :status="progressStatus"
-              :stroke-width="18"
-            />
+      </div>
+      <div v-if="batch" class="page-actions">
+        <el-button type="primary" :icon="Download" @click="downloadReport">下载批次报告</el-button>
+      </div>
+    </header>
+
+    <!-- 空状态 -->
+    <section v-if="!loading && !batch" class="empty-section">
+      <el-empty description="未找到批次记录" :image-size="120" />
+    </section>
+
+    <template v-if="batch">
+      <!-- 进度概览 -->
+      <section class="overview-section">
+        <div class="overview-head">
+          <div class="overview-head-text">
+            <h2 class="section-title">批次概览</h2>
+            <p class="section-desc">进度：{{ completedCount }} / {{ totalCount }}</p>
           </div>
-        </el-col>
-        <el-col :xs="24" :sm="12">
-          <div class="stat-tags">
-            <div class="stat-tag-item">
-              <el-tag type="success" size="large">通过 {{ passedCount }}</el-tag>
-            </div>
-            <div class="stat-tag-item">
-              <el-tag type="danger" size="large">失败 {{ failedCount }}</el-tag>
-            </div>
-            <div class="stat-tag-item">
-              <el-tag type="warning" size="large">运行中 {{ runningCount }}</el-tag>
-            </div>
-            <div class="stat-tag-item">
-              <el-tag type="info" size="large">总计 {{ totalCount }}</el-tag>
+          <div class="overview-status">
+            <el-icon
+              v-if="isRunning"
+              class="is-loading running-icon"
+              :size="18"
+            ><Loading /></el-icon>
+            <span v-if="isRunning" class="running-text">执行中，每 3 秒自动刷新...</span>
+          </div>
+        </div>
+
+        <!-- 进度条 -->
+        <div class="progress-block">
+          <el-progress
+            :percentage="progressPercent"
+            :status="progressStatus"
+            :stroke-width="14"
+            :color="progressColors"
+          />
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="stat-grid">
+          <div class="stat-card stat-passed">
+            <div class="stat-icon"><el-icon :size="20"><CircleCheck /></el-icon></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ passedCount }}</div>
+              <div class="stat-label">通过</div>
             </div>
           </div>
-        </el-col>
-      </el-row>
-    </el-card>
+          <div class="stat-card stat-failed">
+            <div class="stat-icon"><el-icon :size="20"><CircleClose /></el-icon></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ failedCount }}</div>
+              <div class="stat-label">失败</div>
+            </div>
+          </div>
+          <div class="stat-card stat-running">
+            <div class="stat-icon"><el-icon :size="20"><Loading /></el-icon></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ runningCount }}</div>
+              <div class="stat-label">运行中</div>
+            </div>
+          </div>
+          <div class="stat-card stat-total">
+            <div class="stat-icon"><el-icon :size="20"><Files /></el-icon></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ totalCount }}</div>
+              <div class="stat-label">总计</div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-    <el-empty
-      v-else-if="!loading"
-      description="未找到批次记录"
-      :image-size="80"
-    />
+      <!-- 用例执行列表 -->
+      <section class="list-section">
+        <div class="section-head">
+          <div class="section-head-text">
+            <h2 class="section-title">用例执行列表</h2>
+            <p class="section-desc">共 {{ executions.length }} 条记录</p>
+          </div>
+        </div>
 
-    <!-- 用例执行列表 -->
-    <el-card v-if="batch && executions.length > 0" class="list-card">
-      <template #header>用例执行列表（{{ executions.length }}）</template>
-      <el-table
-        :data="executions"
-        border
-        style="width: 100%"
-        @row-click="handleRowClick"
-        highlight-current-row
-      >
-        <el-table-column prop="caseTitle" label="用例标题" min-width="220" />
-        <el-table-column label="状态" width="120">
-          <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">
-              {{ statusLabel(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="开始时间" width="200">
-          <template #default="{ row }">
-            <span>{{ formatTime(row.startTime) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="120">
-          <template #default="{ row }">
-            <el-button
-              v-if="row.executionId"
-              type="primary"
-              link
-              :icon="View"
-              @click.stop="goToExecution(row.executionId)"
-            >
-              查看详情
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
-
-    <el-card v-if="batch && executions.length === 0 && !loading" class="list-card">
-      <el-empty description="暂无用例执行数据" :image-size="60" />
-    </el-card>
+        <el-empty
+          v-if="executions.length === 0"
+          description="暂无用例执行数据"
+          :image-size="100"
+        />
+        <el-table
+          v-else
+          :data="executions"
+          stripe
+          highlight-current-row
+          @row-click="handleRowClick"
+        >
+          <el-table-column prop="caseTitle" label="用例标题" min-width="240">
+            <template #default="{ row }">
+              <span class="case-title">{{ row.caseTitle || '-' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="120">
+            <template #default="{ row }">
+              <span class="status-pill" :class="`status-${row.status}`">
+                <i class="status-dot"></i>{{ statusLabel(row.status) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="开始时间" width="200">
+            <template #default="{ row }">
+              <span class="time-text mono">{{ formatTime(row.startTime) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" align="center">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.executionId"
+                type="primary"
+                link
+                :icon="View"
+                @click.stop="goToExecution(row.executionId)"
+              >查看详情</el-button>
+              <span v-else class="text-muted">-</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </section>
+    </template>
   </div>
 </template>
 
 <script setup>
+/**
+ * 批次执行结果页
+ * 展示批次执行的：
+ * - 概览（进度条、通过/失败/运行中/总计）
+ * - 用例执行列表（标题、状态、开始时间、跳转详情）
+ * 执行中状态会每 3 秒自动轮询刷新。
+ */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Loading, View, Download } from '@element-plus/icons-vue'
+import {
+  ArrowLeft, Loading, View, Download, CircleCheck, CircleClose, Files
+} from '@element-plus/icons-vue'
 import { getBatch } from '@/api/execution'
 
 const route = useRoute()
@@ -146,16 +187,14 @@ const progressStatus = computed(() => {
   return undefined
 })
 
-// 状态标签颜色: passed=success, failed=danger, running=warning
-const statusTagType = (status) => {
-  const map = {
-    passed: 'success',
-    failed: 'danger',
-    running: 'warning',
-    pending: 'info'
-  }
-  return map[status] || 'info'
-}
+// 进度条渐变色
+const progressColors = [
+  { color: '#f59e0b', percentage: 50 },
+  { color: '#6366f1', percentage: 80 },
+  { color: '#10b981', percentage: 100 }
+]
+
+// 状态标签
 const statusLabel = (status) => {
   const map = {
     passed: '通过',
@@ -244,60 +283,200 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.batch-result {
-  padding: 20px;
-}
-.page-header {
+/* ===== 页头 ===== */
+.page-header-main {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  gap: var(--space-md);
 }
-.page-header h2 {
+
+.title-block {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ===== 通用区块头 ===== */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+}
+
+.section-head-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
   margin: 0;
 }
-.overview-card {
-  margin-bottom: 20px;
-}
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.header-left {
-  display: inline-flex;
-  align-items: center;
-}
-.running-hint {
-  margin-left: 8px;
-  color: #e6a23c;
-  font-size: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.running-hint .el-icon {
-  vertical-align: middle;
-}
-.progress-section {
-  margin-bottom: 8px;
-}
-.progress-label {
+
+.section-desc {
   font-size: 13px;
-  color: #606266;
-  margin-bottom: 8px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
 }
-.stat-tags {
+
+/* ===== 概览 ===== */
+.overview-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+  margin-bottom: var(--space-lg);
+}
+
+.overview-head {
   display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+  gap: var(--space-md);
   flex-wrap: wrap;
-  gap: 12px;
+}
+
+.overview-head-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.overview-status {
+  display: flex;
   align-items: center;
-  height: 100%;
+  gap: 6px;
 }
-.stat-tag-item {
+
+.running-icon {
+  color: var(--color-warning);
+}
+
+.running-text {
+  color: var(--color-warning);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.progress-block {
+  margin-bottom: var(--space-md);
+}
+
+/* ===== 统计卡片 ===== */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-md);
+}
+
+.stat-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #f8fafc;
+  border: 1px solid var(--card-border-light);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-normal);
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .stat-icon {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
+    color: #fff;
+  }
+
+  .stat-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .stat-value {
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--text-primary);
+  }
+
+  .stat-label {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+  }
+
+  &.stat-passed .stat-icon { background: var(--color-success); }
+  &.stat-failed .stat-icon { background: var(--color-danger); }
+  &.stat-running .stat-icon { background: var(--color-warning); }
+  &.stat-total .stat-icon { background: var(--brand-primary); }
+}
+
+/* ===== 状态胶囊 ===== */
+.status-pill {
   display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 600;
+
+  &::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  &.status-passed { color: var(--color-success); background: var(--color-success-bg); }
+  &.status-failed { color: var(--color-danger); background: var(--color-danger-bg); }
+  &.status-running { color: var(--color-warning); background: var(--color-warning-bg); }
+  &.status-pending { color: var(--text-secondary); background: #f1f5f9; }
 }
-.list-card {
-  margin-bottom: 20px;
+
+/* ===== 列表 ===== */
+.list-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+}
+
+.case-title {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.time-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.text-muted {
+  color: var(--text-tertiary);
+}
+
+.mono {
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+/* ===== 响应式 ===== */
+@media (max-width: 768px) {
+  .stat-grid {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 </style>

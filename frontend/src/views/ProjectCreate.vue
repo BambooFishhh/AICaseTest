@@ -1,22 +1,28 @@
 <template>
-  <div class="project-create">
-    <div class="page-header">
-      <h2>创建项目</h2>
-      <el-button @click="goBack">返回</el-button>
-    </div>
+  <div class="project-create page-container">
+    <!-- 页头 -->
+    <header class="page-header">
+      <div class="page-header-main">
+        <el-button text :icon="ArrowLeft" @click="goBack">返回</el-button>
+        <h1 class="page-title">创建项目</h1>
+      </div>
+    </header>
 
-    <el-card class="form-card">
-      <template #header>
-        <div class="card-header">
-          <span>项目信息</span>
-          <span class="card-header-tip">支持纯 PRD 驱动，代码路径为可选上下文</span>
+    <!-- 表单卡片 -->
+    <section class="form-section">
+      <div class="section-header">
+        <div class="section-header-text">
+          <h2 class="section-title">项目信息</h2>
+          <p class="section-desc">支持纯 PRD 驱动，代码路径为可选上下文</p>
         </div>
-      </template>
+        <el-icon :size="28" class="section-icon"><InfoFilled /></el-icon>
+      </div>
+
       <el-form
         ref="formRef"
         :model="form"
         :rules="rules"
-        label-width="100px"
+        label-position="top"
         class="create-form"
       >
         <el-form-item label="项目名称" prop="name">
@@ -26,64 +32,105 @@
             maxlength="200"
             show-word-limit
             clearable
+            size="large"
           />
         </el-form-item>
+
         <el-form-item label="来源类型" prop="sourceType">
-          <el-radio-group v-model="form.sourceType">
-            <el-radio-button label="local_path">本地路径</el-radio-button>
-            <el-radio-button label="git_url">Git 地址</el-radio-button>
-            <el-radio-button label="none">无代码（纯 PRD）</el-radio-button>
-          </el-radio-group>
+          <div class="source-type-grid">
+            <label
+              v-for="opt in sourceTypes"
+              :key="opt.value"
+              class="source-type-card"
+              :class="{ active: form.sourceType === opt.value }"
+            >
+              <input
+                type="radio"
+                v-model="form.sourceType"
+                :value="opt.value"
+                class="sr-only"
+              />
+              <el-icon :size="22"><component :is="opt.icon" /></el-icon>
+              <div class="card-text">
+                <div class="card-title">{{ opt.label }}</div>
+                <div class="card-desc">{{ opt.desc }}</div>
+              </div>
+              <el-icon v-if="form.sourceType === opt.value" class="check-mark" :size="18">
+                <CircleCheckFilled />
+              </el-icon>
+            </label>
+          </div>
         </el-form-item>
-        <el-form-item v-if="form.sourceType === 'local_path'" label="项目路径" prop="sourcePath">
+
+        <el-form-item
+          v-if="form.sourceType === 'local_path'"
+          label="项目路径"
+          prop="sourcePath"
+        >
           <div class="path-input-group">
             <el-input
               v-model="form.sourcePath"
               placeholder="请输入项目源码路径，或点击右侧浏览选择"
               clearable
+              size="large"
               class="path-input"
             />
-            <!-- v3.1: 目录选择器插件 -->
             <DirSelector @select="handleDirSelect" />
           </div>
-          <div class="form-item-tip">提示：可手动输入路径，或使用浏览按钮可视化选择目录</div>
+          <div class="field-tip">
+            <el-icon><InfoFilled /></el-icon>
+            可手动输入路径，或使用浏览按钮可视化选择目录
+          </div>
         </el-form-item>
-        <el-form-item v-else-if="form.sourceType === 'git_url'" label="Git 地址" prop="sourcePath">
+
+        <el-form-item
+          v-else-if="form.sourceType === 'git_url'"
+          label="Git 地址"
+          prop="sourcePath"
+        >
           <el-input
             v-model="form.sourcePath"
             placeholder="例如：https://github.com/user/repo.git"
             clearable
+            size="large"
           >
             <template #prepend>https://</template>
           </el-input>
         </el-form-item>
+
         <el-form-item v-else label="项目路径">
-          <el-alert
-            type="info"
-            :closable="false"
-            show-icon
-            title="纯 PRD 驱动模式"
-            description="无需代码路径，创建后可在详情页通过 PRD 文档直接生成测试用例。"
-          />
+          <div class="info-banner">
+            <el-icon :size="20"><MagicStick /></el-icon>
+            <div>
+              <div class="banner-title">纯 PRD 驱动模式</div>
+              <div class="banner-desc">无需代码路径，创建后可在详情页通过 PRD 文档直接生成测试用例</div>
+            </div>
+          </div>
         </el-form-item>
+
         <el-form-item>
-          <el-button type="primary" :loading="submitting" @click="handleSubmit">
-            创建项目
-          </el-button>
-          <el-button @click="handleReset">重置</el-button>
-          <el-button @click="goBack">取消</el-button>
+          <div class="form-actions">
+            <el-button type="primary" size="large" :loading="submitting" @click="handleSubmit">
+              创建项目
+            </el-button>
+            <el-button size="large" @click="handleReset">重置</el-button>
+            <el-button size="large" text @click="goBack">取消</el-button>
+          </div>
         </el-form-item>
       </el-form>
-    </el-card>
+    </section>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, watch, markRaw } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import {
+  ArrowLeft, InfoFilled, MagicStick,
+  FolderOpened, Link, CircleCheckFilled
+} from '@element-plus/icons-vue'
 import { createProject } from '@/api/project'
-// v3.1: 目录选择器组件
 import DirSelector from '@/components/DirSelector.vue'
 
 const router = useRouter()
@@ -96,6 +143,12 @@ const form = reactive({
   sourcePath: ''
 })
 
+const sourceTypes = [
+  { value: 'local_path', label: '本地路径', desc: '从本地代码目录读取', icon: markRaw(FolderOpened) },
+  { value: 'git_url', label: 'Git 地址', desc: '从远程仓库克隆', icon: markRaw(Link) },
+  { value: 'none', label: '无代码（纯 PRD）', desc: '基于 PRD 直接生成', icon: markRaw(MagicStick) }
+]
+
 const rules = {
   name: [
     { required: true, message: '请输入项目名称', trigger: 'blur' },
@@ -103,7 +156,6 @@ const rules = {
   ],
   sourcePath: [
     {
-      // v3.0: 仅非"无代码"时必填；v3.1: 不同来源类型附加格式校验
       validator: (rule, value, callback) => {
         if (form.sourceType === 'none') {
           callback()
@@ -113,7 +165,6 @@ const rules = {
           callback(new Error(form.sourceType === 'git_url' ? '请输入 Git 地址' : '请输入项目路径'))
           return
         }
-        // v3.1: Git 地址格式校验
         if (form.sourceType === 'git_url') {
           const gitPattern = /^(https?:\/\/|git@).+\.(git|com|org|net|io)/i
           if (!gitPattern.test(value.trim())) {
@@ -128,21 +179,16 @@ const rules = {
   ]
 }
 
-// v3.0: 切换来源类型时清空路径（避免不同类型路径串用）
-watch(() => form.sourceType, (newType) => {
+watch(() => form.sourceType, () => {
   form.sourcePath = ''
-  // 清除该字段的校验状态
   formRef.value?.clearValidate('sourcePath')
 })
 
-// v3.1: 目录选择器回调
 function handleDirSelect(path) {
   form.sourcePath = path
-  // 选择后主动触发一次校验，清除可能的错误提示
   formRef.value?.validateField('sourcePath')
 }
 
-// v3.1: 重置表单
 function handleReset() {
   formRef.value?.resetFields()
   form.name = ''
@@ -163,8 +209,6 @@ async function handleSubmit() {
       })
       ElMessage.success('项目创建成功')
       router.push(`/projects/${res.data.id}`)
-    } catch (e) {
-      // 错误已由响应拦截器统一提示
     } finally {
       submitting.value = false
     }
@@ -176,49 +220,194 @@ function goBack() {
 }
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .project-create {
-  padding: 20px;
-}
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-}
-.page-header h2 {
-  margin: 0;
-}
-.form-card {
-  max-width: 680px;
+  padding: var(--space-lg) var(--space-xl);
+  max-width: 880px;
   margin: 0 auto;
 }
-.card-header {
+
+.page-header-main {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: var(--space-sm);
 }
-.card-header-tip {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  font-weight: normal;
+
+/* ===== 表单区 ===== */
+.form-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
 }
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-lg) var(--space-xl);
+  background: linear-gradient(135deg, var(--el-color-primary-light-9) 0%, transparent 100%);
+  border-bottom: 1px solid var(--card-border-light);
+
+  .section-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 4px 0;
+  }
+
+  .section-desc {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    margin: 0;
+  }
+
+  .section-icon {
+    color: var(--brand-primary);
+    opacity: 0.6;
+  }
+}
+
 .create-form {
-  margin-top: 10px;
+  padding: var(--space-xl);
 }
-.form-item-tip {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  line-height: 1.4;
-  margin-top: 4px;
+
+/* ===== 来源类型选择卡 ===== */
+.source-type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-md);
+  width: 100%;
 }
+
+.source-type-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 2px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  background: var(--bg-surface);
+
+  &:hover {
+    border-color: var(--brand-primary-lighter);
+    background: var(--el-color-primary-light-9);
+  }
+
+  &.active {
+    border-color: var(--brand-primary);
+    background: var(--el-color-primary-light-9);
+    box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.08);
+  }
+
+  .card-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .card-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .card-desc {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+  }
+
+  .check-mark {
+    color: var(--brand-primary);
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ===== 路径输入 ===== */
 .path-input-group {
   display: flex;
-  gap: 8px;
+  gap: var(--space-sm);
   width: 100%;
   align-items: center;
 }
+
 .path-input {
   flex: 1;
+}
+
+.field-tip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 6px;
+}
+
+/* ===== 信息横幅 ===== */
+.info-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, var(--el-color-primary-light-9), transparent);
+  border: 1px solid var(--el-color-primary-light-8);
+  border-radius: var(--radius-md);
+  color: var(--brand-primary);
+  width: 100%;
+
+  .banner-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 14px;
+  }
+
+  .banner-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+}
+
+/* ===== 表单操作 ===== */
+.form-actions {
+  display: flex;
+  gap: var(--space-sm);
+  padding-top: var(--space-md);
+}
+
+/* ===== 响应式 ===== */
+@media (max-width: 768px) {
+  .project-create {
+    padding: var(--space-md);
+  }
+
+  .create-form {
+    padding: var(--space-md);
+  }
+
+  .source-type-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .path-input-group {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 </style>

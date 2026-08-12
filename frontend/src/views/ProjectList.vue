@@ -1,67 +1,86 @@
 <template>
-  <div class="project-list">
-    <div class="page-header">
-      <h2>项目列表</h2>
-      <el-button type="primary" :icon="Plus" @click="goCreate">创建项目</el-button>
+  <div class="project-list page-container">
+    <!-- 页头 -->
+    <header class="page-header">
+      <div class="page-header-main">
+        <h1 class="page-title">项目列表</h1>
+        <p class="page-subtitle">管理你的 AI 测试用例生成项目</p>
+      </div>
+      <div class="page-actions">
+        <el-button type="primary" :icon="Plus" @click="goCreate">创建项目</el-button>
+      </div>
+    </header>
+
+    <!-- 加载骨架屏 -->
+    <div v-if="loading" class="skeleton-grid">
+      <div v-for="i in 6" :key="i" class="skeleton-card">
+        <div class="skeleton-line skeleton-line-lg"></div>
+        <div class="skeleton-line skeleton-line-md"></div>
+        <div class="skeleton-line skeleton-line-sm"></div>
+      </div>
     </div>
 
-    <div v-loading="loading">
-      <el-empty
-        v-if="!loading && projects.length === 0"
-        description="暂无项目，点击右上角创建"
-      />
+    <!-- 空状态 -->
+    <div v-else-if="projects.length === 0" class="empty-state">
+      <el-icon :size="64" class="empty-icon"><FolderOpened /></el-icon>
+      <h3 class="empty-title">暂无项目</h3>
+      <p class="empty-desc">点击右上角"创建项目"开始使用 AI 生成测试用例</p>
+      <el-button type="primary" :icon="Plus" @click="goCreate">立即创建</el-button>
+    </div>
 
-      <el-row v-else :gutter="20">
-        <el-col
-          v-for="project in projects"
-          :key="project.id"
-          :xs="24"
-          :sm="12"
-          :md="8"
-        >
-          <el-card class="project-card" shadow="never" @click="goDetail(project.id)">
-            <div class="project-accent" :class="`accent-${project.status}`"></div>
-            <div class="card-header">
-              <div class="project-avatar" :class="`avatar-${project.status}`">
-                <el-icon :size="20"><Folder /></el-icon>
-              </div>
-              <div class="project-info">
-                <div class="project-name-row">
-                  <span class="project-name">{{ project.name }}</span>
-                  <el-tag
-                    :type="statusTagType(project.status)"
-                    size="small"
-                    effect="light"
-                    round
-                  >
-                    {{ statusText(project.status) }}
-                  </el-tag>
-                </div>
-                <div class="project-path">
-                  <el-icon :size="13"><FolderOpened /></el-icon>
-                  <span class="path-text">{{ project.sourcePath }}</span>
-                </div>
-              </div>
+    <!-- 项目卡片网格 -->
+    <div v-else class="project-grid">
+      <article
+        v-for="project in projects"
+        :key="project.id"
+        class="project-card"
+        :class="`is-${project.status}`"
+        @click="goDetail(project.id)"
+      >
+        <!-- 顶部色条 -->
+        <div class="card-accent"></div>
+
+        <!-- 卡片头部 -->
+        <div class="card-head">
+          <div class="card-avatar">
+            <el-icon :size="22"><Folder /></el-icon>
+          </div>
+          <div class="card-info">
+            <h3 class="card-name" :title="project.name">{{ project.name }}</h3>
+            <div class="card-meta">
+              <el-icon :size="12"><Clock /></el-icon>
+              <span>{{ formatDate(project.createdAt) }}</span>
             </div>
-            <div class="card-footer">
-              <span class="project-time">
-                <el-icon :size="13"><Clock /></el-icon>
-                {{ formatDate(project.createdAt) }}
-              </span>
-              <span @click.stop>
-                <el-popconfirm
-                  title="确定删除该项目吗？"
-                  @confirm="handleDelete(project.id)"
-                >
-                  <template #reference>
-                    <el-button type="danger" size="small" text :icon="Delete">删除</el-button>
-                  </template>
-                </el-popconfirm>
-              </span>
-            </div>
-          </el-card>
-        </el-col>
-      </el-row>
+          </div>
+          <span class="status-pill" :class="`status-${project.status}`">
+            {{ statusText(project.status) }}
+          </span>
+        </div>
+
+        <!-- 卡片内容 -->
+        <div class="card-body">
+          <div class="path-line" :title="project.sourcePath">
+            <el-icon :size="13"><FolderOpened /></el-icon>
+            <span class="path-text">{{ project.sourcePath || '纯 PRD 模式 · 无代码路径' }}</span>
+          </div>
+        </div>
+
+        <!-- 卡片底部操作 -->
+        <div class="card-foot" @click.stop>
+          <el-button text :icon="Document" @click="goDetail(project.id)">查看详情</el-button>
+          <el-popconfirm
+            title="确定删除该项目吗？删除后不可恢复"
+            confirm-button-text="删除"
+            cancel-button-text="取消"
+            confirm-button-type="danger"
+            @confirm="handleDelete(project.id)"
+          >
+            <template #reference>
+              <el-button text type="danger" :icon="Delete">删除</el-button>
+            </template>
+          </el-popconfirm>
+        </div>
+      </article>
     </div>
   </div>
 </template>
@@ -70,33 +89,20 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Plus, Folder, FolderOpened, Clock, Delete } from '@element-plus/icons-vue'
+import { Plus, Folder, FolderOpened, Clock, Delete, Document } from '@element-plus/icons-vue'
 import { listProjects, deleteProject } from '@/api/project'
 
 const router = useRouter()
 const projects = ref([])
 const loading = ref(false)
 
-const statusTypeMap = {
-  created: 'info',
-  analyzing: 'warning',
-  analyzed: 'success',
-  generating: 'warning',
-  completed: 'success',
-  failed: 'danger'
-}
-
 const statusTextMap = {
   created: '已创建',
-  analyzing: '分析中...',
+  analyzing: '分析中',
   analyzed: '已分析',
-  generating: '生成中...',
+  generating: '生成中',
   completed: '已完成',
   failed: '失败'
-}
-
-function statusTagType(status) {
-  return statusTypeMap[status] || 'info'
 }
 
 function statusText(status) {
@@ -139,106 +145,221 @@ onMounted(loadProjects)
 
 <style scoped lang="scss">
 .project-list {
-  padding: 4px 0;
+  padding: var(--space-lg) var(--space-xl);
+}
+
+/* ===== 骨架屏 ===== */
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-lg);
+}
+
+.skeleton-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  box-shadow: var(--shadow-xs);
+
+  .skeleton-line {
+    height: 14px;
+    background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 37%, #f1f5f9 63%);
+    background-size: 400% 100%;
+    animation: shimmer 1.4s ease infinite;
+    border-radius: var(--radius-sm);
+    margin-bottom: 12px;
+
+    &.skeleton-line-lg { width: 60%; height: 20px; }
+    &.skeleton-line-md { width: 80%; }
+    &.skeleton-line-sm { width: 40%; }
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+/* ===== 空状态 ===== */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2xl) var(--space-lg);
+  text-align: center;
+
+  .empty-icon {
+    color: var(--text-muted);
+    margin-bottom: var(--space-md);
+  }
+
+  .empty-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: var(--space-xs);
+  }
+
+  .empty-desc {
+    color: var(--text-tertiary);
+    margin-bottom: var(--space-lg);
+  }
+}
+
+/* ===== 项目卡片网格 ===== */
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-lg);
 }
 
 .project-card {
-  margin-bottom: 20px;
+  position: relative;
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  animation: fadeInUp var(--transition-normal) backwards;
 
-  .project-accent {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-    border-radius: 12px 0 0 12px;
+  &:hover {
+    border-color: var(--brand-primary-lighter);
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-2px);
+
+    .card-accent {
+      opacity: 1;
+    }
   }
 
-  .accent-created { background: linear-gradient(180deg, #c0c8d9, #98a2b8); }
-  .accent-analyzing,
-  .accent-generating { background: linear-gradient(180deg, #f7b55b, #e6a23c); }
-  .accent-analyzed,
-  .accent-completed { background: linear-gradient(180deg, #7ed67e, #67c23a); }
-  .accent-failed { background: linear-gradient(180deg, #f78989, #f56c6c); }
+  .card-accent {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--brand-gradient);
+    opacity: 0.85;
+    transition: opacity var(--transition-fast);
+  }
+
+  /* 按状态着色顶部色条 */
+  &.is-created .card-accent { background: linear-gradient(90deg, #94a3b8, #64748b); }
+  &.is-analyzing .card-accent,
+  &.is-generating .card-accent { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
+  &.is-analyzed .card-accent,
+  &.is-completed .card-accent { background: linear-gradient(90deg, #34d399, #10b981); }
+  &.is-failed .card-accent { background: linear-gradient(90deg, #f87171, #ef4444); }
 }
 
-.card-header {
+.card-head {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 12px;
-
-  .project-avatar {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 42px;
-    height: 42px;
-    border-radius: 11px;
-    color: #fff;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
-  }
-
-  .avatar-created { background: linear-gradient(135deg, #aeb6c8, #7c8698); }
-  .avatar-analyzing,
-  .avatar-generating { background: linear-gradient(135deg, #ffb85c, #e6a23c); }
-  .avatar-analyzed,
-  .avatar-completed { background: linear-gradient(135deg, #7ed67e, #58b24c); }
-  .avatar-failed { background: linear-gradient(135deg, #f78989, #e84b4b); }
+  gap: var(--space-md);
 }
 
-.project-info {
+.card-avatar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: var(--el-color-primary-light-9);
+  color: var(--brand-primary);
+  transition: all var(--transition-normal);
+
+  .project-card:hover & {
+    background: var(--brand-gradient);
+    color: #fff;
+    transform: scale(1.05);
+  }
+}
+
+.card-info {
   flex: 1;
   min-width: 0;
 }
 
-.project-name-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-
-  .project-name {
-    font-weight: 700;
-    font-size: 16px;
-    color: var(--text-main);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
+.card-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 4px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.project-path {
+.card-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.status-pill {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+
+  &.status-created { color: #64748b; background: #f1f5f9; }
+  &.status-analyzing, &.status-generating { color: #f59e0b; background: #fef3c7; }
+  &.status-analyzed, &.status-completed { color: #10b981; background: #d1fae5; }
+  &.status-failed { color: #ef4444; background: #fee2e2; }
+}
+
+.card-body {
+  flex: 1;
+}
+
+.path-line {
   display: flex;
   align-items: center;
-  gap: 5px;
-  color: var(--text-secondary);
+  gap: 6px;
   font-size: 12px;
-  min-height: 20px;
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  background: var(--bg-base);
+  border-radius: var(--radius-md);
 
   .path-text {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    word-break: break-all;
+    flex: 1;
   }
 }
 
-.card-footer {
+.card-foot {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding-top: 10px;
-  border-top: 1px dashed var(--el-border-color-lighter);
+  padding-top: var(--space-md);
+  border-top: 1px dashed var(--card-border-light);
+}
 
-  .project-time {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    color: var(--text-secondary);
-    font-size: 12px;
+/* ===== 响应式 ===== */
+@media (max-width: 768px) {
+  .project-list {
+    padding: var(--space-md);
+  }
+
+  .project-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-md);
   }
 }
 </style>

@@ -1,33 +1,61 @@
 <template>
-  <el-card class="coverage-matrix">
-    <template #header>
-      <span>覆盖率矩阵</span>
-      <el-tag v-if="matrix" type="info" size="small" style="margin-left: 8px">
-        {{ matrix.summary.coveredTransitions }} / {{ matrix.summary.totalTransitions }}
-        ({{ Math.round(matrix.summary.rate * 100) }}%)
-      </el-tag>
-    </template>
+  <section class="coverage-matrix">
+    <div class="matrix-head">
+      <div class="matrix-head-text">
+        <h2 class="matrix-title">覆盖率矩阵</h2>
+        <p class="matrix-desc">展示状态机转换路径的测试覆盖情况</p>
+      </div>
+      <div v-if="matrix" class="matrix-summary">
+        <span class="summary-text">
+          {{ matrix.summary.coveredTransitions }} / {{ matrix.summary.totalTransitions }}
+        </span>
+        <el-progress
+          :percentage="Math.round(matrix.summary.rate * 100)"
+          :stroke-width="8"
+          :color="rateColor"
+          class="summary-progress"
+        />
+      </div>
+    </div>
+
+    <el-empty v-if="allTransitions.length === 0" description="暂无状态机数据" />
 
     <el-table
-      v-if="allTransitions.length > 0"
+      v-else
       :data="allTransitions"
-      border
+      stripe
       size="small"
       :row-class-name="rowClassName"
-      style="width: 100%"
     >
       <el-table-column prop="smName" label="状态机" width="140" />
-      <el-table-column prop="from" label="From" width="120" />
-      <el-table-column prop="to" label="To" width="120" />
-      <el-table-column prop="trigger" label="Trigger" width="120" />
-      <el-table-column label="覆盖" width="100" align="center">
+      <el-table-column prop="from" label="From" width="120">
         <template #default="{ row }">
-          <el-tag :type="row.covered ? 'success' : 'danger'" size="small">
-            {{ row.covered ? '✓ 已覆盖' : '✗ 未覆盖' }}
-          </el-tag>
+          <span class="state-name">{{ row.from }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="关联用例" width="100" align="center">
+      <el-table-column label="" width="40" align="center">
+        <template #default>
+          <el-icon class="arrow-icon"><Right /></el-icon>
+        </template>
+      </el-table-column>
+      <el-table-column prop="to" label="To" width="120">
+        <template #default="{ row }">
+          <span class="state-name">{{ row.to }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="trigger" label="Trigger" min-width="140" show-overflow-tooltip />
+      <el-table-column label="覆盖" width="110" align="center">
+        <template #default="{ row }">
+          <span
+            class="coverage-pill"
+            :class="row.covered ? 'is-covered' : 'is-uncovered'"
+          >
+            <i class="pill-dot"></i>
+            {{ row.covered ? '已覆盖' : '未覆盖' }}
+          </span>
+        </template>
+      </el-table-column>
+      <el-table-column label="关联用例" width="110" align="center">
         <template #default="{ row }">
           <el-button
             v-if="row.testCaseIds.length > 0"
@@ -38,16 +66,21 @@
           >
             {{ row.testCaseIds.length }} 条
           </el-button>
-          <span v-else>—</span>
+          <span v-else class="text-muted">—</span>
         </template>
       </el-table-column>
     </el-table>
-    <el-empty v-else description="暂无状态机数据" />
-  </el-card>
+  </section>
 </template>
 
 <script setup>
+/**
+ * 覆盖率矩阵组件
+ * 展示所有状态机的转换路径覆盖情况，
+ * 支持点击"关联用例"按 ID 集合筛选用例。
+ */
 import { computed } from 'vue'
+import { Right } from '@element-plus/icons-vue'
 
 const props = defineProps({
   matrix: { type: Object, default: null }
@@ -55,6 +88,7 @@ const props = defineProps({
 
 defineEmits(['filter-by-ids'])
 
+// 展平所有状态机的转换为一维数组
 const allTransitions = computed(() => {
   if (!props.matrix || !props.matrix.stateMachines) return []
   const result = []
@@ -70,16 +104,127 @@ const allTransitions = computed(() => {
   return result
 })
 
+// 行样式：未覆盖行高亮
 const rowClassName = ({ row }) => {
   return row.covered ? '' : 'row-uncovered'
 }
+
+// 进度条颜色根据覆盖率
+const rateColor = computed(() => {
+  if (!props.matrix) return '#6366f1'
+  const r = props.matrix.summary.rate
+  if (r >= 0.8) return '#10b981'
+  if (r >= 0.5) return '#f59e0b'
+  return '#ef4444'
+})
 </script>
 
 <style scoped>
 .coverage-matrix {
-  margin-top: 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+  margin-top: var(--space-md);
 }
+
+.matrix-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.matrix-head-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.matrix-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.matrix-desc {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.matrix-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 220px;
+}
+
+.summary-text {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--brand-primary);
+  white-space: nowrap;
+}
+
+.summary-progress {
+  flex: 1;
+  min-width: 120px;
+}
+
+.state-name {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.arrow-icon {
+  color: var(--brand-primary);
+  font-weight: bold;
+}
+
+.coverage-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 600;
+
+  .pill-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  &.is-covered {
+    color: var(--color-success);
+    background: var(--color-success-bg);
+  }
+
+  &.is-uncovered {
+    color: var(--color-danger);
+    background: var(--color-danger-bg);
+  }
+}
+
+.text-muted {
+  color: var(--text-tertiary);
+}
+
 :deep(.row-uncovered) {
-  background-color: #fef0f0;
+  background-color: var(--color-danger-bg) !important;
+}
+
+/* 表格圆角 */
+:deep(.el-table) {
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 </style>

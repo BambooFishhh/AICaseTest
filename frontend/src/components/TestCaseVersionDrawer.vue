@@ -6,22 +6,47 @@
     size="50%"
     @update:model-value="$emit('update:visible', $event)"
   >
-    <div v-loading="loading">
-      <el-empty v-if="!versions.length && !loading" description="暂无历史版本" />
-      <div v-for="v in versions" :key="v.id" class="version-item">
-        <div class="version-head">
-          <el-tag :type="actionTagType(v.action)" size="small">
-            v{{ v.versionNo }} · {{ actionText(v.action) }}
-          </el-tag>
-          <span class="version-time">{{ formatTime(v.createdAt) }}</span>
-        </div>
-        <div class="version-actions">
-          <el-button link @click="viewVersion(v)">查看 / 对比</el-button>
-          <el-button link type="warning" @click="confirmRollback(v)">回滚到此版本</el-button>
-        </div>
+    <div v-loading="loading" class="version-drawer">
+      <el-empty
+        v-if="!versions.length && !loading"
+        description="暂无历史版本"
+        :image-size="120"
+      />
+
+      <div v-else class="version-list">
+        <article
+          v-for="v in versions"
+          :key="v.id"
+          class="version-card"
+        >
+          <div class="version-head">
+            <div class="version-meta">
+              <el-tag :type="actionTagType(v.action)" size="small" effect="light">
+                v{{ v.versionNo }}
+              </el-tag>
+              <span class="version-action">{{ actionText(v.action) }}</span>
+            </div>
+            <span class="version-time">
+              <el-icon :size="12"><Clock /></el-icon>
+              {{ formatTime(v.createdAt) }}
+            </span>
+          </div>
+          <div class="version-actions">
+            <el-button text :icon="View" @click="viewVersion(v)">查看 / 对比</el-button>
+            <el-button text type="warning" :icon="RefreshLeft" @click="confirmRollback(v)">
+              回滚到此版本
+            </el-button>
+          </div>
+        </article>
       </div>
 
-      <el-dialog v-model="detailVisible" title="版本详情与对比" width="720px" append-to-body>
+      <!-- 版本详情与对比对话框 -->
+      <el-dialog
+        v-model="detailVisible"
+        title="版本详情与对比"
+        width="720px"
+        append-to-body
+      >
         <div v-if="detail">
           <el-alert
             v-if="changedFields.length"
@@ -56,8 +81,15 @@
 </template>
 
 <script setup>
+/**
+ * 测试用例历史版本抽屉
+ * 展示用例的所有历史版本，支持：
+ * - 查看版本详情与字段级 diff
+ * - 回滚到指定版本（当前内容会先备份）
+ */
 import { ref, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Clock, View, RefreshLeft } from '@element-plus/icons-vue'
 import {
   listTestCaseVersions,
   getTestCaseVersion,
@@ -162,27 +194,68 @@ function formatTime(t) {
 </script>
 
 <style scoped>
-.version-item {
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  padding: 12px;
-  margin-bottom: 10px;
+.version-drawer {
+  min-height: 200px;
 }
+
+.version-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.version-card {
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  overflow: hidden;
+  transition: all var(--transition-normal);
+
+  &:hover {
+    border-color: var(--brand-primary-lighter);
+    box-shadow: var(--shadow-sm);
+  }
+}
+
 .version-head {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--card-border-light);
+  gap: 8px;
+  flex-wrap: wrap;
 }
+
+.version-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.version-action {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
 .version-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
 }
+
 .version-actions {
   display: flex;
-  gap: 12px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 12px;
 }
+
 .diff-alert {
-  margin-bottom: 12px;
+  margin-bottom: var(--space-md);
 }
 </style>

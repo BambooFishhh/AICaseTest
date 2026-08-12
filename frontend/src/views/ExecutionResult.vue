@@ -1,179 +1,237 @@
 <template>
-  <div class="execution-result" v-loading="loading">
-    <div class="page-header">
-      <h2>执行结果</h2>
-      <el-button :icon="ArrowLeft" @click="goBack">返回</el-button>
-    </div>
-
-    <!-- 执行概览 -->
-    <el-card v-if="execution" class="overview-card">
-      <template #header>
-        <div class="card-header">
-          <span>执行概览</span>
-          <el-button type="primary" :icon="Download" @click="downloadReport">
-            下载报告
-          </el-button>
+  <div class="execution-result page-container" v-loading="loading">
+    <!-- 页头 -->
+    <header class="page-header">
+      <div class="page-header-main">
+        <el-button text :icon="ArrowLeft" @click="goBack">返回</el-button>
+        <div class="title-block">
+          <h1 class="page-title">执行结果</h1>
+          <p class="page-subtitle">查看用例执行的步骤、状态与录屏回放</p>
         </div>
-      </template>
-      <el-descriptions :column="2" border>
-        <el-descriptions-item label="用例标题">
-          {{ execution.testCaseTitle || '-' }}
-        </el-descriptions-item>
-        <el-descriptions-item label="状态">
-          <el-tag :type="statusTagType(execution.status)" size="small">
-            {{ statusLabel(execution.status) }}
+      </div>
+      <div v-if="execution" class="page-actions">
+        <el-button type="primary" :icon="Download" @click="downloadReport">下载报告</el-button>
+      </div>
+    </header>
+
+    <!-- 空状态 -->
+    <section v-if="!loading && !execution" class="empty-section">
+      <el-empty description="未找到执行记录" :image-size="120" />
+    </section>
+
+    <template v-if="execution">
+      <!-- 执行概览 -->
+      <section class="overview-section">
+        <div class="overview-head">
+          <div class="overview-head-text">
+            <h2 class="section-title">执行概览</h2>
+            <p class="section-desc">用例执行的整体情况</p>
+          </div>
+          <div class="overview-status">
+            <el-icon
+              v-if="execution.status === 'running'"
+              class="is-loading status-running-icon"
+              :size="18"
+            ><Loading /></el-icon>
+            <span
+              class="status-pill"
+              :class="`status-${execution.status}`"
+            >
+              <i class="status-dot"></i>{{ statusLabel(execution.status) }}
+            </span>
+          </div>
+        </div>
+
+        <div class="overview-grid">
+          <div class="overview-item">
+            <div class="overview-label">用例标题</div>
+            <div class="overview-value">{{ execution.testCaseTitle || '-' }}</div>
+          </div>
+          <div class="overview-item">
+            <div class="overview-label">耗时</div>
+            <div class="overview-value mono">{{ duration }}</div>
+          </div>
+          <div class="overview-item overview-item-full">
+            <div class="overview-label">摘要</div>
+            <div class="overview-value">{{ execution.summary || '-' }}</div>
+          </div>
+        </div>
+
+        <!-- 错误提示 -->
+        <Transition name="slide-down">
+          <el-alert
+            v-if="execution.errorMessage"
+            :title="execution.errorMessage"
+            type="error"
+            :closable="false"
+            show-icon
+            class="error-alert"
+          />
+        </Transition>
+
+        <!-- 执行中提示 -->
+        <Transition name="slide-down">
+          <div v-if="execution.status === 'running'" class="running-banner">
+            <el-icon class="is-loading" :size="16"><Loading /></el-icon>
+            <span>执行进行中，结果每 3 秒自动刷新...</span>
+          </div>
+        </Transition>
+      </section>
+
+      <!-- 步骤列表 -->
+      <section v-if="steps.length > 0" class="steps-section">
+        <div class="section-head">
+          <div class="section-head-text">
+            <h2 class="section-title">执行步骤</h2>
+            <p class="section-desc">共 {{ steps.length }} 个步骤</p>
+          </div>
+        </div>
+
+        <div class="step-list">
+          <article
+            v-for="step in steps"
+            :key="step.id || step.stepIndex"
+            class="step-card"
+            :class="stepResultClass(step.result)"
+          >
+            <div class="step-card-head">
+              <div class="step-index">{{ step.stepIndex }}</div>
+              <span class="step-action">{{ step.action || '-' }}</span>
+              <div class="step-tags">
+                <el-tag
+                  v-if="step.strategy"
+                  size="small"
+                  :type="strategyTagType(step.strategy)"
+                  effect="light"
+                >{{ strategyLabel(step.strategy) }}</el-tag>
+                <el-tag
+                  v-if="step.result"
+                  size="small"
+                  :type="resultTagType(step.result)"
+                  effect="dark"
+                >{{ resultLabel(step.result) }}</el-tag>
+              </div>
+            </div>
+
+            <div class="step-card-body">
+              <div v-if="step.target" class="step-row">
+                <span class="step-label">目标</span>
+                <code class="step-code">{{ step.target }}</code>
+              </div>
+              <div v-if="step.coordinates" class="step-row">
+                <span class="step-label">坐标</span>
+                <code class="step-code">{{ step.coordinates }}</code>
+              </div>
+              <div v-if="step.error" class="step-row step-row-error">
+                <span class="step-label">错误信息</span>
+                <span class="step-error-text">{{ step.error }}</span>
+              </div>
+
+              <div
+                v-if="step.screenshotBefore || step.screenshotAfter"
+                class="screenshots"
+              >
+                <div v-if="step.screenshotBefore" class="screenshot-item">
+                  <div class="screenshot-label">
+                    <el-icon :size="12"><Camera /></el-icon>执行前截图
+                  </div>
+                  <div class="screenshot-path">{{ step.screenshotBefore }}</div>
+                </div>
+                <div v-if="step.screenshotAfter" class="screenshot-item">
+                  <div class="screenshot-label">
+                    <el-icon :size="12"><Camera /></el-icon>执行后截图
+                  </div>
+                  <div class="screenshot-path">{{ step.screenshotAfter }}</div>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section v-else-if="!loading" class="empty-section">
+        <el-empty description="暂无步骤数据" :image-size="100" />
+      </section>
+
+      <!-- 录屏回放 -->
+      <section v-if="hasRecording" class="recording-section">
+        <div class="section-head">
+          <div class="section-head-text">
+            <h2 class="section-title">录屏回放</h2>
+            <p class="section-desc">
+              {{ recordingVideoUrl ? 'WebM 视频格式' : '图片帧序列格式' }}
+            </p>
+          </div>
+          <el-tag
+            :type="recordingVideoUrl ? 'success' : 'info'"
+            effect="light"
+          >
+            {{ recordingVideoUrl ? '视频' : '图片帧' }}
           </el-tag>
-          <span v-if="execution.status === 'running'" class="running-hint">
-            <el-icon class="is-loading"><Loading /></el-icon>
-            执行中，自动刷新...
-          </span>
-        </el-descriptions-item>
-        <el-descriptions-item label="耗时">
-          {{ duration }}
-        </el-descriptions-item>
-        <el-descriptions-item label="摘要">
-          {{ execution.summary || '-' }}
-        </el-descriptions-item>
-      </el-descriptions>
-      <el-alert
-        v-if="execution.errorMessage"
-        :title="execution.errorMessage"
-        type="error"
-        :closable="false"
-        show-icon
-        class="error-alert"
-      />
-    </el-card>
+        </div>
 
-    <el-empty
-      v-else-if="!loading"
-      description="未找到执行记录"
-      :image-size="80"
-    />
-
-    <!-- 步骤列表 -->
-    <el-card v-if="execution && steps.length > 0" class="steps-card">
-      <template #header>执行步骤（{{ steps.length }}）</template>
-      <div class="step-list">
-        <div v-for="step in steps" :key="step.id || step.stepIndex" class="step-item">
-          <div class="step-header">
-            <el-tag size="small" type="info">步骤 {{ step.stepIndex }}</el-tag>
-            <span class="step-action">{{ step.action || '-' }}</span>
-            <el-tag
-              v-if="step.strategy"
-              size="small"
-              :type="strategyTagType(step.strategy)"
-            >
-              {{ strategyLabel(step.strategy) }}
-            </el-tag>
-            <el-tag
-              v-if="step.result"
-              size="small"
-              :type="resultTagType(step.result)"
-            >
-              {{ resultLabel(step.result) }}
-            </el-tag>
-          </div>
-          <div class="step-body">
-            <div v-if="step.target" class="step-row">
-              <span class="step-label">目标:</span>
-              <code>{{ step.target }}</code>
-            </div>
-            <div v-if="step.coordinates" class="step-row">
-              <span class="step-label">坐标:</span>
-              <code>{{ step.coordinates }}</code>
-            </div>
-            <div v-if="step.error" class="step-row error-row">
-              <span class="step-label">错误信息:</span>
-              <span class="error-text">{{ step.error }}</span>
-            </div>
-            <div
-              v-if="step.screenshotBefore || step.screenshotAfter"
-              class="screenshots"
-            >
-              <div v-if="step.screenshotBefore" class="screenshot-item">
-                <div class="screenshot-label">执行前截图</div>
-                <div class="screenshot-path">{{ step.screenshotBefore }}</div>
-              </div>
-              <div v-if="step.screenshotAfter" class="screenshot-item">
-                <div class="screenshot-label">执行后截图</div>
-                <div class="screenshot-path">{{ step.screenshotAfter }}</div>
-              </div>
-            </div>
+        <!-- 视频模式 -->
+        <div v-if="recordingVideoUrl" class="video-player">
+          <video
+            :src="recordingVideoUrl"
+            controls
+            autoplay
+            class="video-element"
+          />
+          <div class="video-controls">
+            <el-button :icon="Download" @click="downloadVideo">下载视频</el-button>
           </div>
         </div>
-      </div>
-    </el-card>
 
-    <el-card v-if="execution && steps.length === 0 && !loading" class="steps-card">
-      <el-empty description="暂无步骤数据" :image-size="60" />
-    </el-card>
-
-    <!-- 录屏播放器 -->
-    <el-card
-      v-if="hasRecording"
-      class="recording-card"
-    >
-      <template #header>
-        录屏回放
-        <el-tag v-if="recordingVideoUrl" size="small" type="success" class="recording-tag">WebM 视频</el-tag>
-        <el-tag v-else size="small" type="info" class="recording-tag">图片帧</el-tag>
-      </template>
-
-      <!-- 视频模式（优先，v2.9） -->
-      <div v-if="recordingVideoUrl" class="video-player">
-        <video
-          :src="recordingVideoUrl"
-          controls
-          autoplay
-          class="video-element"
-        />
-        <div class="video-controls">
-          <el-button :icon="Download" @click="downloadVideo">下载视频</el-button>
+        <!-- 图片帧轮播 -->
+        <div v-else class="frame-player">
+          <div class="frame-display">
+            <img
+              v-if="currentFrameUrl"
+              :src="currentFrameUrl"
+              :alt="`帧 ${currentFrameIndex + 1}`"
+              class="frame-image"
+            />
+            <div v-else class="frame-empty">
+              <el-icon :size="32"><Picture /></el-icon>
+            </div>
+          </div>
+          <div class="player-controls">
+            <el-button
+              :icon="isPlaying ? VideoPause : VideoPlay"
+              circle
+              type="primary"
+              @click="togglePlay"
+            />
+            <el-slider
+              v-model="currentFrameIndex"
+              :max="Math.max(0, recordingFrames.length - 1)"
+              :show-tooltip="false"
+              class="frame-slider"
+            />
+            <span class="frame-counter mono">
+              {{ currentFrameIndex + 1 }} / {{ recordingFrames.length }}
+            </span>
+          </div>
         </div>
-      </div>
-
-      <!-- 图片轮播模式（回退，兼容 v2.4~v2.5 历史记录） -->
-      <div v-else class="recording-player">
-        <div class="frame-display">
-          <img
-            v-if="currentFrameUrl"
-            :src="currentFrameUrl"
-            :alt="`帧 ${currentFrameIndex + 1}`"
-            class="frame-image"
-          />
-        </div>
-        <div class="player-controls">
-          <el-button
-            :icon="isPlaying ? VideoPause : VideoPlay"
-            circle
-            type="primary"
-            @click="togglePlay"
-          />
-          <el-slider
-            v-model="currentFrameIndex"
-            :max="Math.max(0, recordingFrames.length - 1)"
-            :show-tooltip="false"
-            class="frame-slider"
-          />
-          <span class="frame-counter">
-            {{ currentFrameIndex + 1 }} / {{ recordingFrames.length }}
-          </span>
-        </div>
-      </div>
-    </el-card>
+      </section>
+    </template>
   </div>
 </template>
 
 <script setup>
+/**
+ * 执行结果页
+ * 展示单次用例执行的：
+ * - 概览（标题、状态、耗时、摘要、错误信息）
+ * - 步骤列表（动作、目标、坐标、策略、结果、截图）
+ * - 录屏回放（优先 WebM 视频，回退图片帧轮播）
+ * 执行中状态会每 3 秒自动轮询刷新。
+ */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowLeft,
-  Loading,
-  Download,
-  VideoPlay,
-  VideoPause
+  ArrowLeft, Loading, Download, VideoPlay, VideoPause, Camera, Picture
 } from '@element-plus/icons-vue'
 import { getExecution, getExecutionSteps, getExecutionVideoUrl } from '@/api/execution'
 
@@ -189,7 +247,7 @@ const execution = ref(null)
 const steps = ref([])
 let pollTimer = null
 
-// 录屏播放相关状态
+// 录屏播放状态
 const currentFrameIndex = ref(0)
 const isPlaying = ref(false)
 let playTimer = null
@@ -218,7 +276,7 @@ const currentFrameUrl = computed(() => {
   return `${RECORDING_BASE_URL}/${normalized}`
 })
 
-// v2.9: 视频录屏 URL（优先使用 WebM 视频，无视频时为空串回退到图片轮播）
+// v2.9: 视频录屏 URL（优先 WebM 视频，无视频时回退到图片帧）
 const recordingVideoUrl = computed(() => {
   return execution.value?.recordingVideoPath
     ? getExecutionVideoUrl(executionId)
@@ -300,6 +358,12 @@ const statusLabel = (status) => {
     pending: '等待中'
   }
   return map[status] || status || '-'
+}
+
+// 步骤卡片样式（根据结果）
+function stepResultClass(result) {
+  if (!result) return ''
+  return `step-result-${result}`
 }
 
 // 策略标签
@@ -419,170 +483,393 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.execution-result {
-  padding: 20px;
-}
-.page-header {
+/* ===== 页头 ===== */
+.page-header-main {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  gap: var(--space-md);
 }
-.page-header h2 {
-  margin: 0;
-}
-.overview-card {
-  margin-bottom: 20px;
-}
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.error-alert {
-  margin-top: 12px;
-}
-.running-hint {
-  margin-left: 8px;
-  color: #e6a23c;
-  font-size: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.running-hint .el-icon {
-  vertical-align: middle;
-}
-.steps-card {
-  margin-bottom: 20px;
-}
-.step-list {
+
+.title-block {
   display: flex;
   flex-direction: column;
-  gap: 12px;
 }
-.step-item {
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  padding: 12px 14px;
-  background: #fafafa;
+
+/* ===== 通用区块头 ===== */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
 }
-.step-header {
+
+.section-head-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.section-desc {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+/* ===== 概览 ===== */
+.overview-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+  margin-bottom: var(--space-lg);
+}
+
+.overview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.overview-head-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.overview-status {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
-  flex-wrap: wrap;
 }
-.step-action {
+
+.status-running-icon {
+  color: var(--color-warning);
+}
+
+/* 状态胶囊 */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 12px;
   font-weight: 600;
-  color: #303133;
-  flex: 1;
-  min-width: 120px;
+
+  &::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  &.status-passed { color: var(--color-success); background: var(--color-success-bg); }
+  &.status-failed { color: var(--color-danger); background: var(--color-danger-bg); }
+  &.status-running { color: var(--color-warning); background: var(--color-warning-bg); }
+  &.status-pending { color: var(--text-secondary); background: #f1f5f9; }
 }
-.step-body {
-  padding-left: 4px;
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-md);
 }
-.step-row {
-  margin-bottom: 6px;
-  font-size: 13px;
-  line-height: 1.6;
+
+.overview-item {
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid var(--card-border-light);
+  border-radius: var(--radius-md);
+
+  &.overview-item-full {
+    grid-column: 1 / -1;
+  }
 }
-.step-row .step-label {
-  color: #909399;
-  margin-right: 6px;
-}
-.step-row code {
-  background: #f0f0f0;
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-family: 'Consolas', 'Monaco', monospace;
+
+.overview-label {
   font-size: 12px;
-  color: #e63946;
-}
-.error-row .error-text {
-  color: #f56c6c;
-}
-.screenshots {
-  display: flex;
-  gap: 16px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-}
-.screenshot-item {
-  flex: 1;
-  min-width: 200px;
-}
-.screenshot-label {
-  font-size: 12px;
-  color: #909399;
+  color: var(--text-tertiary);
   margin-bottom: 4px;
 }
+
+.overview-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
+
+  &.mono {
+    font-family: 'Consolas', 'Monaco', monospace;
+  }
+}
+
+.error-alert {
+  margin-top: var(--space-md);
+}
+
+.running-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--space-md);
+  padding: 10px 14px;
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* ===== 步骤列表 ===== */
+.steps-section {
+  margin-bottom: var(--space-lg);
+}
+
+.step-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.step-card {
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  overflow: hidden;
+  box-shadow: var(--shadow-xs);
+  transition: all var(--transition-normal);
+
+  &:hover {
+    box-shadow: var(--shadow-sm);
+    border-color: var(--brand-primary-lighter);
+  }
+
+  &.step-result-passed {
+    border-left: 3px solid var(--color-success);
+  }
+
+  &.step-result-failed {
+    border-left: 3px solid var(--color-danger);
+  }
+
+  &.step-result-skipped {
+    border-left: 3px solid var(--text-tertiary);
+  }
+}
+
+.step-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--card-border-light);
+}
+
+.step-index {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: var(--brand-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.step-action {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.step-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.step-card-body {
+  padding: 12px 16px;
+}
+
+.step-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.step-label {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.step-code {
+  flex: 1;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  color: var(--brand-primary);
+  background: var(--el-color-primary-light-9);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  word-break: break-all;
+}
+
+.step-row-error .step-error-text {
+  flex: 1;
+  color: var(--color-danger);
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.screenshots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--card-border-light);
+}
+
+.screenshot-item {
+  min-width: 0;
+}
+
+.screenshot-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+
 .screenshot-path {
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 12px;
-  color: #606266;
-  background: #f0f0f0;
-  padding: 4px 8px;
-  border-radius: 3px;
+  color: var(--text-secondary);
+  background: #f8fafc;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--card-border-light);
   word-break: break-all;
 }
-.recording-card {
-  margin-bottom: 20px;
+
+/* ===== 录屏 ===== */
+.recording-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+  margin-bottom: var(--space-lg);
 }
-.recording-tag {
-  margin-left: 8px;
-}
+
 .video-player {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-md);
 }
+
 .video-element {
   width: 100%;
   max-height: 480px;
   background: #000;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
 }
+
 .video-controls {
   display: flex;
   justify-content: flex-end;
 }
-.recording-player {
+
+.frame-player {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-md);
 }
+
 .frame-display {
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
   background: #000;
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 200px;
+  min-height: 240px;
   overflow: hidden;
 }
+
 .frame-image {
   max-width: 100%;
+  max-height: 480px;
   height: auto;
   display: block;
 }
+
+.frame-empty {
+  color: var(--text-muted);
+}
+
 .player-controls {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-md);
 }
+
 .frame-slider {
   flex: 1;
 }
+
 .frame-counter {
-  font-family: 'Consolas', 'Monaco', monospace;
   font-size: 13px;
-  color: #606266;
+  color: var(--text-secondary);
   white-space: nowrap;
   min-width: 80px;
   text-align: right;
+}
+
+.mono {
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+/* ===== 响应式 ===== */
+@media (max-width: 768px) {
+  .screenshots {
+    grid-template-columns: 1fr;
+  }
+
+  .step-card-head {
+    flex-wrap: wrap;
+  }
 }
 </style>

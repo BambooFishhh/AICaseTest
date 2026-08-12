@@ -1,76 +1,91 @@
 <template>
-  <el-card class="prd-panel" shadow="never">
-    <template #header>
-      <div class="prd-header">
-        <span class="prd-title">PRD 需求文档</span>
-        <el-tag v-if="sourceType" size="small" :type="sourceTagType">{{ sourceText }}</el-tag>
-        <span v-if="prdContent" class="prd-word-count">{{ prdContent.length }} 字</span>
+  <section class="prd-panel">
+    <div class="prd-head">
+      <div class="prd-head-text">
+        <h2 class="section-title">PRD 需求文档</h2>
+        <p class="section-desc">提供 PRD 作为用例生成的主上下文</p>
       </div>
-    </template>
+      <div class="prd-head-meta">
+        <el-tag v-if="sourceType" size="small" :type="sourceTagType" effect="light">
+          {{ sourceText }}
+        </el-tag>
+        <span v-if="prdContent" class="word-count">{{ prdContent.length }} 字</span>
+      </div>
+    </div>
 
     <!-- 来源切换 -->
-    <el-radio-group v-model="activeTab" size="small" class="prd-tabs">
-      <el-radio-button label="text">文本/Markdown</el-radio-button>
-      <el-radio-button label="md">md/txt 上传</el-radio-button>
-      <el-radio-button label="pdf">PDF 上传</el-radio-button>
-      <el-radio-button label="link">在线链接</el-radio-button>
+    <el-radio-group v-model="activeTab" size="default" class="prd-tabs">
+      <el-radio-button value="text">文本 / Markdown</el-radio-button>
+      <el-radio-button value="md">md / txt 上传</el-radio-button>
+      <el-radio-button value="pdf">PDF 上传</el-radio-button>
+      <el-radio-button value="link">在线链接</el-radio-button>
     </el-radio-group>
 
     <!-- 文本编辑 -->
-    <div v-show="activeTab === 'text'" class="prd-text-area">
+    <div v-show="activeTab === 'text'" class="prd-pane">
       <el-input
         v-model="textForm.content"
         type="textarea"
-        :rows="12"
+        :autosize="{ minRows: 10, maxRows: 20 }"
         placeholder="粘贴或编辑 PRD 内容（支持 Markdown）。生成用例时 PRD 作为主上下文，代码作为辅助上下文。"
       />
-      <div class="prd-actions">
-        <el-button type="primary" :loading="saving" @click="saveText">保存 PRD</el-button>
-        <el-button v-if="prdContent" @click="previewVisible = true">预览完整</el-button>
+      <div class="pane-actions">
+        <el-button type="primary" :loading="saving" :icon="Check" @click="saveText">保存 PRD</el-button>
+        <el-button v-if="prdContent" :icon="View" @click="previewVisible = true">预览完整</el-button>
       </div>
     </div>
 
     <!-- md/txt 上传 -->
-    <div v-show="activeTab === 'md'" class="prd-upload-area">
+    <div v-show="activeTab === 'md'" class="prd-pane">
       <el-upload
         drag
         accept=".md,.markdown,.txt"
         :auto-upload="true"
         :show-file-list="false"
         :http-request="handleMdUpload"
+        class="prd-uploader"
       >
-        <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-        <div class="el-upload__text">拖拽 .md/.txt 文件到此，或<em>点击上传</em></div>
+        <div class="uploader-icon">
+          <el-icon :size="32"><UploadFilled /></el-icon>
+        </div>
+        <div class="uploader-text">拖拽 .md / .txt 文件到此处，或<em>点击上传</em></div>
         <template #tip>
-          <div class="el-upload__tip">支持 Markdown 和纯文本文件，限 5MB 以内</div>
+          <div class="uploader-tip">支持 Markdown 和纯文本文件，限 5MB 以内</div>
         </template>
       </el-upload>
     </div>
 
     <!-- PDF 上传 -->
-    <div v-show="activeTab === 'pdf'" class="prd-upload-area">
+    <div v-show="activeTab === 'pdf'" class="prd-pane">
       <el-upload
         drag
         accept=".pdf"
         :auto-upload="true"
         :show-file-list="false"
         :http-request="handlePdfUpload"
+        class="prd-uploader"
       >
-        <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-        <div class="el-upload__text">拖拽 PDF 到此，或<em>点击上传</em></div>
+        <div class="uploader-icon">
+          <el-icon :size="32"><UploadFilled /></el-icon>
+        </div>
+        <div class="uploader-text">拖拽 PDF 到此处，或<em>点击上传</em></div>
         <template #tip>
-          <div class="el-upload__tip">仅支持文本型 PDF；扫描件需先用 OCR 转文本</div>
+          <div class="uploader-tip">仅支持文本型 PDF；扫描件需先用 OCR 转文本</div>
         </template>
       </el-upload>
     </div>
 
     <!-- 在线链接 -->
-    <div v-show="activeTab === 'link'" class="prd-link-area">
-      <el-input v-model="linkForm.url" placeholder="https://example.com/prd.md" clearable>
-        <template #prepend>URL</template>
+    <div v-show="activeTab === 'link'" class="prd-pane">
+      <el-input v-model="linkForm.url" placeholder="https://example.com/prd.md" clearable size="large">
+        <template #prepend>
+          <span class="url-prefix">URL</span>
+        </template>
       </el-input>
-      <div class="prd-actions">
-        <el-button type="primary" :loading="fetching" @click="fetchLink">抓取内容</el-button>
+      <div class="pane-actions">
+        <el-button type="primary" :loading="fetching" :icon="Download" @click="fetchLink">
+          抓取内容
+        </el-button>
       </div>
       <el-alert
         v-if="linkError"
@@ -82,25 +97,40 @@
     </div>
 
     <!-- 当前 PRD 概要 -->
-    <div v-if="prdContent" class="prd-summary">
-      <el-divider content-position="left">当前 PRD</el-divider>
-      <div class="prd-meta">
-        <span v-if="sourceRef">来源：{{ sourceRef }}</span>
+    <Transition name="slide-down">
+      <div v-if="prdContent" class="prd-summary">
+        <div class="summary-head">
+          <span class="summary-label">
+            <el-icon :size="14"><Document /></el-icon>当前 PRD
+          </span>
+          <span v-if="sourceRef" class="summary-ref">来源：{{ sourceRef }}</span>
+        </div>
+        <div class="summary-preview">{{ prdPreview }}</div>
       </div>
-      <div class="prd-preview-text">{{ prdPreview }}</div>
-    </div>
+    </Transition>
 
     <!-- 预览对话框 -->
     <el-dialog v-model="previewVisible" title="PRD 预览" width="760px">
       <pre class="prd-full-text">{{ prdContent }}</pre>
     </el-dialog>
-  </el-card>
+  </section>
 </template>
 
 <script setup>
+/**
+ * PRD 面板组件
+ * 支持四种来源输入 PRD：
+ * - 文本/Markdown：直接编辑
+ * - md/txt 上传：浏览器端读取后保存
+ * - PDF 上传：后端解析
+ * - 在线链接：后端抓取
+ * 显示当前 PRD 概要，支持预览完整内容。
+ */
 import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { UploadFilled } from '@element-plus/icons-vue'
+import {
+  UploadFilled, Check, View, Download, Document
+} from '@element-plus/icons-vue'
 import { getPrd, updatePrd, uploadPrdPdf, fetchPrdUrl } from '@/api/project'
 
 const props = defineProps({ projectId: String })
@@ -125,8 +155,12 @@ const prdPreview = computed(() => {
     : prdContent.value
 })
 
-const sourceTagType = computed(() => ({ text: '', md: 'success', pdf: 'warning', link: 'success' }[sourceType.value] || 'info'))
-const sourceText = computed(() => ({ text: '文本', md: 'md/txt', pdf: 'PDF', link: '链接' }[sourceType.value] || sourceType.value))
+const sourceTagType = computed(() =>
+  ({ text: '', md: 'success', pdf: 'warning', link: 'success' }[sourceType.value] || 'info')
+)
+const sourceText = computed(() =>
+  ({ text: '文本', md: 'md/txt', pdf: 'PDF', link: '链接' }[sourceType.value] || sourceType.value)
+)
 
 watch(() => props.projectId, (id) => { if (id) loadPrd() }, { immediate: true })
 
@@ -229,33 +263,178 @@ async function fetchLink() {
 </script>
 
 <style scoped>
-.prd-panel { margin-bottom: 16px; }
-.prd-header { display: flex; align-items: center; gap: 8px; }
-.prd-title { font-weight: 600; }
-.prd-word-count { margin-left: auto; color: #909399; font-size: 12px; }
-.prd-tabs { margin-bottom: 12px; }
-.prd-actions { margin-top: 8px; display: flex; gap: 8px; }
-.prd-summary { margin-top: 8px; }
-.prd-meta { color: #909399; font-size: 12px; margin-bottom: 6px; }
-.prd-preview-text {
-  background: #f5f7fa;
-  padding: 10px;
-  border-radius: 4px;
+.prd-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+  margin-bottom: var(--space-lg);
+}
+
+.prd-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: var(--space-md);
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.prd-head-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.section-desc {
   font-size: 13px;
-  color: #606266;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.prd-head-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.word-count {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  background: var(--bg-base);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.prd-tabs {
+  margin-bottom: var(--space-md);
+}
+
+.prd-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.pane-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 上传区 */
+.prd-uploader {
+  width: 100%;
+
+  :deep(.el-upload-dragger) {
+    width: 100%;
+    padding: 28px 20px;
+    border: 2px dashed var(--card-border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-base);
+    transition: all var(--transition-normal);
+
+    &:hover {
+      border-color: var(--brand-primary);
+      background: var(--el-color-primary-light-9);
+    }
+  }
+}
+
+.uploader-icon {
+  color: var(--brand-primary);
+  margin-bottom: 8px;
+}
+
+.uploader-text {
+  font-size: 14px;
+  color: var(--text-secondary);
+
+  em {
+    color: var(--brand-primary);
+    font-style: normal;
+    font-weight: 600;
+  }
+}
+
+.uploader-tip {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.url-prefix {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* PRD 概要 */
+.prd-summary {
+  border: 1px solid var(--card-border-light);
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--card-border-light);
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.summary-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+
+  .el-icon {
+    color: var(--brand-primary);
+  }
+}
+
+.summary-ref {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.summary-preview {
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 120px;
-  overflow: auto;
+  max-height: 140px;
+  overflow-y: auto;
 }
+
 .prd-full-text {
   max-height: 60vh;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-all;
   font-size: 13px;
-  background: #f5f7fa;
-  padding: 12px;
-  border-radius: 4px;
+  background: #f8fafc;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--card-border-light);
+  font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 </style>

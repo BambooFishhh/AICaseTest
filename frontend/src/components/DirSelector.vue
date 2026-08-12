@@ -1,13 +1,25 @@
 <template>
-  <el-popover v-model:visible="visible" placement="bottom-start" :width="420" trigger="click">
+  <el-popover v-model:visible="visible" placement="bottom-start" :width="460" trigger="click">
     <template #reference>
       <el-button :icon="FolderOpened">浏览</el-button>
     </template>
     <div class="dir-selector">
+      <!-- 工具栏 -->
       <div class="dir-toolbar">
-        <el-button size="small" text :icon="Back" @click="goUp" :disabled="!currentPath">返回上级</el-button>
-        <span class="current-path" :title="currentPath">{{ currentPath || '根目录' }}</span>
+        <el-button
+          size="small"
+          text
+          :icon="Back"
+          :disabled="!currentPath"
+          @click="goUp"
+        >返回上级</el-button>
+        <div class="current-path" :title="currentPath">
+          <el-icon :size="12"><FolderOpened /></el-icon>
+          <span>{{ currentPath || '根目录' }}</span>
+        </div>
       </div>
+
+      <!-- 目录树 -->
       <div class="dir-tree-wrapper">
         <el-tree
           ref="treeRef"
@@ -21,16 +33,25 @@
           @node-click="handleNodeClick"
         />
       </div>
+
+      <!-- 操作按钮 -->
       <div class="dir-actions">
         <el-button size="small" @click="visible = false">取消</el-button>
-        <el-button size="small" type="primary" @click="confirmSelect" :disabled="!selectedPath">确定</el-button>
+        <el-button size="small" type="primary" :disabled="!selectedPath" @click="confirmSelect">
+          确定
+        </el-button>
       </div>
     </div>
   </el-popover>
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue'
+/**
+ * 目录选择器组件
+ * 基于后端 filesystem API，使用 el-tree 懒加载目录树，
+ * 支持返回上级目录、点击节点选择路径。
+ */
+import { ref } from 'vue'
 import { FolderOpened, Back } from '@element-plus/icons-vue'
 import { getDirs } from '@/api/filesystem'
 
@@ -121,32 +142,48 @@ function confirmSelect() {
 .dir-selector {
   padding: 4px 0;
 }
+
 .dir-toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
   padding-bottom: 8px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid var(--card-border-light);
 }
+
 .current-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 280px;
+  color: var(--text-secondary);
+  background: var(--bg-base);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+
+  span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: 'Consolas', 'Monaco', monospace;
+  }
 }
+
 .dir-tree-wrapper {
-  max-height: 300px;
+  max-height: 320px;
   overflow-y: auto;
   margin-bottom: 8px;
+  border-radius: var(--radius-sm);
 }
+
 .dir-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   padding-top: 8px;
-  border-top: 1px solid var(--el-border-color-lighter);
+  border-top: 1px solid var(--card-border-light);
 }
 </style>

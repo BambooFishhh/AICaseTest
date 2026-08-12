@@ -1,237 +1,145 @@
 <template>
-  <div class="testcase-list" v-loading="loading">
-    <div class="page-header">
-      <h2>测试用例</h2>
-      <!-- v3.10: 工具栏按语义分组 -->
-      <div class="header-actions">
-        <div class="tb-group">
-          <!-- v3.4: 生成参数配置 -->
-          <el-button :icon="Setting" @click="handleOpenGenParams">生成参数</el-button>
-          <!-- v3.5: 追加生成按钮（与重新生成互斥，streaming 时禁用） -->
-          <el-button type="warning" :icon="Plus" :disabled="streaming" @click="handleOpenAppendDialog">
-            追加生成
-          </el-button>
-          <el-button
-            type="primary"
-            :icon="RefreshRight"
-            :loading="regenerating"
-            :disabled="streaming"
-            @click="handleRegenerate"
-          >
-            重新生成
-          </el-button>
-          <el-button :icon="Share" :loading="generatingMap" @click="handleGenerateMindmap">
-            生成脑图
-          </el-button>
-          <el-button v-if="mindmapGenerated" type="success" :icon="View" @click="handleViewMindmap">
-            查看脑图
-          </el-button>
+  <div class="testcase-list page-container" v-loading="loading">
+    <!-- 页头 -->
+    <header class="page-header">
+      <div class="page-header-main">
+        <el-button text :icon="ArrowLeft" @click="goBack">返回</el-button>
+        <h1 class="page-title">测试用例</h1>
+      </div>
+      <div class="page-actions">
+        <el-button :icon="Setting" @click="handleOpenGenParams">生成参数</el-button>
+        <el-button type="warning" :icon="Plus" :disabled="streaming" @click="handleOpenAppendDialog">
+          追加生成
+        </el-button>
+        <el-button
+          type="primary"
+          :icon="RefreshRight"
+          :loading="regenerating"
+          :disabled="streaming"
+          @click="handleRegenerate"
+        >
+          重新生成
+        </el-button>
+        <el-button :icon="Share" :loading="generatingMap" @click="handleGenerateMindmap">
+          生成脑图
+        </el-button>
+        <el-button v-if="mindmapGenerated" type="success" :icon="View" @click="handleViewMindmap">
+          查看脑图
+        </el-button>
+      </div>
+    </header>
+
+    <!-- 统计卡片 -->
+    <div class="stats-grid">
+      <div class="stat-card stat-total">
+        <div class="stat-icon"><el-icon :size="20"><Files /></el-icon></div>
+        <div class="stat-body">
+          <div class="stat-value">{{ stats.total }}</div>
+          <div class="stat-label">总计</div>
         </div>
-        <div class="tb-group">
-          <el-button
-            type="danger"
-            :icon="Delete"
-            :disabled="selectedRows.length === 0"
-            @click="handleBatchDelete"
-          >
-            批量删除<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
-          </el-button>
-          <!-- v2.1: 批量执行 -->
-          <el-button
-            type="success"
-            :icon="VideoPlay"
-            :disabled="selectedRows.length === 0"
-            @click="openBatchExecuteDialog"
-          >
-            批量执行<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
-          </el-button>
-          <el-button
-            :icon="Download"
-            :disabled="selectedRows.length === 0"
-            @click="handleExportSelected"
-          >
-            导出选中<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
-          </el-button>
-          <!-- v1.8: 批量评审下拉 -->
-          <el-dropdown @command="handleReviewCommand" :disabled="selectedRows.length === 0">
-            <el-button :icon="Check">
-              批量评审<span v-if="selectedRows.length > 0">（{{ selectedRows.length }}）</span>
-              <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-            </el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="reviewed">标记为已评审</el-dropdown-item>
-                <el-dropdown-item command="approved">标记为已批准</el-dropdown-item>
-                <el-dropdown-item command="rejected">标记为已拒绝</el-dropdown-item>
-                <el-dropdown-item command="draft">重置为草稿</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+      </div>
+      <div class="stat-card stat-positive">
+        <div class="stat-icon"><el-icon :size="20"><CircleCheck /></el-icon></div>
+        <div class="stat-body">
+          <div class="stat-value">{{ stats.positive }}</div>
+          <div class="stat-label">正向</div>
         </div>
-        <div class="tb-group">
-          <!-- v3.9: 导入 XMind -->
-          <el-button :icon="Upload" @click="triggerImportXmind">导入XMind</el-button>
-          <!-- v3.6: 手动新增用例 -->
-          <el-button type="success" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
-          <input
-            ref="xmindFileInput"
-            type="file"
-            accept=".xmind"
-            style="display: none"
-            @change="handleImportXmind"
-          />
+      </div>
+      <div class="stat-card stat-negative">
+        <div class="stat-icon"><el-icon :size="20"><CircleClose /></el-icon></div>
+        <div class="stat-body">
+          <div class="stat-value">{{ stats.negative }}</div>
+          <div class="stat-label">异常</div>
+        </div>
+      </div>
+      <div class="stat-card stat-boundary">
+        <div class="stat-icon"><el-icon :size="20"><Aim /></el-icon></div>
+        <div class="stat-body">
+          <div class="stat-value">{{ stats.boundary }}</div>
+          <div class="stat-label">边界</div>
+        </div>
+      </div>
+      <div class="stat-card stat-data">
+        <div class="stat-icon"><el-icon :size="20"><Coin /></el-icon></div>
+        <div class="stat-body">
+          <div class="stat-value">{{ stats.data }}</div>
+          <div class="stat-label">数据</div>
         </div>
       </div>
     </div>
 
-    <el-row :gutter="16" class="stats-bar">
-      <el-col :xs="12" :sm="6" :md="4">
-        <div class="stat-card stat-total">
-          <div class="stat-icon"><el-icon :size="18"><Files /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ stats.total }}</div>
-            <div class="stat-label">总计</div>
-          </div>
-        </div>
-      </el-col>
-      <el-col :xs="12" :sm="6" :md="5">
-        <div class="stat-card stat-positive">
-          <div class="stat-icon"><el-icon :size="18"><CircleCheck /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ stats.positive }}</div>
-            <div class="stat-label">正向</div>
-          </div>
-        </div>
-      </el-col>
-      <el-col :xs="12" :sm="6" :md="5">
-        <div class="stat-card stat-negative">
-          <div class="stat-icon"><el-icon :size="18"><CircleClose /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ stats.negative }}</div>
-            <div class="stat-label">异常</div>
-          </div>
-        </div>
-      </el-col>
-      <el-col :xs="12" :sm="6" :md="5">
-        <div class="stat-card stat-boundary">
-          <div class="stat-icon"><el-icon :size="18"><Aim /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ stats.boundary }}</div>
-            <div class="stat-label">边界</div>
-          </div>
-        </div>
-      </el-col>
-      <el-col :xs="12" :sm="6" :md="5">
-        <div class="stat-card stat-data">
-          <div class="stat-icon"><el-icon :size="18"><Coin /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ stats.data }}</div>
-            <div class="stat-label">数据</div>
-          </div>
-        </div>
-      </el-col>
-    </el-row>
+    <!-- 筛选卡片 -->
+    <section class="filter-section">
+      <div class="filter-grid">
+        <el-select
+          v-model="filters.module"
+          placeholder="模块筛选"
+          clearable
+          size="default"
+          @change="handleFilter"
+        >
+          <el-option v-for="m in moduleOptions" :key="m" :label="m" :value="m" />
+        </el-select>
+        <el-select
+          v-model="filters.type"
+          placeholder="类型筛选"
+          clearable
+          size="default"
+          @change="handleFilter"
+        >
+          <el-option label="正向" value="positive" />
+          <el-option label="异常" value="negative" />
+          <el-option label="边界" value="boundary" />
+          <el-option label="数据" value="data" />
+        </el-select>
+        <el-select
+          v-model="filters.priority"
+          placeholder="优先级筛选"
+          clearable
+          size="default"
+        >
+          <el-option label="P0" value="P0" />
+          <el-option label="P1" value="P1" />
+          <el-option label="P2" value="P2" />
+          <el-option label="P3" value="P3" />
+        </el-select>
+        <el-select
+          v-model="filters.reviewStatus"
+          placeholder="评审状态筛选"
+          clearable
+          size="default"
+          @change="handleFilter"
+        >
+          <el-option label="草稿" value="draft" />
+          <el-option label="已评审" value="reviewed" />
+          <el-option label="已批准" value="approved" />
+          <el-option label="已拒绝" value="rejected" />
+        </el-select>
+        <el-input
+          v-model="filters.keyword"
+          placeholder="搜索用例标题/模块"
+          clearable
+          size="default"
+          @keyup.enter="handleFilter"
+          @clear="handleFilter"
+        >
+          <template #append>
+            <el-button :icon="Search" @click="handleFilter" />
+          </template>
+        </el-input>
+      </div>
+    </section>
 
-    <el-card class="filter-card">
-      <el-row :gutter="16">
-        <el-col :xs="24" :sm="6">
-          <el-select
-            v-model="filters.module"
-            placeholder="模块筛选"
-            clearable
-            style="width: 100%"
-            @change="handleFilter"
-          >
-            <el-option v-for="m in moduleOptions" :key="m" :label="m" :value="m" />
-          </el-select>
-        </el-col>
-        <el-col :xs="24" :sm="6">
-          <el-select
-            v-model="filters.type"
-            placeholder="类型筛选"
-            clearable
-            style="width: 100%"
-            @change="handleFilter"
-          >
-            <el-option label="正向" value="positive" />
-            <el-option label="异常" value="negative" />
-            <el-option label="边界" value="boundary" />
-            <el-option label="数据" value="data" />
-          </el-select>
-        </el-col>
-        <el-col :xs="24" :sm="6">
-          <el-select
-            v-model="filters.priority"
-            placeholder="优先级筛选"
-            clearable
-            style="width: 100%"
-          >
-            <el-option label="P0" value="P0" />
-            <el-option label="P1" value="P1" />
-            <el-option label="P2" value="P2" />
-            <el-option label="P3" value="P3" />
-          </el-select>
-        </el-col>
-        <!-- v1.8: 评审状态筛选 -->
-        <el-col :xs="24" :sm="6">
-          <el-select
-            v-model="filters.reviewStatus"
-            placeholder="评审状态筛选"
-            clearable
-            style="width: 100%"
-            @change="handleFilter"
-          >
-            <el-option label="草稿" value="draft" />
-            <el-option label="已评审" value="reviewed" />
-            <el-option label="已批准" value="approved" />
-            <el-option label="已拒绝" value="rejected" />
-          </el-select>
-        </el-col>
-        <el-col :xs="24" :sm="6">
-          <el-input
-            v-model="filters.keyword"
-            placeholder="搜索用例标题/模块"
-            clearable
-            @keyup.enter="handleFilter"
-            @clear="handleFilter"
-          >
-            <template #append>
-              <el-button :icon="Search" @click="handleFilter" />
-            </template>
-          </el-input>
-        </el-col>
-      </el-row>
-    </el-card>
-
-    <el-alert
-      v-if="progressText"
-      :title="progressText"
-      type="info"
-      :closable="false"
-      show-icon
-      class="polling-alert"
-    />
-    <!-- v1.6: 生成失败时展示具体错误详情 -->
-    <el-alert
-      v-if="generationError"
-      :title="`生成失败: ${generationError}`"
-      type="error"
-      :closable="false"
-      show-icon
-      class="polling-alert"
-    />
-    <!-- v3.2: 流式生成进度面板。v3.5: 标题按 currentGenMode 区分重新生成/追加生成 -->
-    <el-alert
-      v-if="streaming"
-      :title="streamingAlertTitle"
-      type="success"
-      :closable="false"
-      show-icon
-      class="polling-alert streaming-alert"
-    >
-      <!-- v3.3: 进度文本 + 取消生成按钮 -->
-      <div class="streaming-alert-body">
-        <span class="streaming-progress-text">{{ streamProgress }}</span>
+    <!-- 状态横幅 -->
+    <Transition name="slide-down">
+      <div v-if="streaming" class="streaming-banner">
+        <div class="streaming-icon">
+          <el-icon class="is-loading" :size="20"><Loading /></el-icon>
+        </div>
+        <div class="streaming-body">
+          <div class="streaming-title">{{ streamingAlertTitle }}</div>
+          <div class="streaming-progress">{{ streamProgress }}</div>
+        </div>
         <el-button
           type="danger"
           size="small"
@@ -241,143 +149,231 @@
           取消生成
         </el-button>
       </div>
-    </el-alert>
+    </Transition>
 
-    <el-table
-      :data="treeData"
-      border
-      style="width: 100%"
-      row-key="id"
-      :tree-props="{ children: 'children' }"
-      :row-class-name="rowClassName"
-      default-expand-all
-      highlight-current-row
-      @row-click="handleRowClick"
-      @selection-change="handleSelectionChange"
-    >
-      <el-table-column type="selection" width="45" />
-      <el-table-column prop="id" label="编号" width="120">
-        <template #default="{ row }">
-          <span v-if="row.isModule"></span>
-          <span v-else-if="streaming">生成中</span>
-          <span v-else>{{ row.id }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="title" label="标题" min-width="200">
-        <template #default="{ row }">
-          <span v-if="row.isModule" class="module-label">
-            <el-icon class="module-icon" :size="16"><FolderOpened /></el-icon>
-            <span class="module-name">{{ row.title }}</span>
-            <span class="module-count">{{ row.count }}</span>
-          </span>
-          <span v-else>{{ row.title }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="类型" width="80">
-        <template #default="{ row }">
-          <el-tag v-if="!row.isModule" :type="typeTagType(row.type)" size="small">
-            {{ typeText(row.type) }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="优先级" width="80">
-        <template #default="{ row }">
-          <el-tag v-if="!row.isModule" :type="priorityTagType(row.priority)" size="small">
-            {{ row.priority }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <!-- v3.8: 前置条件/步骤/预期结果直接显示在列中 -->
-      <el-table-column label="前置条件" width="220">
-        <template #default="{ row }">
-          <span v-if="row.isModule"></span>
-          <span v-else-if="row.preconditions && row.preconditions.length" class="detail-summary">
-            {{ row.preconditions[0] }}{{ row.preconditions.length > 1 ? ` (+${row.preconditions.length - 1})` : '' }}
-          </span>
-          <span v-else class="text-muted">无</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="测试步骤" width="220">
-        <template #default="{ row }">
-          <span v-if="row.isModule"></span>
-          <span v-else-if="row.steps && row.steps.length" class="detail-summary">
-            {{ row.steps[0] }}{{ row.steps.length > 1 ? ` (+${row.steps.length - 1})` : '' }}
-          </span>
-          <span v-else class="text-muted">无</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="预期结果" width="220">
-        <template #default="{ row }">
-          <span v-if="row.isModule"></span>
-          <span v-else-if="row.expectedResults && row.expectedResults.length" class="detail-summary">
-            {{ row.expectedResults[0] }}{{ row.expectedResults.length > 1 ? ` (+${row.expectedResults.length - 1})` : '' }}
-          </span>
-          <span v-else class="text-muted">无</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="质量" width="100">
-        <template #default="{ row }">
-          <el-progress
-            v-if="!row.isModule && row.qualityScore > 0"
-            :percentage="row.qualityScore"
-            :color="qualityColor(row.qualityScore)"
-            :stroke-width="14"
-          />
-          <span v-else-if="!row.isModule" class="text-muted">未评分</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="评审" width="80">
-        <template #default="{ row }">
-          <el-tag v-if="!row.isModule" :type="reviewTagType(row.reviewStatus)" size="small">
-            {{ reviewText(row.reviewStatus) }}
-          </el-tag>
-        </template>
-      </el-table-column>
-    </el-table>
+    <el-alert
+      v-if="progressText && !streaming"
+      :title="progressText"
+      type="info"
+      :closable="false"
+      show-icon
+      class="info-alert"
+    />
 
-    <!-- v3.6: 覆盖率面板（移到列表下方，可折叠） -->
-    <el-collapse v-if="coverage" v-model="coverageExpanded" class="coverage-collapse">
-      <el-collapse-item name="coverage" title="覆盖率度量">
-        <el-row :gutter="16">
-          <el-col :span="12">
-            <div class="coverage-item">
-              <div class="coverage-label">状态转换覆盖率</div>
-              <el-progress
-                :percentage="Math.round(coverage.stateTransition.rate * 100)"
-                :color="coverageColor(coverage.stateTransition.rate)"
-              />
-              <div class="coverage-detail">
-                {{ coverage.stateTransition.covered }} / {{ coverage.stateTransition.total }}
-              </div>
+    <el-alert
+      v-if="generationError"
+      :title="`生成失败: ${generationError}`"
+      type="error"
+      :closable="false"
+      show-icon
+      class="info-alert"
+    />
+
+    <!-- 批量操作工具栏 -->
+    <section v-if="selectedRows.length > 0" class="batch-toolbar">
+      <span class="batch-count">已选 {{ selectedRows.length }} 条</span>
+      <div class="batch-actions">
+        <el-button type="danger" :icon="Delete" @click="handleBatchDelete">
+          批量删除
+        </el-button>
+        <el-button type="success" :icon="VideoPlay" @click="openBatchExecuteDialog">
+          批量执行
+        </el-button>
+        <el-button :icon="Download" @click="handleExportSelected">
+          导出选中
+        </el-button>
+        <el-dropdown @command="handleReviewCommand">
+          <el-button :icon="Check">
+            批量评审<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="reviewed">标记为已评审</el-dropdown-item>
+              <el-dropdown-item command="approved">标记为已批准</el-dropdown-item>
+              <el-dropdown-item command="rejected">标记为已拒绝</el-dropdown-item>
+              <el-dropdown-item command="draft">重置为草稿</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
+    </section>
+
+    <!-- 主操作工具栏 -->
+    <section class="action-toolbar">
+      <div class="action-left">
+        <el-button :icon="Upload" @click="triggerImportXmind">导入 XMind</el-button>
+        <el-button type="success" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
+        <input
+          ref="xmindFileInput"
+          type="file"
+          accept=".xmind"
+          style="display: none"
+          @change="handleImportXmind"
+        />
+      </div>
+    </section>
+
+    <!-- 用例树状表格 -->
+    <section class="table-section">
+      <el-table
+        :data="treeData"
+        row-key="id"
+        :tree-props="{ children: 'children' }"
+        :row-class-name="rowClassName"
+        default-expand-all
+        highlight-current-row
+        @row-click="handleRowClick"
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="45" />
+        <el-table-column prop="id" label="编号" width="110" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.isModule"></span>
+            <span v-else-if="streaming" class="text-muted">生成中</span>
+            <span v-else class="case-id">{{ row.id }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.isModule" class="module-label">
+              <el-icon class="module-icon" :size="16"><FolderOpened /></el-icon>
+              <span class="module-name">{{ row.title }}</span>
+              <span class="module-count">{{ row.count }}</span>
+            </span>
+            <span v-else class="case-title">{{ row.title }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="类型" width="80">
+          <template #default="{ row }">
+            <el-tag v-if="!row.isModule" :type="typeTagType(row.type)" size="small" effect="light">
+              {{ typeText(row.type) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="优先级" width="70">
+          <template #default="{ row }">
+            <el-tag v-if="!row.isModule" :type="priorityTagType(row.priority)" size="small" effect="plain">
+              {{ row.priority }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="前置条件" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.isModule"></span>
+            <span v-else-if="row.preconditions && row.preconditions.length" class="detail-summary">
+              {{ row.preconditions[0] }}{{ row.preconditions.length > 1 ? ` +${row.preconditions.length - 1}` : '' }}
+            </span>
+            <span v-else class="text-muted">无</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="测试步骤" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.isModule"></span>
+            <span v-else-if="row.steps && row.steps.length" class="detail-summary">
+              {{ row.steps[0] }}{{ row.steps.length > 1 ? ` +${row.steps.length - 1}` : '' }}
+            </span>
+            <span v-else class="text-muted">无</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="预期结果" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.isModule"></span>
+            <span v-else-if="row.expectedResults && row.expectedResults.length" class="detail-summary">
+              {{ row.expectedResults[0] }}{{ row.expectedResults.length > 1 ? ` +${row.expectedResults.length - 1}` : '' }}
+            </span>
+            <span v-else class="text-muted">无</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="质量" width="90">
+          <template #default="{ row }">
+            <el-progress
+              v-if="!row.isModule && row.qualityScore > 0"
+              :percentage="row.qualityScore"
+              :color="qualityColor(row.qualityScore)"
+              :stroke-width="12"
+            />
+            <span v-else-if="!row.isModule" class="text-muted">未评分</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="评审" width="70">
+          <template #default="{ row }">
+            <el-tag v-if="!row.isModule" :type="reviewTagType(row.reviewStatus)" size="small" effect="light">
+              {{ reviewText(row.reviewStatus) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+    </section>
+
+    <!-- 覆盖率面板 -->
+    <el-collapse v-model="coverageExpanded" class="coverage-collapse">
+      <el-collapse-item name="coverage">
+        <template #title>
+          <div class="coverage-title">
+            <el-icon :size="16"><DataAnalysis /></el-icon>
+            <span>覆盖率度量</span>
+            <el-tag
+              v-if="coverage"
+              :type="overallCoverageTag"
+              size="small"
+              effect="light"
+              class="coverage-title-tag"
+            >
+              状态机 {{ Math.round(coverage.stateTransition.rate * 100) }}% / 接口 {{ Math.round(coverage.apiEndpoint.rate * 100) }}%
+            </el-tag>
+          </div>
+        </template>
+        <div v-if="coverage" class="coverage-grid">
+          <div class="coverage-item">
+            <div class="coverage-head">
+              <span class="coverage-label">状态转换覆盖率</span>
+              <span class="coverage-rate">{{ Math.round(coverage.stateTransition.rate * 100) }}%</span>
             </div>
-          </el-col>
-          <el-col :span="12">
-            <div class="coverage-item">
-              <div class="coverage-label">接口覆盖率</div>
-              <el-progress
-                :percentage="Math.round(coverage.apiEndpoint.rate * 100)"
-                :color="coverageColor(coverage.apiEndpoint.rate)"
-              />
-              <div class="coverage-detail">
-                {{ coverage.apiEndpoint.covered }} / {{ coverage.apiEndpoint.total }}
-              </div>
+            <el-progress
+              :percentage="Math.round(coverage.stateTransition.rate * 100)"
+              :color="coverageColor(coverage.stateTransition.rate)"
+              :stroke-width="14"
+            />
+            <div class="coverage-detail">
+              已覆盖 {{ coverage.stateTransition.covered }} / {{ coverage.stateTransition.total }} 条转换
             </div>
-          </el-col>
-        </el-row>
+          </div>
+          <div class="coverage-item">
+            <div class="coverage-head">
+              <span class="coverage-label">接口覆盖率</span>
+              <span class="coverage-rate">{{ Math.round(coverage.apiEndpoint.rate * 100) }}%</span>
+            </div>
+            <el-progress
+              :percentage="Math.round(coverage.apiEndpoint.rate * 100)"
+              :color="coverageColor(coverage.apiEndpoint.rate)"
+              :stroke-width="14"
+            />
+            <div class="coverage-detail">
+              已覆盖 {{ coverage.apiEndpoint.covered }} / {{ coverage.apiEndpoint.total }} 个接口
+            </div>
+          </div>
+        </div>
+        <el-empty
+          v-else
+          description="暂无覆盖率数据。运行代码分析并生成用例后，这里会显示状态机和接口的测试覆盖情况。"
+          :image-size="80"
+        />
       </el-collapse-item>
     </el-collapse>
 
-    <!-- v1.5: 覆盖率矩阵 -->
     <CoverageMatrix
       v-if="coverageMatrix"
       :matrix="coverageMatrix"
       @filter-by-ids="handleFilterByIds"
     />
 
+    <!-- 用例详情/编辑对话框 -->
     <el-dialog
       v-model="dialogVisible"
-      width="700px"
+      width="900px"
       :title="currentTestCase ? currentTestCase.title : '用例详情'"
+      class="case-dialog"
+      :style="{ maxWidth: '95vw' }"
     >
       <test-case-card
         v-if="currentTestCase"
@@ -394,7 +390,7 @@
       />
     </el-dialog>
 
-    <!-- v3.6: 新增用例对话框（TestCaseCard 作为独立对话框） -->
+    <!-- 新增用例对话框 -->
     <TestCaseCard
       v-if="createDialogVisible"
       :visible="createDialogVisible"
@@ -404,7 +400,7 @@
       @close="createDialogVisible = false"
     />
 
-    <!-- v1.9: 历史版本抽屉 -->
+    <!-- 历史版本抽屉 -->
     <TestCaseVersionDrawer
       v-model:visible="versionDrawerVisible"
       :project-id="projectId"
@@ -413,7 +409,7 @@
       @rollback="handleVersionRollback"
     />
 
-    <!-- v2.1: 批量执行对话框 -->
+    <!-- 批量执行对话框 -->
     <el-dialog
       v-model="batchExecuteDialogVisible"
       title="批量执行测试用例"
@@ -444,7 +440,7 @@
       </template>
     </el-dialog>
 
-    <!-- v3.4: 生成参数配置对话框 -->
+    <!-- 生成参数对话框 -->
     <el-dialog
       v-model="showGenParamsDialog"
       title="生成参数"
@@ -491,7 +487,7 @@
       </template>
     </el-dialog>
 
-    <!-- v3.5: 追加生成类型选择对话框 -->
+    <!-- 追加生成类型选择对话框 -->
     <el-dialog
       v-model="showAppendDialog"
       title="追加生成"
@@ -532,37 +528,16 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search,
-  Delete,
-  Download,
-  Upload,
-  Check,
-  ArrowDown,
-  VideoPlay,
-  Setting,
-  Plus,
-  View,
-  RefreshRight,
-  Share,
-  Files,
-  CircleCheck,
-  CircleClose,
-  Aim,
-  Coin,
-  FolderOpened
+  Search, Delete, Download, Upload, Check, ArrowDown, VideoPlay,
+  Setting, Plus, View, RefreshRight, Share, Files, CircleCheck,
+  CircleClose, Aim, Coin, FolderOpened, ArrowLeft, Loading, DataAnalysis
 } from '@element-plus/icons-vue'
 import {
-  listTestCases,
-  streamGenerate,
-  streamGenerateAppend,
-  cancelGenerate,
-  createTestCase,
-  deleteTestCase,
-  batchDeleteTestCases,
-  importXmind,
-  reviewTestCases
+  listTestCases, streamGenerate, streamGenerateAppend,
+  cancelGenerate, createTestCase, deleteTestCase,
+  batchDeleteTestCases, importXmind, reviewTestCases
 } from '@/api/testcase'
-import { listProjects, getProject, getGenerationParams, updateGenerationParams } from '@/api/project'
+import { getProject, getGenerationParams, updateGenerationParams } from '@/api/project'
 import { generateMindmap } from '@/api/mindmap'
 import { executeBatch } from '@/api/execution'
 import { useProjectStore } from '@/stores/project'
@@ -580,24 +555,18 @@ const loading = ref(false)
 const regenerating = ref(false)
 const generatingMap = ref(false)
 const pollingMessage = ref('')
-// v1.6: 生成失败时的错误详情（来自后端 errorMessage）
 const generationError = ref('')
-// v1.6: 优先展示后端实时进度，兜底显示本地初始提示
 const progressText = computed(
   () => projectStore.progressMessage || pollingMessage.value
 )
 
-// v3.2: SSE 流式生成状态
 const streaming = ref(false)
 const streamProgress = ref('')
-const streamedCases = ref([]) // 流式期间实时累积的用例
-const cancelling = ref(false) // v3.3: 取消生成中状态
-let streamEs = null // EventSource 实例（非响应式）
-// v3.5: 当前生成模式：'regenerate' | 'append' | null（用于差异化流式面板标题与完成提示）
+const streamedCases = ref([])
+const cancelling = ref(false)
+let streamEs = null
 const currentGenMode = ref(null)
 
-// v3.5: 流式面板标题——追加生成与重新生成文案区分
-// v3.7: 流式响应期间（0 条时）提示"正在接收 LLM 流式响应"
 const streamingAlertTitle = computed(() => {
   if (!streaming.value) return ''
   const count = streamedCases.value.length
@@ -611,7 +580,7 @@ const streamingAlertTitle = computed(() => {
 const testCases = ref([])
 const allTestCases = ref([])
 const coverage = ref(null)
-const coverageExpanded = ref([])  // 默认折叠
+const coverageExpanded = ref(['coverage'])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
@@ -621,14 +590,10 @@ const filters = reactive({ module: '', type: '', priority: '', keyword: '', revi
 const dialogVisible = ref(false)
 const currentTestCase = ref(null)
 
-// v1.4: 批量操作选中行
 const selectedRows = ref([])
-// v3.9: XMind 导入文件 input 引用
 const xmindFileInput = ref(null)
-// v3.9: 脑图是否已生成（显示查看按钮）
 const mindmapGenerated = ref(false)
 
-// v1.5: 覆盖率矩阵
 const coverageMatrix = ref(null)
 
 async function loadCoverageMatrix() {
@@ -663,11 +628,8 @@ const stats = computed(() => {
   return s
 })
 
-// 后端不支持 priority 服务端筛选，这里在当前页数据上做客户端筛选
-// v3.2: 流式期间展示 streamedCases（实时累积），否则展示分页数据
 const displayTestCases = computed(() => {
   if (streaming.value) {
-    // v3.6: 追加模式合并已有用例 + 新用例；重新生成模式仅展示新用例
     const base = currentGenMode.value === 'append'
       ? [...streamedCases.value, ...testCases.value]
       : streamedCases.value
@@ -678,7 +640,6 @@ const displayTestCases = computed(() => {
   return testCases.value.filter((tc) => tc.priority === filters.priority)
 })
 
-// v3.8: 树状数据——按模块分组
 const treeData = computed(() => {
   const cases = displayTestCases.value
   const moduleMap = new Map()
@@ -706,9 +667,7 @@ function rowClassName({ row }) {
 }
 
 function typeTagType(type) {
-  return (
-    { positive: 'success', negative: 'danger', boundary: 'warning', data: 'info' }[type] || 'info'
-  )
+  return { positive: 'success', negative: 'danger', boundary: 'warning', data: 'info' }[type] || 'info'
 }
 
 function typeText(type) {
@@ -722,22 +681,14 @@ function priorityTagType(priority) {
   return 'info'
 }
 
-// v1.8: 评审状态标签
 function reviewTagType(status) {
-  return (
-    { draft: 'info', reviewed: 'warning', approved: 'success', rejected: 'danger' }[status] ||
-    'info'
-  )
-}
-function reviewText(status) {
-  return (
-    { draft: '草稿', reviewed: '已评审', approved: '已批准', rejected: '已拒绝' }[status] ||
-    status ||
-    '草稿'
-  )
+  return { draft: 'info', reviewed: 'warning', approved: 'success', rejected: 'danger' }[status] || 'info'
 }
 
-// v1.8: 批量改评审状态
+function reviewText(status) {
+  return { draft: '草稿', reviewed: '已评审', approved: '已批准', rejected: '已拒绝' }[status] || status || '草稿'
+}
+
 async function handleReviewCommand(command) {
   const ids = selectedRows.value.map((tc) => tc.id)
   const text = { reviewed: '已评审', approved: '已批准', rejected: '已拒绝', draft: '草稿' }[command]
@@ -759,22 +710,33 @@ async function handleReviewCommand(command) {
   }
 }
 
-// v1.2 覆盖率与质量颜色
 function coverageColor(rate) {
-  if (rate >= 0.8) return '#67c23a'
-  if (rate >= 0.5) return '#e6a23c'
-  return '#f56c6c'
+  if (rate >= 0.8) return '#10b981'
+  if (rate >= 0.5) return '#f59e0b'
+  return '#ef4444'
 }
+
+// 总体覆盖率徽章颜色（取两个覆盖率的较低值）
+const overallCoverageTag = computed(() => {
+  if (!coverage.value) return 'info'
+  const minRate = Math.min(
+    coverage.value.stateTransition.rate,
+    coverage.value.apiEndpoint.rate
+  )
+  if (minRate >= 0.8) return 'success'
+  if (minRate >= 0.5) return 'warning'
+  return 'danger'
+})
+
 function qualityColor(score) {
-  if (score >= 80) return '#67c23a'
-  if (score >= 50) return '#e6a23c'
-  return '#f56c6c'
+  if (score >= 80) return '#10b981'
+  if (score >= 50) return '#f59e0b'
+  return '#ef4444'
 }
 
 async function loadList() {
   loading.value = true
   try {
-    // v3.8: 加载全部用例用于树状分组
     const params = { page: 1, pageSize: 9999 }
     if (filters.module) params.module = filters.module
     if (filters.type) params.type = filters.type
@@ -841,7 +803,6 @@ async function handleSaveTestCase() {
   await Promise.all([loadList(), loadAllForStats()])
 }
 
-// v3.6: 手动新增用例
 const createDialogVisible = ref(false)
 
 function handleCreateTestCase() {
@@ -859,7 +820,6 @@ async function handleSaveNewTestCase(formData) {
   }
 }
 
-// v1.4: 批量删除
 async function handleBatchDelete() {
   const count = selectedRows.value.length
   try {
@@ -882,7 +842,6 @@ async function handleBatchDelete() {
   }
 }
 
-// v1.4: 导出选中用例为脑图
 async function handleExportSelected() {
   const ids = selectedRows.value.map((tc) => tc.id)
   try {
@@ -894,12 +853,10 @@ async function handleExportSelected() {
   }
 }
 
-// v3.9: 触发 XMind 文件选择
 function triggerImportXmind() {
   xmindFileInput.value?.click()
 }
 
-// v3.9: 处理 XMind 导入
 async function handleImportXmind(e) {
   const file = e.target.files?.[0]
   if (!file) return
@@ -913,24 +870,19 @@ async function handleImportXmind(e) {
   e.target.value = ''
 }
 
-// v1.5: 按用例ID筛选（从覆盖率矩阵跳转）
 function handleFilterByIds(ids) {
-  // 加载全部用例后在内存中按 ids 筛选
   const all = allTestCases.value.filter((tc) => ids.includes(tc.id))
-  // 设置 keyword 为第一个 id 来触发筛选
   if (ids.length > 0) {
     filters.keyword = ids[0]
     handleFilter()
   }
 }
 
-// v1.9: 历史版本抽屉
 const versionDrawerVisible = ref(false)
 function handleOpenVersions() {
   versionDrawerVisible.value = true
 }
 
-// v2.1: 批量执行
 const batchExecuteDialogVisible = ref(false)
 const batchTargetUrl = ref('http://localhost:5173')
 const batchExecuting = ref(false)
@@ -963,15 +915,15 @@ async function confirmBatchExecute() {
     if (batchId) {
       router.push(`/projects/${projectId}/batches/${batchId}`)
     }
-  } catch (e) {
+  } catch {
     // 错误已由响应拦截器统一提示
   } finally {
     batchExecuting.value = false
   }
 }
+
 async function handleVersionRollback() {
   await Promise.all([loadList(), loadAllForStats()])
-  // 同步当前用例对象，使对话框内显示回滚后内容
   if (currentTestCase.value?.id) {
     try {
       const res = await listTestCases(projectId, { page: 1, pageSize: 9999 })
@@ -993,10 +945,9 @@ async function handleRegenerate() {
   } catch {
     return
   }
-  // v3.2: 进入流式生成模式
   generationError.value = ''
   streaming.value = true
-  currentGenMode.value = 'regenerate' // v3.5: 标识模式
+  currentGenMode.value = 'regenerate'
   streamProgress.value = '正在启动生成...'
   streamedCases.value = []
   regenerating.value = true
@@ -1006,34 +957,30 @@ async function handleRegenerate() {
       streamProgress.value = msg
     },
     onCase: (tc) => {
-      // 新用例插入到顶部，实时可见
       streamedCases.value.unshift(tc)
     },
     onComplete: async (total) => {
       ElMessage.success(`用例生成完成，共 ${total} 条`)
       streaming.value = false
-      currentGenMode.value = null // v3.5: 重置
+      currentGenMode.value = null
       streamProgress.value = ''
       regenerating.value = false
       cancelling.value = false
       page.value = 1
-      // 刷新列表获取最终编号 + 覆盖率
       await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
     },
     onCancelled: async (msg) => {
-      // v3.3: 生成被取消，旧用例已保留
       ElMessage.warning(msg || '生成已取消，旧用例已保留')
       streaming.value = false
-      currentGenMode.value = null // v3.5: 重置
+      currentGenMode.value = null
       streamProgress.value = ''
       regenerating.value = false
       cancelling.value = false
-      // 刷新列表（显示旧用例）
       await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
     },
     onError: (msg) => {
       streaming.value = false
-      currentGenMode.value = null // v3.5: 重置
+      currentGenMode.value = null
       streamProgress.value = ''
       regenerating.value = false
       cancelling.value = false
@@ -1043,17 +990,15 @@ async function handleRegenerate() {
   })
 }
 
-// v3.5: 追加生成——不删除现有用例，可选 type 过滤，跨去重，续号保存
 const showAppendDialog = ref(false)
 const appendType = ref('')
 
 function handleOpenAppendDialog() {
-  // 按钮已 disabled，此处二次校验防御
   if (streaming.value) {
     ElMessage.warning('正在生成中，请等待当前任务完成')
     return
   }
-  appendType.value = '' // 默认全类型
+  appendType.value = ''
   showAppendDialog.value = true
 }
 
@@ -1077,7 +1022,6 @@ function startAppendStream(type) {
       streamedCases.value.unshift(tc)
     },
     onComplete: async (data) => {
-      // v3.5: data = { total, appended, dropped, existingBefore }
       const appended = data?.appended ?? 0
       const dropped = data?.dropped ?? 0
       if (appended === 0) {
@@ -1111,7 +1055,6 @@ function startAppendStream(type) {
   })
 }
 
-// v3.3: 取消流式生成
 async function handleCancelGenerate() {
   try {
     await ElMessageBox.confirm(
@@ -1125,8 +1068,6 @@ async function handleCancelGenerate() {
   cancelling.value = true
   try {
     await cancelGenerate(projectId)
-    // 后端会在下个检查点停止并推送 cancelled 事件
-    // onCancelled 回调会处理状态清理
   } catch {
     ElMessage.error('取消请求失败')
     cancelling.value = false
@@ -1144,12 +1085,10 @@ async function handleGenerateMindmap() {
   }
 }
 
-// v3.9: 查看脑图
 function handleViewMindmap() {
   router.push(`/projects/${projectId}/mindmap`)
 }
 
-// v3.4: 生成参数配置
 const showGenParamsDialog = ref(false)
 const savingParams = ref(false)
 const genParams = ref({
@@ -1158,7 +1097,6 @@ const genParams = ref({
   focusTypes: []
 })
 
-// v3.4: 打开对话框时拉取当前参数
 async function handleOpenGenParams() {
   showGenParamsDialog.value = true
   try {
@@ -1175,7 +1113,6 @@ async function handleOpenGenParams() {
   }
 }
 
-// v3.4: 保存生成参数
 async function handleSaveGenParams() {
   savingParams.value = true
   try {
@@ -1189,13 +1126,14 @@ async function handleSaveGenParams() {
   }
 }
 
+function goBack() {
+  router.push(`/projects/${projectId}`)
+}
+
 onMounted(async () => {
   await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
-  // v3.2: 来自 ProjectDetail "生成用例"跳转，自动触发流式生成
   if (route.query.generate === '1') {
-    // 清理 query，避免刷新重复触发
     router.replace({ path: route.path })
-    // 拉取项目状态，generating/analyzing 时不触发
     try {
       const res = await getProject(projectId)
       const status = res.data?.status
@@ -1209,7 +1147,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   projectStore.stopPolling()
-  // v3.2: 释放 EventSource，避免组件卸载后连接泄漏
   if (streamEs) {
     streamEs.close()
     streamEs = null
@@ -1217,65 +1154,50 @@ onUnmounted(() => {
 })
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .testcase-list {
-  padding: 4px 0;
+  padding: var(--space-lg) var(--space-xl);
 }
-.page-header {
+
+.page-header-main {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-sm);
 }
-.page-header h2 {
-  margin: 0;
+
+/* ===== 统计卡 ===== */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
 }
-/* v3.10: 工具栏分组 */
-.header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-.tb-group {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  border-right: 1px solid var(--el-border-color-lighter);
-}
-.tb-group:last-child {
-  border-right: none;
-  padding-right: 0;
-}
-.stats-bar {
-  margin-bottom: 20px;
-}
-/* v3.10: 统计卡图标化 */
+
 .stat-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  text-align: left;
-  padding: 14px 16px;
+  gap: 14px;
+  padding: var(--space-md) var(--space-lg);
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  transition: all var(--transition-normal);
+
+  &:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+  }
 
   .stat-icon {
     flex-shrink: 0;
-    display: inline-flex;
+    display: flex;
     align-items: center;
     justify-content: center;
-    width: 40px;
-    height: 40px;
-    border-radius: 10px;
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-md);
     color: #fff;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
-  }
-
-  .stat-body {
-    min-width: 0;
   }
 
   .stat-value {
@@ -1285,127 +1207,180 @@ onUnmounted(() => {
   }
 
   .stat-label {
-    margin: 2px 0 0;
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
   }
 }
 
-.stat-total .stat-icon { background: linear-gradient(135deg, #7a92ff, #4c6fff); }
-.stat-positive .stat-icon { background: linear-gradient(135deg, #7ed67e, #58b24c); }
-.stat-negative .stat-icon { background: linear-gradient(135deg, #f78989, #e84b4b); }
-.stat-boundary .stat-icon { background: linear-gradient(135deg, #ffb85c, #e6a23c); }
-.stat-data .stat-icon { background: linear-gradient(135deg, #b39dff, #8b5cf6); }
-
-.stat-total .stat-value { color: #4c6fff; }
-.stat-positive .stat-value { color: #58b24c; }
-.stat-negative .stat-value { color: #e84b4b; }
-.stat-boundary .stat-value { color: #e6a23c; }
+.stat-total .stat-icon { background: linear-gradient(135deg, #818cf8, #4f46e5); }
+.stat-total .stat-value { color: var(--brand-primary); }
+.stat-positive .stat-icon { background: linear-gradient(135deg, #34d399, #10b981); }
+.stat-positive .stat-value { color: var(--color-success); }
+.stat-negative .stat-icon { background: linear-gradient(135deg, #f87171, #ef4444); }
+.stat-negative .stat-value { color: var(--color-danger); }
+.stat-boundary .stat-icon { background: linear-gradient(135deg, #fbbf24, #f59e0b); }
+.stat-boundary .stat-value { color: var(--color-warning); }
+.stat-data .stat-icon { background: linear-gradient(135deg, #a78bfa, #8b5cf6); }
 .stat-data .stat-value { color: #8b5cf6; }
 
-.stat-total { background: linear-gradient(180deg, #f3f5ff, #fff); }
-.stat-positive { background: linear-gradient(180deg, #f2fbf2, #fff); }
-.stat-negative { background: linear-gradient(180deg, #fdf3f3, #fff); }
-.stat-boundary { background: linear-gradient(180deg, #fdf7ee, #fff); }
-.stat-data { background: linear-gradient(180deg, #f6f3ff, #fff); }
+/* ===== 筛选区 ===== */
+.filter-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+  box-shadow: var(--shadow-xs);
+}
 
-.stat-label {
-  color: #909399;
-  font-size: 12px;
-  margin-bottom: 6px;
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-sm);
+
+  .el-select,
+  .el-input {
+    width: 100%;
+  }
 }
-.stat-value {
-  font-size: 24px;
-  font-weight: bold;
-  color: #303133;
+
+/* ===== 流式生成横幅 ===== */
+.streaming-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  background: linear-gradient(135deg, var(--color-info-bg), transparent);
+  border: 1px solid var(--el-color-primary-light-7);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-md);
+
+  .streaming-icon {
+    color: var(--brand-primary);
+
+    .is-loading {
+      animation: spin 1s linear infinite;
+    }
+  }
+
+  .streaming-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .streaming-title {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+
+  .streaming-progress {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
 }
-.stat-label {
-  color: #909399;
-  font-size: 13px;
-  margin-bottom: 6px;
+
+.info-alert {
+  margin-bottom: var(--space-md);
 }
-.stat-value {
-  font-size: 24px;
-  font-weight: bold;
-  color: #303133;
-}
-.filter-card {
-  margin-bottom: 20px;
-}
-.polling-alert {
-  margin-bottom: 16px;
-}
-/* v3.3: 流式生成 alert 内进度文本 + 取消按钮布局 */
-.streaming-alert-body {
+
+/* ===== 工具栏 ===== */
+.batch-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-}
-.streaming-progress-text {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pagination {
-  margin-top: 20px;
-  display: flex;
-  justify-content: flex-end;
-}
-.coverage-card {
-  margin-bottom: 20px;
-}
-.coverage-collapse {
-  margin-top: 20px;
-}
-.coverage-item {
-  margin-bottom: 8px;
-}
-.coverage-label {
-  font-size: 13px;
-  color: #606266;
-  margin-bottom: 6px;
-}
-.coverage-detail {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 4px;
-}
-/* v3.8: 移除展开行样式（改为树状表格直接显示详情列） */
-.text-muted {
-  color: #c0c4cc;
-  font-size: 12px;
-}
-/* v3.4: 生成参数对话框提示文本 */
-.form-tip {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 4px;
-  line-height: 1.4;
-}
-/* v3.8: 树状用例列表样式 */
-.module-row {
-  font-weight: bold;
-  background-color: #f6f8ff;
+  padding: 10px 16px;
+  background: var(--brand-gradient);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-md);
+  color: #fff;
 
-  td.el-table__cell {
-    background-color: #f6f8ff;
+  .batch-count {
+    font-weight: 600;
+    font-size: 14px;
+  }
+
+  .batch-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+
+    .el-button {
+      background: rgba(255, 255, 255, 0.95);
+      border-color: transparent;
+
+      &:hover {
+        background: #fff;
+      }
+    }
   }
 }
-.case-row {
-  cursor: pointer;
+
+.action-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-md);
+
+  .action-left {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
 }
+
+/* ===== 表格区 ===== */
+.table-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-xs);
+  margin-bottom: var(--space-md);
+
+  :deep(.el-table) {
+    border: none;
+
+    .module-row {
+      background-color: var(--bg-base);
+      font-weight: 600;
+
+      td.el-table__cell {
+        background-color: var(--bg-base);
+      }
+    }
+
+    .case-row {
+      cursor: pointer;
+    }
+  }
+}
+
+.case-id {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.case-title {
+  color: var(--text-primary);
+}
+
 .module-label {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: #2c3f8f;
+  color: var(--brand-primary);
 
   .module-icon {
-    color: #4c6fff;
+    color: var(--brand-primary);
   }
 
   .module-name {
     font-weight: 600;
+    color: var(--text-primary);
   }
 
   .module-count {
@@ -1415,26 +1390,144 @@ onUnmounted(() => {
     min-width: 20px;
     height: 18px;
     padding: 0 6px;
-    border-radius: 9px;
-    background: var(--el-color-primary-light-8);
-    color: var(--el-color-primary);
-    font-size: 12px;
+    border-radius: var(--radius-full);
+    background: var(--el-color-primary-light-9);
+    color: var(--brand-primary);
+    font-size: 11px;
     font-weight: 600;
   }
 }
+
 .detail-summary {
-  color: var(--el-text-color-regular, #606266);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--text-secondary);
   display: inline-block;
   max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+.text-muted {
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+/* ===== 覆盖率 ===== */
+.coverage-collapse {
+  margin-top: var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/* 折叠面板标题区 */
+.coverage-collapse :deep(.el-collapse-item__header) {
+  padding: 0 16px;
+  height: 52px;
+  font-size: 15px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.coverage-collapse :deep(.el-collapse-item__wrap) {
+  border-bottom: none;
+}
+
+.coverage-collapse :deep(.el-collapse-item__content) {
+  padding: 16px;
+}
+
+/* 标题行：图标 + 文字 + 徽章 */
+.coverage-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.coverage-title-tag {
+  margin-left: 4px;
+  font-weight: 500;
+}
+
+/* 网格布局：两列覆盖率卡 */
+.coverage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+/* 单个覆盖率卡 */
+.coverage-item {
+  background: var(--bg-base);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  min-width: 0;
+  overflow: hidden;
+
+  .coverage-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .coverage-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+
+  .coverage-rate {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .coverage-detail {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin-top: 6px;
+  }
+}
+
+.form-tip {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+/* ===== 过渡动画 ===== */
+.slide-down-enter-active, .slide-down-leave-active {
+  transition: all var(--transition-normal);
+  overflow: hidden;
+}
+
+.slide-down-enter-from, .slide-down-leave-to {
+  opacity: 0;
+  max-height: 0;
+  margin-bottom: -16px;
+}
+
+/* ===== 响应式 ===== */
 @media (max-width: 768px) {
-  .tb-group {
-    border-right: none;
-    padding: 0;
+  .testcase-list {
+    padding: var(--space-md);
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .batch-toolbar {
+    flex-direction: column;
+    gap: 8px;
+    align-items: stretch;
   }
 }
 </style>
