@@ -4,6 +4,35 @@
 
 ---
 
+## v3.15 — 回归与统计
+
+**日期**: 2026-08-12
+**基线**: v3.14
+**主题**: 测试集/回归集 + 多执行环境 + 通过率趋势
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| entity/TestSuite.java + repository | 新增测试集实体 | caseIds JSON + createdAt |
+| service/TestSuiteService.java + controller | 测试集 CRUD + 一键执行 | 执行复用 executeBatch |
+| service/ProjectService.java + controller | 多执行环境 | settings.executionEnvironments，激活环境 URL 同步 defaultTargetUrl |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| views/TestCaseList.vue | 测试集 + 执行环境 | 保存当前选中为测试集/管理/一键执行；环境增删与激活切换 |
+| api/suite.js + api/project.js | 新增 API 封装 | 测试集 4 接口 + 环境 2 接口 |
+| views/ExecutionHistory.vue | 通过率趋势图 | 最近 20 次滚动通过率折线图 |
+
+### 验证结果
+
+- 后端测试: Tests run 2, Failures 0, BUILD SUCCESS
+- 前端构建: ✓ built in 12.30s
+
+---
+
 ## v3.14 — 冷启动与工程基础
 
 **日期**: 2026-08-12

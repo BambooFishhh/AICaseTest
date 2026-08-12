@@ -147,6 +147,19 @@ public class ProjectController {
         return ApiResponse.success(projectService.updateGenerationParams(projectId, params));
     }
 
+    // v3.15: 多执行环境
+    @GetMapping("/{projectId}/environments")
+    public ApiResponse<Map<String, Object>> getExecutionEnvironments(@PathVariable String projectId) {
+        return ApiResponse.success(projectService.getExecutionEnvironments(projectId));
+    }
+
+    @PutMapping("/{projectId}/environments")
+    public ApiResponse<Map<String, Object>> updateExecutionEnvironments(
+            @PathVariable String projectId,
+            @RequestBody Map<String, Object> payload) {
+        return ApiResponse.success(projectService.updateExecutionEnvironments(projectId, payload));
+    }
+
     // v1.10: 查询 PRD
     @GetMapping("/{projectId}/prd")
     public ApiResponse<Map<String, Object>> getPrd(@PathVariable String projectId) {

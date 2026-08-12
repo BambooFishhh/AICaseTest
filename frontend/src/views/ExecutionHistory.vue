@@ -53,6 +53,17 @@
       </div>
     </div>
 
+    <!-- v3.15: 通过率趋势 -->
+    <section v-if="records.length > 1" class="trend-section">
+      <div class="trend-head">
+        <div>
+          <h2 class="section-title">通过率趋势</h2>
+          <p class="section-desc">最近 {{ Math.min(20, records.length) }} 次执行的滚动通过率</p>
+        </div>
+      </div>
+      <div ref="trendChartRef" class="trend-chart"></div>
+    </section>
+
     <!-- 空状态 -->
     <section v-if="!loading && records.length === 0" class="empty-section">
       <el-empty description="暂无执行记录，去用例列表执行用例" :image-size="120">
@@ -131,8 +142,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import * as echarts from 'echarts'
 import {
   ArrowLeft,
   RefreshRight,
@@ -153,6 +165,9 @@ const projectId = route.params.id
 
 const loading = ref(false)
 const records = ref([])
+// v3.15: 通过率趋势图
+const trendChartRef = ref(null)
+let trendChart = null
 
 const stats = computed(() => {
   const s = { total: 0, passed: 0, failed: 0, running: 0 }
@@ -170,6 +185,66 @@ const passRateText = computed(() => {
   if (completed === 0) return '—'
   return `${Math.round((stats.value.passed / completed) * 100)}%`
 })
+
+// v3.15: 最近 20 次已结束执行的滚动通过率
+const trendData = computed(() => {
+  const completed = records.value.filter(
+    (r) => r.status === 'passed' || r.status === 'failed'
+  ).slice(-20)
+  let passed = 0
+  return completed.map((r, i) => {
+    if (r.status === 'passed') passed++
+    return Math.round((passed / (i + 1)) * 100)
+  })
+})
+
+function renderTrendChart() {
+  if (!trendChartRef.value) return
+  if (!trendChart) {
+    trendChart = echarts.init(trendChartRef.value)
+  }
+  const labels = trendData.value.map((_, i) => `第${i + 1}次`)
+  trendChart.setOption({
+    grid: { left: 40, right: 20, top: 30, bottom: 30 },
+    tooltip: { trigger: 'axis' },
+    xAxis: {
+      type: 'category',
+      data: labels,
+      axisLabel: { fontSize: 11, color: '#94a3b8' }
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 100,
+      axisLabel: { formatter: '{value}%', fontSize: 11, color: '#94a3b8' },
+      splitLine: { lineStyle: { color: '#f1f5f9' } }
+    },
+    series: [
+      {
+        type: 'line',
+        data: trendData.value,
+        smooth: true,
+        symbolSize: 6,
+        lineStyle: { color: '#4f46e5', width: 2 },
+        itemStyle: { color: '#4f46e5' },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(79,70,229,0.25)' },
+              { offset: 1, color: 'rgba(79,70,229,0)' }
+            ]
+          }
+        }
+      }
+    ]
+  })
+}
+
+function handleResize() {
+  trendChart?.resize()
+}
 
 const statusLabel = (status) => {
   const map = {
@@ -221,6 +296,10 @@ async function loadExecutions() {
   }
 }
 
+watch(trendData, () => {
+  nextTick(renderTrendChart)
+})
+
 function goToDetail(row) {
   if (row.id) {
     router.push(`/projects/${projectId}/executions/${row.id}`)
@@ -239,7 +318,21 @@ function goBack() {
   router.push(`/projects/${projectId}`)
 }
 
-onMounted(loadExecutions)
+onMounted(async () => {
+  await loadExecutions()
+  if (trendData.value.length > 0) {
+    nextTick(renderTrendChart)
+  }
+  window.addEventListener('resize', handleResize)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleResize)
+  if (trendChart) {
+    trendChart.dispose()
+    trendChart = null
+  }
+})
 </script>
 
 <style scoped lang="scss">
@@ -327,6 +420,28 @@ onMounted(loadExecutions)
 .stat-failed .stat-value { color: var(--color-danger); }
 .stat-running .stat-value { color: var(--color-warning); }
 .stat-rate .stat-value { color: #06b6d4; }
+
+/* ===== v3.15: 通过率趋势 ===== */
+.trend-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-xs);
+  margin-bottom: var(--space-lg);
+}
+
+.trend-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.trend-chart {
+  width: 100%;
+  height: 240px;
+}
 
 /* ===== 空状态 ===== */
 .empty-section {

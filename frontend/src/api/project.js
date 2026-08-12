@@ -49,3 +49,12 @@ export function getGenerationParams(projectId) {
 export function updateGenerationParams(projectId, params) {
   return request.put(`/projects/${projectId}/generation-params`, params)
 }
+
+// v3.15: 多执行环境
+export function getExecutionEnvironments(projectId) {
+  return request.get(`/projects/${projectId}/environments`)
+}
+
+export function updateExecutionEnvironments(projectId, payload) {
+  return request.put(`/projects/${projectId}/environments`, payload)
+}

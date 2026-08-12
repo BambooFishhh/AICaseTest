@@ -24,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -221,6 +222,83 @@ public class ProjectService {
             return params;
         } catch (Exception e) {
             throw new BusinessException(50005, "保存生成参数失败: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    // v3.15: 多执行环境——读取 settings.executionEnvironments
+    public Map<String, Object> getExecutionEnvironments(String projectId) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("environments", new ArrayList<>());
+        result.put("active", "");
+        try {
+            JsonNode settings = objectMapper.readTree(
+                    project.getSettings() != null ? project.getSettings() : "{}");
+            JsonNode envNode = settings.path("executionEnvironments");
+            if (envNode.isMissingNode() || envNode.isNull()) {
+                return result;
+            }
+            List<Map<String, Object>> envs = new ArrayList<>();
+            JsonNode listNode = envNode.path("environments");
+            if (listNode.isArray()) {
+                for (JsonNode item : listNode) {
+                    Map<String, Object> env = new LinkedHashMap<>();
+                    env.put("name", item.path("name").asText(""));
+                    env.put("url", item.path("url").asText(""));
+                    envs.add(env);
+                }
+            }
+            result.put("environments", envs);
+            result.put("active", envNode.path("active").asText(""));
+        } catch (Exception e) {
+            log.warn("Failed to parse execution environments, using empty", e);
+        }
+        return result;
+    }
+
+    // v3.15: 更新多执行环境，激活环境 URL 同步到 defaultTargetUrl
+    @Transactional
+    public Map<String, Object> updateExecutionEnvironments(String projectId, Map<String, Object> payload) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> environments =
+                (List<Map<String, Object>>) payload.getOrDefault("environments", List.of());
+        String active = (String) payload.getOrDefault("active", "");
+        try {
+            ObjectNode settings = (ObjectNode) objectMapper.readTree(
+                    project.getSettings() != null ? project.getSettings() : "{}");
+            ObjectNode envNode = objectMapper.createObjectNode();
+            envNode.set("environments", objectMapper.valueToTree(environments));
+            envNode.put("active", active == null ? "" : active);
+            settings.set("executionEnvironments", envNode);
+
+            // 激活环境 URL 同步到 defaultTargetUrl
+            String activeUrl = "";
+            for (Map<String, Object> env : environments) {
+                if (active != null && active.equals(env.get("name")) && env.get("url") != null) {
+                    activeUrl = String.valueOf(env.get("url"));
+                }
+            }
+            JsonNode gpNode = settings.path("generationParams");
+            if (gpNode.isObject()) {
+                ObjectNode gp = (ObjectNode) gpNode;
+                if (!activeUrl.isBlank()) {
+                    gp.put("defaultTargetUrl", activeUrl);
+                } else {
+                    gp.remove("defaultTargetUrl");
+                }
+            }
+            project.setSettings(objectMapper.writeValueAsString(settings));
+            projectRepository.save(project);
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("environments", environments);
+            result.put("active", active == null ? "" : active);
+            return result;
+        } catch (Exception e) {
+            throw new BusinessException(50010, "保存执行环境失败: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 

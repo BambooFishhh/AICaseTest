@@ -257,6 +257,13 @@
         <el-button :icon="CopyDocument" :disabled="selectedRows.length === 0" @click="openCopyDialog">
           复制到
         </el-button>
+        <!-- v3.15: 测试集/回归集 -->
+        <el-button :icon="Files" :disabled="selectedRows.length === 0" @click="openSaveSuiteDialog">
+          保存为测试集
+        </el-button>
+        <el-button :icon="Operation" @click="openSuiteDialog">测试集</el-button>
+        <!-- v3.15: 多执行环境 -->
+        <el-button :icon="Connection" @click="openEnvDialog">执行环境</el-button>
         <input
           ref="xmindFileInput"
           type="file"
@@ -541,6 +548,64 @@
       </template>
     </el-dialog>
 
+    <!-- v3.15: 测试集管理对话框 -->
+    <el-dialog v-model="suiteDialogVisible" title="测试集管理" width="560px">
+      <div class="suite-create">
+        <el-input
+          v-model="newSuiteName"
+          placeholder="输入测试集名称"
+          maxlength="50"
+          style="flex: 1"
+          @keyup.enter="confirmCreateSuite"
+        />
+        <el-button
+          type="primary"
+          :disabled="selectedRows.length === 0 || !newSuiteName.trim()"
+          @click="confirmCreateSuite"
+        >
+          保存当前选中（{{ selectedRows.length }}）
+        </el-button>
+      </div>
+      <el-empty v-if="suites.length === 0" description="暂无测试集" :image-size="80" />
+      <div v-else v-for="suite in suites" :key="suite.id" class="suite-item">
+        <div class="suite-info">
+          <span class="suite-name">{{ suite.name }}</span>
+          <span class="suite-meta">{{ suite.caseCount }} 条 · {{ formatDate(suite.createdAt) }}</span>
+        </div>
+        <div class="suite-actions">
+          <el-button
+            type="success"
+            link
+            :icon="VideoPlay"
+            :loading="runningSuiteId === suite.id"
+            @click="runSuite(suite)"
+          >
+            执行
+          </el-button>
+          <el-button type="danger" link :icon="Delete" @click="removeSuite(suite)">删除</el-button>
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- v3.15: 多执行环境对话框 -->
+    <el-dialog v-model="envDialogVisible" title="执行环境" width="600px">
+      <div class="env-list">
+        <div v-for="(env, idx) in envForm.environments" :key="idx" class="env-row">
+          <el-radio v-model="envForm.active" :value="env.name" />
+          <el-input v-model="env.name" placeholder="环境名，如 dev/staging/prod" style="width: 150px" />
+          <el-input v-model="env.url" placeholder="http://localhost:5173" style="flex: 1" />
+          <el-button :icon="Delete" text type="danger" @click="removeEnv(idx)" />
+        </div>
+        <el-empty v-if="envForm.environments.length === 0" description="尚未配置环境" :image-size="60" />
+      </div>
+      <div class="env-actions">
+        <el-button :icon="Plus" @click="addEnv">添加环境</el-button>
+        <div style="flex: 1"></div>
+        <el-button @click="envDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingEnvs" @click="saveEnvs">保存</el-button>
+      </div>
+    </el-dialog>
+
     <!-- 生成参数对话框 -->
     <el-dialog
       v-model="showGenParamsDialog"
@@ -641,7 +706,7 @@ import {
   Search, Delete, Download, Upload, Check, ArrowDown, VideoPlay,
   Setting, Plus, View, RefreshRight, Share, Files, CircleCheck,
   CircleClose, Aim, Coin, FolderOpened, ArrowLeft, Loading, DataAnalysis,
-  Clock, Filter, CopyDocument
+  Clock, Filter, CopyDocument, Operation, Connection
 } from '@element-plus/icons-vue'
 import {
   listTestCases, streamGenerate, streamGenerateAppend,
@@ -649,7 +714,13 @@ import {
   batchDeleteTestCases, importXmind, reviewTestCases,
   exportTestCases, importTestCases, copyToProject
 } from '@/api/testcase'
-import { getProject, getGenerationParams, updateGenerationParams, listProjects } from '@/api/project'
+import {
+  getProject, getGenerationParams, updateGenerationParams, listProjects,
+  getExecutionEnvironments, updateExecutionEnvironments
+} from '@/api/project'
+import {
+  createSuite, listSuites, deleteSuite, executeSuite
+} from '@/api/suite'
 import { generateMindmap } from '@/api/mindmap'
 import { executeBatch } from '@/api/execution'
 import { useProjectStore } from '@/stores/project'
@@ -1112,6 +1183,144 @@ async function confirmCopy() {
     // 错误已由响应拦截器统一提示
   } finally {
     copying.value = false
+  }
+}
+
+// ===== v3.15: 测试集/回归集 =====
+const suiteDialogVisible = ref(false)
+const suites = ref([])
+const newSuiteName = ref('')
+const runningSuiteId = ref('')
+
+function formatDate(val) {
+  if (!val) return '-'
+  const d = new Date(val)
+  if (isNaN(d.getTime())) return '-'
+  return d.toLocaleString('zh-CN', { hour12: false })
+}
+
+function openSaveSuiteDialog() {
+  newSuiteName.value = ''
+  suiteDialogVisible.value = true
+  loadSuites()
+}
+
+async function openSuiteDialog() {
+  suiteDialogVisible.value = true
+  await loadSuites()
+}
+
+async function loadSuites() {
+  try {
+    const res = await listSuites(projectId)
+    suites.value = res.data || []
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+}
+
+async function confirmCreateSuite() {
+  const ids = selectedRows.value.map((tc) => tc.id)
+  if (ids.length === 0 || !newSuiteName.value.trim()) return
+  try {
+    await createSuite(projectId, { name: newSuiteName.value.trim(), caseIds: ids })
+    ElMessage.success('测试集已保存')
+    newSuiteName.value = ''
+    await loadSuites()
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+}
+
+async function runSuite(suite) {
+  runningSuiteId.value = suite.id
+  try {
+    const res = await executeSuite(
+      projectId,
+      suite.id,
+      defaultTargetUrl.value || 'http://localhost:5173'
+    )
+    ElMessage.success(`已启动测试集执行，共 ${res.data?.caseCount ?? 0} 条用例`)
+    suiteDialogVisible.value = false
+    if (res.data?.batchId) {
+      router.push(`/projects/${projectId}/batches/${res.data.batchId}`)
+    }
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    runningSuiteId.value = ''
+  }
+}
+
+async function removeSuite(suite) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除测试集「${suite.name}」吗？`,
+      '确认删除',
+      { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteSuite(projectId, suite.id)
+    ElMessage.success('测试集已删除')
+    await loadSuites()
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+}
+
+// ===== v3.15: 多执行环境 =====
+const envDialogVisible = ref(false)
+const envForm = reactive({ environments: [], active: '' })
+const savingEnvs = ref(false)
+
+async function openEnvDialog() {
+  try {
+    const res = await getExecutionEnvironments(projectId)
+    envForm.environments = res.data?.environments || []
+    envForm.active = res.data?.active || ''
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+  envDialogVisible.value = true
+}
+
+function addEnv() {
+  envForm.environments.push({ name: '', url: '' })
+}
+
+function removeEnv(idx) {
+  envForm.environments.splice(idx, 1)
+}
+
+async function saveEnvs() {
+  const cleaned = envForm.environments.filter(
+    (e) => e.name && e.name.trim() && e.url && e.url.trim()
+  )
+  if (cleaned.length === 0) {
+    ElMessage.warning('请至少配置一个环境')
+    return
+  }
+  if (!cleaned.some((e) => e.name === envForm.active)) {
+    ElMessage.warning('请选择激活环境')
+    return
+  }
+  savingEnvs.value = true
+  try {
+    await updateExecutionEnvironments(projectId, {
+      environments: cleaned,
+      active: envForm.active
+    })
+    ElMessage.success('执行环境已保存')
+    envDialogVisible.value = false
+    // 激活环境 URL 已由后端同步为默认执行 URL
+    await loadDefaultTargetUrl()
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    savingEnvs.value = false
   }
 }
 
@@ -1812,6 +2021,60 @@ onUnmounted(() => {
   color: var(--text-tertiary);
   margin-top: 4px;
   line-height: 1.4;
+}
+
+/* ===== v3.15: 测试集与执行环境 ===== */
+.suite-create {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.suite-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border: 1px solid var(--card-border-light);
+  border-radius: var(--radius-md);
+  margin-bottom: 8px;
+  background: var(--bg-base);
+}
+
+.suite-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.suite-meta {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-left: 8px;
+}
+
+.suite-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.env-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.env-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.env-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /* ===== 过渡动画 ===== */
