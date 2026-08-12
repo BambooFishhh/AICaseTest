@@ -10,7 +10,9 @@
         </div>
       </div>
       <div v-if="batch" class="page-actions">
-        <el-button type="primary" :icon="Download" @click="downloadReport">下载批次报告</el-button>
+        <!-- v3.13: 批次报告在线预览 + 下载 -->
+        <el-button type="primary" :icon="Document" @click="previewReport">预览批次报告</el-button>
+        <el-button :icon="Download" @click="downloadReport">下载批次报告</el-button>
       </div>
     </header>
 
@@ -176,7 +178,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowLeft, Loading, View, Download, CircleCheck, CircleClose, Files
+  ArrowLeft, Loading, View, Download, Document, CircleCheck, CircleClose, Files
 } from '@element-plus/icons-vue'
 import { getBatch } from '@/api/execution'
 
@@ -298,6 +300,11 @@ function goToExecution(executionId) {
 }
 
 function downloadReport() {
+  window.open(`/api/batches/${batchId}/report?download=1`, '_blank')
+}
+
+// v3.13: 批次报告在线预览（inline）
+function previewReport() {
   window.open(`/api/batches/${batchId}/report`, '_blank')
 }
 

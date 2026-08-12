@@ -237,12 +237,39 @@
         >
           执行已批准<span v-if="approvedCount > 0">（{{ approvedCount }}）</span>
         </el-button>
+      </div>
+      <div class="action-right">
+        <!-- v3.13: 导出下拉（选中优先，未选中导出全部） -->
+        <el-dropdown @command="handleExportCommand">
+          <el-button :icon="Download">
+            导出<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="json">导出 JSON</el-dropdown-item>
+              <el-dropdown-item command="csv">导出 CSV</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <!-- v3.13: 导入 JSON -->
+        <el-button :icon="Upload" @click="triggerImportJson">导入 JSON</el-button>
+        <!-- v3.13: 跨项目复制 -->
+        <el-button :icon="CopyDocument" :disabled="selectedRows.length === 0" @click="openCopyDialog">
+          复制到
+        </el-button>
         <input
           ref="xmindFileInput"
           type="file"
           accept=".xmind"
           style="display: none"
           @change="handleImportXmind"
+        />
+        <input
+          ref="jsonFileInput"
+          type="file"
+          accept=".json"
+          style="display: none"
+          @change="handleImportJson"
         />
       </div>
     </section>
@@ -492,6 +519,28 @@
       </template>
     </el-dialog>
 
+    <!-- v3.13: 跨项目复制对话框 -->
+    <el-dialog v-model="copyDialogVisible" title="复制用例到其他项目" width="480px">
+      <el-form label-width="100px">
+        <el-form-item label="选中用例数">
+          <span>{{ selectedRows.length }} 条</span>
+        </el-form-item>
+        <el-form-item label="目标项目">
+          <el-select
+            v-model="copyTargetProjectId"
+            placeholder="请选择目标项目"
+            style="width: 100%"
+          >
+            <el-option v-for="p in projects" :key="p.id" :label="p.name" :value="p.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="copyDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="copying" @click="confirmCopy">确认复制</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 生成参数对话框 -->
     <el-dialog
       v-model="showGenParamsDialog"
@@ -524,7 +573,7 @@
             <el-checkbox label="boundary">边界</el-checkbox>
             <el-checkbox label="data">数据</el-checkbox>
           </el-checkbox-group>
-          <div class="form-tip">不选 = 全部类型（当前版本仅作为生成提示，不强制过滤）</div>
+          <div class="form-tip">不选 = 全部类型；勾选后仅生成对应类型用例（v3.13 起强制过滤）</div>
         </el-form-item>
         <!-- v3.12: 默认执行 URL -->
         <el-form-item label="默认执行URL">
@@ -592,14 +641,15 @@ import {
   Search, Delete, Download, Upload, Check, ArrowDown, VideoPlay,
   Setting, Plus, View, RefreshRight, Share, Files, CircleCheck,
   CircleClose, Aim, Coin, FolderOpened, ArrowLeft, Loading, DataAnalysis,
-  Clock, Filter
+  Clock, Filter, CopyDocument
 } from '@element-plus/icons-vue'
 import {
   listTestCases, streamGenerate, streamGenerateAppend,
   cancelGenerate, createTestCase, deleteTestCase,
-  batchDeleteTestCases, importXmind, reviewTestCases
+  batchDeleteTestCases, importXmind, reviewTestCases,
+  exportTestCases, importTestCases, copyToProject
 } from '@/api/testcase'
-import { getProject, getGenerationParams, updateGenerationParams } from '@/api/project'
+import { getProject, getGenerationParams, updateGenerationParams, listProjects } from '@/api/project'
 import { generateMindmap } from '@/api/mindmap'
 import { executeBatch } from '@/api/execution'
 import { useProjectStore } from '@/stores/project'
@@ -674,7 +724,8 @@ async function loadCoverageMatrix() {
 }
 
 function handleSelectionChange(rows) {
-  selectedRows.value = rows
+  // v3.13: 过滤模块行，避免 module-xxx 进入批量操作
+  selectedRows.value = rows.filter((r) => !r.isModule)
 }
 
 const moduleOptions = computed(() => {
@@ -979,6 +1030,89 @@ async function handleImportXmind(e) {
     // 错误已由响应拦截器统一提示
   }
   e.target.value = ''
+}
+
+// ===== v3.13: 用例资产（导入 JSON / 导出 / 跨项目复制） =====
+const jsonFileInput = ref(null)
+
+function triggerImportJson() {
+  jsonFileInput.value?.click()
+}
+
+async function handleImportJson(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  try {
+    const res = await importTestCases(projectId, file)
+    ElMessage.success(`导入完成：成功 ${res.data.imported} 条，跳过 ${res.data.skipped} 条`)
+    await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+  e.target.value = ''
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+async function handleExportCommand(format) {
+  try {
+    const ids = selectedRows.value.map((tc) => tc.id)
+    const { data: blob, fileName } = await exportTestCases(
+      projectId,
+      format,
+      ids.length ? ids : undefined
+    )
+    downloadBlob(blob, fileName)
+  } catch (e) {
+    ElMessage.error('导出失败: ' + (e.message || ''))
+  }
+}
+
+const copyDialogVisible = ref(false)
+const copyTargetProjectId = ref('')
+const projects = ref([])
+const copying = ref(false)
+
+async function openCopyDialog() {
+  if (selectedRows.value.length === 0) {
+    ElMessage.warning('请先选择要复制的用例')
+    return
+  }
+  copyTargetProjectId.value = ''
+  try {
+    const res = await listProjects()
+    projects.value = res.data || []
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+  copyDialogVisible.value = true
+}
+
+async function confirmCopy() {
+  if (!copyTargetProjectId.value) {
+    ElMessage.warning('请选择目标项目')
+    return
+  }
+  copying.value = true
+  try {
+    const ids = selectedRows.value.map((tc) => tc.id)
+    const res = await copyToProject(projectId, ids, copyTargetProjectId.value)
+    ElMessage.success(`已复制 ${res.data?.copied ?? ids.length} 条用例到目标项目`)
+    copyDialogVisible.value = false
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    copying.value = false
+  }
 }
 
 function handleFilterByIds(ids) {
@@ -1456,6 +1590,13 @@ onUnmounted(() => {
   margin-bottom: var(--space-md);
 
   .action-left {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* v3.13: 右侧资产操作 */
+  .action-right {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;

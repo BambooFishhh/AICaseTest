@@ -4,6 +4,34 @@
 
 ---
 
+## v3.13 — 结果输出与用例资产
+
+**日期**: 2026-08-12
+**基线**: v3.12
+**主题**: 报告在线预览 + 恢复 JSON/CSV 导入导出与跨项目复制 + 生成聚焦类型真正生效
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| controller/ExecutionController.java | 报告端点支持 inline/download | 默认 inline 预览，download=1 附件下载 |
+| agent/TestGeneratorAgent.java | focusTypes 强制过滤 | generate/generateStreaming 均过滤；流式回调与落库一致 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| views/ExecutionResult.vue | 报告预览/下载 | 新增"预览报告"，下载改为 download=1 |
+| views/BatchResult.vue | 批次报告预览/下载 | 同上 |
+| views/TestCaseList.vue | 恢复用例资产入口 | 导出 JSON/CSV、导入 JSON、跨项目复制；批量选择过滤模块行；聚焦类型提示更新 |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS
+- 前端构建: ✓ built in 11.85s
+
+---
+
 ## v3.12 — 执行体验增强
 
 **日期**: 2026-08-12

@@ -10,7 +10,9 @@
         </div>
       </div>
       <div v-if="execution" class="page-actions">
-        <el-button type="primary" :icon="Download" @click="downloadReport">下载报告</el-button>
+        <!-- v3.13: 报告在线预览 + 下载 -->
+        <el-button type="primary" :icon="Document" @click="previewReport">预览报告</el-button>
+        <el-button :icon="Download" @click="downloadReport">下载报告</el-button>
       </div>
     </header>
 
@@ -231,7 +233,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowLeft, Loading, Download, VideoPlay, VideoPause, Camera, Picture
+  ArrowLeft, Loading, Download, Document, VideoPlay, VideoPause, Camera, Picture
 } from '@element-plus/icons-vue'
 import { getExecution, getExecutionSteps, getExecutionVideoUrl } from '@/api/execution'
 
@@ -337,6 +339,11 @@ function pausePlay() {
 }
 
 function downloadReport() {
+  window.open(`/api/executions/${executionId}/report?download=1`, '_blank')
+}
+
+// v3.13: 报告在线预览（inline）
+function previewReport() {
   window.open(`/api/executions/${executionId}/report`, '_blank')
 }
 

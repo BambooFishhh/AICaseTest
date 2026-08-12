@@ -84,21 +84,28 @@ public class ExecutionController {
 
     /** v2.4: 下载单次执行报告（自包含 HTML） */
     @GetMapping("/executions/{executionId}/report")
-    public ResponseEntity<String> downloadReport(@PathVariable String executionId) {
+    public ResponseEntity<String> downloadReport(
+            @PathVariable String executionId,
+            @RequestParam(defaultValue = "false") boolean download) {
         String html = reportService.generateExecutionReport(executionId);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, "text/html; charset=UTF-8")
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"execution_report.html\"")
+                // v3.13: 默认 inline 预览；download=1 时附件下载
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        (download ? "attachment" : "inline") + "; filename=\"execution_report.html\"")
                 .body(html);
     }
 
     /** v2.4: 下载批次执行报告（自包含 HTML） */
     @GetMapping("/batches/{batchId}/report")
-    public ResponseEntity<String> downloadBatchReport(@PathVariable String batchId) {
+    public ResponseEntity<String> downloadBatchReport(
+            @PathVariable String batchId,
+            @RequestParam(defaultValue = "false") boolean download) {
         String html = reportService.generateBatchReport(batchId);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, "text/html; charset=UTF-8")
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"batch_report.html\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        (download ? "attachment" : "inline") + "; filename=\"batch_report.html\"")
                 .body(html);
     }
 

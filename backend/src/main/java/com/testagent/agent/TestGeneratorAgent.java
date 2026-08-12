@@ -405,6 +405,9 @@ public class TestGeneratorAgent {
             result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, null, null, params);
         }
 
+        // v3.13: 聚焦类型过滤（focusTypes 非空时仅保留指定类型）
+        result = filterByFocusTypes(params, result);
+
         if (progressCallback != null) {
             progressCallback.update("正在质量评分与去重...");
         }
@@ -428,6 +431,8 @@ public class TestGeneratorAgent {
                                              ProgressCallback progressCallback, CaseCallback caseCb,
                                              AtomicBoolean cancelled, GenerationParams params) {
         List<TestCase> result = new ArrayList<>();
+        // v3.13: 包装回调，仅透传聚焦类型（SSE 推送与落库一致）
+        CaseCallback effectiveCb = wrapFocusFilter(params, caseCb);
 
         if (prdResult != null && !prdResult.isEmpty()) {
             checkCancelled(cancelled);  // v3.3: PRD 驱动分支前检查
@@ -435,7 +440,7 @@ public class TestGeneratorAgent {
                 progressCallback.update("基于 PRD 生成用例...");
             }
             try {
-                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, caseCb, cancelled, params);
+                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, effectiveCb, cancelled, params);
             } catch (GenerationCancelledException e) {
                 throw e;  // v3.3: 取消异常向上传播，不触发 fallback
             } catch (Exception e) {
@@ -445,8 +450,11 @@ public class TestGeneratorAgent {
         }
 
         if (result.isEmpty()) {
-            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, caseCb, cancelled, params);
+            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, effectiveCb, cancelled, params);
         }
+
+        // v3.13: 聚焦类型过滤
+        result = filterByFocusTypes(params, result);
 
         if (progressCallback != null) {
             progressCallback.update("正在质量评分与去重...");
@@ -460,6 +468,28 @@ public class TestGeneratorAgent {
             tc.setCreatedAt(LocalDateTime.now());
         }
         return result;
+    }
+
+    // v3.13: 聚焦类型过滤（focusTypes 为空 = 全部类型）
+    private List<TestCase> filterByFocusTypes(GenerationParams params, List<TestCase> result) {
+        if (params == null || params.getFocusTypes() == null || params.getFocusTypes().isEmpty()) {
+            return result;
+        }
+        return result.stream()
+                .filter(tc -> params.getFocusTypes().contains(tc.getType()))
+                .toList();
+    }
+
+    // v3.13: 包装 caseCb，仅透传聚焦类型
+    private CaseCallback wrapFocusFilter(GenerationParams params, CaseCallback caseCb) {
+        if (caseCb == null || params == null || params.getFocusTypes() == null || params.getFocusTypes().isEmpty()) {
+            return caseCb;
+        }
+        return tc -> {
+            if (params.getFocusTypes().contains(tc.getType())) {
+                caseCb.onCase(tc);
+            }
+        };
     }
 
     // v1.10: 原代码驱动生成逻辑（状态机/endpoint），从 generate 抽出供 PRD 失败时复用

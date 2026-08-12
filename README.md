@@ -480,6 +480,18 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v3.12](docs/v3.12/PRD_v3.12_执行体验增强.md)
 
+### v3.13 — 结果输出与用例资产
+
+报告可直接预览，用例资产可进出系统，生成聚焦类型真正生效。
+
+- 后端: 执行/批次报告默认 inline 预览（`?download=1` 下载）
+- 后端: `focusTypes` 从"仅提示"改为强制过滤（重新生成/追加生成均生效）
+- 前端: 执行结果/批次结果页新增"预览报告"
+- 前端: 用例列表恢复"导出 JSON/CSV、导入 JSON、跨项目复制"入口
+- 前端: 批量选择自动过滤模块行，避免 module-xxx 进入批量操作
+
+详见：[PRD v3.13](docs/v3.13/PRD_v3.13_结果输出与用例资产.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -520,6 +532,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v3.10 | 前端界面优化（全局设计系统/导航/项目卡片/流程条/用例列表视觉升级） | ✅ 完成 |
 | v3.11 | 执行闭环补全（执行状态回写 + 执行历史页 + 覆盖率矩阵跳转修复） | ✅ 完成 |
 | v3.12 | 执行体验增强（状态列/筛选/快捷执行/默认URL/生成预检/批次失败摘要） | ✅ 完成 |
+| v3.13 | 结果输出与用例资产（报告预览 + 导入导出恢复 + 聚焦类型生效） | ✅ 完成 |
 
 ## API 概览
 
@@ -565,6 +578,8 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | GET | `/api/projects/{pid}/executions` | 执行历史列表（v2.0，v3.11 前端接入执行历史页） |
 | GET | `/api/executions/{eid}/steps` | 执行步骤详情（v2.0） |
 | GET | `/api/executions/{eid}/video` | 下载执行录屏视频 WebM（v2.8） |
+| GET | `/api/executions/{eid}/report` | 执行报告 HTML（v2.4，v3.13 默认 inline 预览，`?download=1` 下载） |
+| GET | `/api/batches/{batchId}/report` | 批次报告 HTML（v2.4，v3.13 默认 inline 预览，`?download=1` 下载） |
 | POST | `/api/projects/{pid}/testcases/batch-execute` | 批量执行（v2.1） |
 | GET | `/api/filesystem/dirs?path=` | 目录列表（path 为空返回根盘符，v3.1） |
 | GET | `/api/batches/{batchId}` | 查询批次状态（v2.1，v3.12 增加 executions 别名） |
