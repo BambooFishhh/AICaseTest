@@ -6,6 +6,18 @@ const routes = [
     redirect: '/projects'
   },
   {
+    path: '/login',
+    name: 'Login',
+    component: () => import('@/views/Login.vue'),
+    meta: { title: '登录', public: true, breadcrumb: ['登录'] }
+  },
+  {
+    path: '/register',
+    name: 'Register',
+    component: () => import('@/views/Register.vue'),
+    meta: { title: '注册', public: true, breadcrumb: ['注册'] }
+  },
+  {
     path: '/dashboard',
     name: 'Dashboard',
     component: () => import('@/views/Dashboard.vue'),
@@ -82,6 +94,21 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes
+})
+
+// v4.0: 登录守卫
+router.beforeEach((to) => {
+  const token = localStorage.getItem('aicase-token')
+  if (to.meta.public) {
+    if (token && (to.path === '/login' || to.path === '/register')) {
+      return '/projects'
+    }
+    return true
+  }
+  if (!token) {
+    return { path: '/login', query: { redirect: to.fullPath } }
+  }
+  return true
 })
 
 router.afterEach((to) => {

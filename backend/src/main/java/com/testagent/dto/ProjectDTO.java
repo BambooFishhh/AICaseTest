@@ -19,6 +19,9 @@ public class ProjectDTO {
 
     private String sourcePath;
 
+    // v4.0: 归属用户
+    private String userId;
+
     private Map<String, Object> techStack;
 
     private String status;
@@ -50,6 +53,7 @@ public class ProjectDTO {
                 .name(entity.getName())
                 .sourceType(entity.getSourceType())
                 .sourcePath(entity.getSourcePath())
+                .userId(entity.getUserId())
                 .techStack(JsonHelper.parseMap(entity.getTechStack()))
                 .status(entity.getStatus())
                 .settings(JsonHelper.parseMap(entity.getSettings()))

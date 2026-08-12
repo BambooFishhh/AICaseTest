@@ -2,6 +2,7 @@ package com.testagent.controller;
 
 import com.testagent.common.ApiResponse;
 import com.testagent.service.CoverageService;
+import com.testagent.service.ProjectAccessService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,8 +18,12 @@ public class CoverageController {
     @Autowired
     private CoverageService coverageService;
 
+    @Autowired
+    private ProjectAccessService projectAccessService;
+
     @GetMapping("/matrix")
     public ApiResponse<Object> getCoverageMatrix(@PathVariable String projectId) {
+        projectAccessService.assertProjectAccess(projectId);
         return ApiResponse.success(coverageService.getCoverageMatrix(projectId));
     }
 }

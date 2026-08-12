@@ -16,6 +16,7 @@ import com.testagent.repository.MindMapRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.TestCaseRepository;
+import com.testagent.security.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,6 +45,9 @@ public class ProjectService {
     private SettingsService settingsService;
 
     @Autowired
+    private ProjectAccessService projectAccessService;
+
+    @Autowired
     private CodeAnalysisRepository codeAnalysisRepository;
 
     @Autowired
@@ -66,7 +70,13 @@ public class ProjectService {
     private PrdAgent prdAgent;
 
     public List<ProjectDTO> listProjects() {
-        return projectRepository.findAllByOrderByCreatedAtDesc().stream()
+        List<Project> all = projectRepository.findAllByOrderByCreatedAtDesc();
+        // v4.0: 非管理员只返回自己的项目
+        if (!SecurityUtils.isAdmin()) {
+            String uid = projectAccessService.requireCurrentUserId();
+            all = all.stream().filter(p -> uid.equals(p.getUserId())).toList();
+        }
+        return all.stream()
                 .map(ProjectDTO::from)
                 .collect(Collectors.toList());
     }
@@ -87,6 +97,7 @@ public class ProjectService {
         project.setSourceType(req.getSourceType() != null ? req.getSourceType() : "local_path");
         project.setSourcePath(req.getSourcePath());
         project.setStatus("created");
+        project.setUserId(projectAccessService.requireCurrentUserId());
         project.setTechStack("{}");
         project.setSettings("{}");
         // v3.17: 新建项目初始化系统级默认生成参数
@@ -103,6 +114,7 @@ public class ProjectService {
     }
 
     public ProjectDTO getProject(String id) {
+        projectAccessService.assertProjectAccess(id);
         Project project = projectRepository.findById(id)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + id));
         return ProjectDTO.from(project);
@@ -110,6 +122,7 @@ public class ProjectService {
 
     @Transactional
     public void deleteProject(String id) {
+        projectAccessService.assertProjectAccess(id);
         Project project = projectRepository.findById(id)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + id));
 
@@ -122,6 +135,7 @@ public class ProjectService {
 
     @Transactional
     public void triggerAnalysis(String id) {
+        projectAccessService.assertProjectAccess(id);
         Project project = projectRepository.findById(id)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + id));
         String status = project.getStatus();
@@ -134,6 +148,7 @@ public class ProjectService {
 
     @Transactional
     public void triggerGenerate(String id, GenerateRequest req) {
+        projectAccessService.assertProjectAccess(id);
         Project project = projectRepository.findById(id)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + id));
         String status = project.getStatus();
@@ -151,6 +166,7 @@ public class ProjectService {
     // ==================== v1.10: PRD 驱动相关 ====================
 
     public Map<String, Object> getPrd(String projectId) {
+        projectAccessService.assertProjectAccess(projectId);
         Project p = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         Map<String, Object> r = new LinkedHashMap<>();
@@ -162,6 +178,7 @@ public class ProjectService {
 
     @Transactional
     public ProjectDTO updatePrd(String projectId, String prdContent) {
+        projectAccessService.assertProjectAccess(projectId);
         Project p = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         p.setPrdContent(prdContent);
@@ -173,6 +190,7 @@ public class ProjectService {
 
     @Transactional
     public ProjectDTO uploadPrdPdf(String projectId, MultipartFile file) {
+        projectAccessService.assertProjectAccess(projectId);
         Project p = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         String text;
@@ -190,6 +208,7 @@ public class ProjectService {
 
     @Transactional
     public ProjectDTO fetchPrdUrl(String projectId, String url) {
+        projectAccessService.assertProjectAccess(projectId);
         if (url == null || url.isBlank()) {
             throw BusinessException.invalidParam("url 不能为空");
         }
@@ -215,6 +234,7 @@ public class ProjectService {
 
     // v3.4: 获取生成参数（从 Project.settings JSON 解析，失败降级默认值）
     public GenerationParams getGenerationParams(String projectId) {
+        projectAccessService.assertProjectAccess(projectId);
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         return parseGenerationParams(project.getSettings());
@@ -223,6 +243,7 @@ public class ProjectService {
     // v3.4: 更新生成参数（写入 Project.settings JSON 的 generationParams 字段）
     @Transactional
     public GenerationParams updateGenerationParams(String projectId, GenerationParams params) {
+        projectAccessService.assertProjectAccess(projectId);
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         try {
@@ -239,6 +260,7 @@ public class ProjectService {
 
     // v3.15: 多执行环境——读取 settings.executionEnvironments
     public Map<String, Object> getExecutionEnvironments(String projectId) {
+        projectAccessService.assertProjectAccess(projectId);
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         Map<String, Object> result = new LinkedHashMap<>();
@@ -272,6 +294,7 @@ public class ProjectService {
     // v3.15: 更新多执行环境，激活环境 URL 同步到 defaultTargetUrl
     @Transactional
     public Map<String, Object> updateExecutionEnvironments(String projectId, Map<String, Object> payload) {
+        projectAccessService.assertProjectAccess(projectId);
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         @SuppressWarnings("unchecked")

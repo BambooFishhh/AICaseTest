@@ -22,6 +22,12 @@ llm:
 app:
   output-dir: outputs
   projects-dir: projects
+  # v4.0: JWT 与默认管理员配置
+  jwt:
+    secret: ${APP_JWT_SECRET:aicasetest-dev-secret-change-me-please-0123456789}
+    expiration-hours: ${APP_JWT_EXPIRATION_HOURS:12}
+  admin:
+    password: ${APP_ADMIN_PASSWORD:admin123}
 # v2.6: MCP 多 Server 配置
 mcp:
   servers:

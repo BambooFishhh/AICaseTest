@@ -24,6 +24,8 @@ import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.TestCaseVersionRepository;
+import com.testagent.service.ProjectAccessService;
+import com.testagent.service.XmindService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -91,8 +93,12 @@ public class TestCaseService {
     @Autowired
     private XmindService xmindService;
 
+    @Autowired
+    private ProjectAccessService projectAccessService;
+
     @Async("generationExecutor")
     public void runGenerate(String projectId, GenerateRequest req) {
+        projectAccessService.assertProjectAccess(projectId);
         try {
             // v3.0: 前置校验——PRD 和代码分析至少一项才能生成用例
             Project project = projectRepository.findById(projectId)
@@ -139,6 +145,7 @@ public class TestCaseService {
      */
     @Async("generationExecutor")
     public void runGenerateStream(String projectId, SseEmitter emitter) {
+        projectAccessService.assertProjectAccess(projectId);
         AtomicBoolean clientGone = new AtomicBoolean(false);
         AtomicBoolean cancelled = new AtomicBoolean(false);
         // v3.3: 客户端断开同时置 cancelled（不只跳过 send，还要停止生成 + 跳过落库）
@@ -232,6 +239,7 @@ public class TestCaseService {
      */
     @Async("generationExecutor")
     public void runGenerateStreamAppend(String projectId, String type, SseEmitter emitter) {
+        projectAccessService.assertProjectAccess(projectId);
         AtomicBoolean clientGone = new AtomicBoolean(false);
         AtomicBoolean cancelled = new AtomicBoolean(false);
         emitter.onCompletion(() -> {
@@ -416,6 +424,7 @@ public class TestCaseService {
     public TestCaseListResponse listTestCases(String projectId, int page, int pageSize,
                                                String type, String module, String keyword,
                                                String reviewStatus, String executionStatus) {
+        projectAccessService.assertProjectAccess(projectId);
         List<TestCase> all = testCaseRepository.findByProjectId(projectId);
 
         // v3.12: 执行状态筛选（not_executed/running/passed/failed，历史数据 null 视为 not_executed）
@@ -475,18 +484,21 @@ public class TestCaseService {
     }
 
     public TestCaseDTO getTestCase(String projectId, String testcaseId) {
+        projectAccessService.assertProjectAccess(projectId);
         TestCase tc = findTestCase(projectId, testcaseId);
         return TestCaseDTO.from(tc);
     }
 
     @Transactional
     public void deleteTestCase(String projectId, String testcaseId) {
+        projectAccessService.assertProjectAccess(projectId);
         TestCase tc = findTestCase(projectId, testcaseId);
         testCaseRepository.delete(tc);
     }
 
     @Transactional
     public int batchDeleteTestCases(String projectId, java.util.List<String> ids) {
+        projectAccessService.assertProjectAccess(projectId);
         List<TestCase> all = testCaseRepository.findByProjectId(projectId);
         int count = 0;
         for (TestCase tc : all) {
@@ -501,6 +513,7 @@ public class TestCaseService {
     // ==================== v1.7: 导入导出与跨项目复制 ====================
 
     public ResponseEntity<Resource> exportTestCases(String projectId, String format, List<String> ids) {
+        projectAccessService.assertProjectAccess(projectId);
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         List<TestCase> all = testCaseRepository.findByProjectId(projectId);
@@ -540,6 +553,7 @@ public class TestCaseService {
 
     @Transactional
     public Map<String, Object> importTestCases(String projectId, MultipartFile file) {
+        projectAccessService.assertProjectAccess(projectId);
         projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         if (file == null || file.isEmpty()) {
@@ -589,6 +603,7 @@ public class TestCaseService {
      */
     @Transactional
     public Map<String, Object> importFromXmind(String projectId, MultipartFile file) {
+        projectAccessService.assertProjectAccess(projectId);
         projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         if (file == null || file.isEmpty()) {
@@ -631,6 +646,8 @@ public class TestCaseService {
 
     @Transactional
     public Map<String, Object> copyToProject(String sourceProjectId, List<String> ids, String targetProjectId) {
+        projectAccessService.assertProjectAccess(sourceProjectId);
+        projectAccessService.assertProjectAccess(targetProjectId);
         if (targetProjectId == null || targetProjectId.isBlank()) {
             throw BusinessException.invalidParam("目标项目 ID 不能为空");
         }
@@ -731,6 +748,7 @@ public class TestCaseService {
     @Transactional
     public Map<String, Object> batchUpdateReviewStatus(String projectId, List<String> ids,
                                                          String status, String reviewer) {
+        projectAccessService.assertProjectAccess(projectId);
         if (status == null || !VALID_REVIEW_STATUSES.contains(status)) {
             throw BusinessException.invalidParam("非法的评审状态: " + status);
         }
@@ -758,6 +776,7 @@ public class TestCaseService {
     // v3.6: 手动创建测试用例
     @Transactional
     public TestCaseDTO createTestCase(String projectId, CreateTestCaseRequest req) {
+        projectAccessService.assertProjectAccess(projectId);
         TestCase tc = new TestCase();
         tc.setProjectId(projectId);
         tc.setTitle(req.getTitle() != null ? req.getTitle() : "未命名测试用例");
@@ -789,6 +808,7 @@ public class TestCaseService {
 
     @Transactional
     public TestCaseDTO updateTestCase(String projectId, String testcaseId, UpdateTestCaseRequest req) {
+        projectAccessService.assertProjectAccess(projectId);
         TestCase tc = findTestCase(projectId, testcaseId);
         // v1.9: 保存编辑前快照
         createVersion(projectId, testcaseId, tc, "edit");
@@ -837,6 +857,7 @@ public class TestCaseService {
     // ==================== v1.9: 用例版本管理 ====================
 
     public List<TestCaseVersionDTO> listVersions(String projectId, String testcaseId) {
+        projectAccessService.assertProjectAccess(projectId);
         findTestCase(projectId, testcaseId);
         return testCaseVersionRepository
                 .findByTestCaseIdOrderByVersionNoDesc(testcaseId)
@@ -846,6 +867,7 @@ public class TestCaseService {
     }
 
     public TestCaseVersionDTO getVersion(String projectId, String testcaseId, String versionId) {
+        projectAccessService.assertProjectAccess(projectId);
         findTestCase(projectId, testcaseId);
         TestCaseVersion v = testCaseVersionRepository
                 .findByIdAndTestCaseId(versionId, testcaseId)
@@ -855,6 +877,7 @@ public class TestCaseService {
 
     @Transactional
     public TestCaseDTO rollbackToVersion(String projectId, String testcaseId, String versionId) {
+        projectAccessService.assertProjectAccess(projectId);
         TestCase tc = findTestCase(projectId, testcaseId);
         TestCaseVersion v = testCaseVersionRepository
                 .findByIdAndTestCaseId(versionId, testcaseId)

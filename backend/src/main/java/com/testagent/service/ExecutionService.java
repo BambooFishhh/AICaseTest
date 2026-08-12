@@ -46,6 +46,9 @@ public class ExecutionService {
     @Autowired
     private ExecutionAgent executionAgent;
 
+    @Autowired
+    private ProjectAccessService projectAccessService;
+
     /**
      * 异步执行测试用例。
      */
@@ -58,6 +61,7 @@ public class ExecutionService {
      * @param mode "programmatic" 或 "agent"
      */
     public String execute(String projectId, String testCaseId, String targetUrl, String mode, String batchId) {
+        projectAccessService.assertProjectAccess(projectId);
         TestCase testCase = testCaseRepository.findById(testCaseId)
                 .orElseThrow(() -> new IllegalArgumentException("用例不存在: " + testCaseId));
 
@@ -110,6 +114,7 @@ public class ExecutionService {
      * v2.1: 批量执行多条测试用例。
      */
     public String executeBatch(String projectId, List<String> caseIds, String targetUrl) {
+        projectAccessService.assertProjectAccess(projectId);
         String batchId = "batch-" + UUID.randomUUID().toString().substring(0, 8);
         for (String caseId : caseIds) {
             try {
@@ -126,6 +131,9 @@ public class ExecutionService {
      */
     public Map<String, Object> getBatchStatus(String batchId) {
         List<ExecutionRecord> records = executionRecordRepository.findByBatchIdOrderByStartTimeAsc(batchId);
+        if (!records.isEmpty()) {
+            projectAccessService.assertProjectAccess(records.get(0).getProjectId());
+        }
         int total = records.size();
         int running = 0, passed = 0, failed = 0;
         for (ExecutionRecord r : records) {
@@ -441,10 +449,15 @@ public class ExecutionService {
     }
 
     public ExecutionRecord getExecution(String executionId) {
-        return executionRecordRepository.findById(executionId).orElse(null);
+        ExecutionRecord record = executionRecordRepository.findById(executionId).orElse(null);
+        if (record != null) {
+            projectAccessService.assertProjectAccess(record.getProjectId());
+        }
+        return record;
     }
 
     public List<ExecutionRecord> getExecutionsByProject(String projectId) {
+        projectAccessService.assertProjectAccess(projectId);
         return executionRecordRepository.findByProjectIdOrderByStartTimeDesc(projectId);
     }
 

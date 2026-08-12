@@ -12,6 +12,11 @@ const request = axios.create({
 // 请求拦截器
 request.interceptors.request.use(
   (config) => {
+    // v4.0: 自动携带 Bearer token
+    const token = localStorage.getItem('aicase-token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
     return config
   },
   (error) => {
@@ -41,6 +46,15 @@ request.interceptors.response.use(
     if (error.response) {
       const status = error.response.status
       const respData = error.response.data
+      // v4.0: 401 → 清理登录态并跳转登录页（登录/注册页除外）
+      if (status === 401) {
+        localStorage.removeItem('aicase-token')
+        localStorage.removeItem('aicase-user')
+        const path = window.location.pathname
+        if (path !== '/login' && path !== '/register') {
+          window.location.href = `/login?redirect=${encodeURIComponent(path + window.location.search)}`
+        }
+      }
       if (respData && respData.message) {
         message = respData.message
       } else {

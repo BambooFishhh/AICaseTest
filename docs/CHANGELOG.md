@@ -4,6 +4,42 @@
 
 ---
 
+## v4.0 — 账号体系与登录
+
+**日期**: 2026-08-12
+**基线**: v3.18
+**主题**: 用户注册/登录 + JWT 认证 + 数据归属隔离 + 存量迁移与默认管理员
+
+> ⚠️ 破坏性变更：本版起所有业务接口需登录后携带 `Authorization: Bearer <token>` 访问。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| entity/User + repository/UserRepository | 新增用户实体 | BCrypt 密码哈希 |
+| security/JwtUtil/JwtAuthFilter/SecurityConfig/SecurityUtils | 新增 JWT 认证链 | 无状态；settings/stats 仅 ADMIN |
+| service/AuthService + controller/AuthController | 注册/登录/当前用户 | /api/auth/register|login|me |
+| service/ProjectAccessService | 项目级越权校验 | 接入全部项目级接口 |
+| entity/Project + ProjectService | userId 归属 | 列表/创建/各操作按归属过滤 |
+| config/DataInitializer | 初始化与迁移 | 默认管理员 + 存量项目归属迁移 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| views/Login.vue / Register.vue | 新增登录/注册页 | 居中卡片 + 表单校验 |
+| stores/auth.js + api/auth.js | 登录态管理 | localStorage 持久化 |
+| api/request.js | Bearer 注入 + 401 跳登录 | - |
+| router/index.js | 登录路由 + 守卫 | 未登录重定向 /login |
+| App.vue | 用户菜单 + 角色导航 | 仪表盘/设置仅 ADMIN |
+
+### 验证结果
+
+- 后端测试: Tests run 2, Failures 0, BUILD SUCCESS
+- 前端构建: ✓ built in 12.88s
+
+---
+
 ## v3.18 — 前端体验打磨
 
 **日期**: 2026-08-12

@@ -87,6 +87,7 @@ public class ExecutionController {
     public ResponseEntity<String> downloadReport(
             @PathVariable String executionId,
             @RequestParam(defaultValue = "false") boolean download) {
+        executionService.getExecution(executionId); // v4.0: 越权校验
         String html = reportService.generateExecutionReport(executionId);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, "text/html; charset=UTF-8")
@@ -101,6 +102,7 @@ public class ExecutionController {
     public ResponseEntity<String> downloadBatchReport(
             @PathVariable String batchId,
             @RequestParam(defaultValue = "false") boolean download) {
+        executionService.getBatchStatus(batchId); // v4.0: 越权校验
         String html = reportService.generateBatchReport(batchId);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, "text/html; charset=UTF-8")

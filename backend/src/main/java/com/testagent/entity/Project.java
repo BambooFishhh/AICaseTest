@@ -27,6 +27,10 @@ public class Project {
     @Column(name = "source_path")
     private String sourcePath;
 
+    // v4.0: 项目归属用户
+    @Column(name = "user_id", length = 64)
+    private String userId;
+
     @Column(name = "tech_stack", columnDefinition = "TEXT")
     private String techStack = "{}";
 

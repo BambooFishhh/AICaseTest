@@ -68,6 +68,22 @@
           </nav>
         </div>
         <div class="topbar-right">
+          <!-- v4.0: 用户菜单 -->
+          <el-dropdown v-if="authStore.user" trigger="click" @command="handleUserCommand">
+            <div class="user-chip">
+              <span class="user-avatar">{{ userInitial }}</span>
+              <span class="user-name">{{ authStore.user.displayName || authStore.user.username }}</span>
+              <el-icon :size="12"><ArrowDown /></el-icon>
+            </div>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item disabled>
+                  {{ authStore.user.username }}（{{ authStore.user.role === 'ADMIN' ? '管理员' : '用户' }}）
+                </el-dropdown-item>
+                <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <!-- v3.18: 深色主题开关 -->
           <button class="theme-toggle" :title="isDark ? '切换到浅色模式' : '切换到深色模式'" @click="toggleTheme">
             <el-icon :size="16">
@@ -98,12 +114,14 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   FolderOpened, Setting, Fold, Expand, DataAnalysis, View, Document, Clock, Share, Picture,
-  Sunny, Moon
+  Sunny, Moon, ArrowDown
 } from '@element-plus/icons-vue'
 // v3.18: 版本号动态化
 import pkg from '../package.json'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
+const authStore = useAuthStore()
 const sidebarCollapsed = ref(false)
 // v3.18: 深色主题
 const isDark = ref(localStorage.getItem('aicase-theme') === 'dark')
@@ -126,11 +144,29 @@ function handleResize() {
   }
 }
 
-const navItems = [
+const allNavItems = [
   { path: '/dashboard', label: '仪表盘', icon: DataAnalysis },
   { path: '/projects', label: '项目列表', icon: FolderOpened },
   { path: '/settings', label: '系统设置', icon: Setting }
 ]
+
+// v4.0: 按角色过滤导航（仪表盘/系统设置仅管理员）
+const navItems = computed(() => {
+  if (authStore.isAdmin) return allNavItems
+  return allNavItems.filter((item) => item.path !== '/dashboard' && item.path !== '/settings')
+})
+
+const userInitial = computed(() => {
+  const name = authStore.user?.displayName || authStore.user?.username || '?'
+  return name.charAt(0).toUpperCase()
+})
+
+function handleUserCommand(command) {
+  if (command === 'logout') {
+    authStore.logout()
+    window.location.href = '/login'
+  }
+}
 
 // v3.17: 面包屑
 const breadcrumbs = computed(() => {
@@ -164,6 +200,15 @@ onMounted(() => {
   applyTheme()
   handleResize()
   window.addEventListener('resize', handleResize)
+  // v4.0: 有 token 时拉取当前用户（token 失效由拦截器处理）
+  if (authStore.token && !authStore.user) {
+    authStore.fetchMe().catch(() => {
+      authStore.logout()
+      if (route.path !== '/login') {
+        window.location.href = '/login'
+      }
+    })
+  }
 })
 
 onBeforeUnmount(() => {
@@ -402,6 +447,47 @@ onBeforeUnmount(() => {
   &:hover {
     background: var(--el-color-primary-light-9);
     color: var(--brand-primary);
+  }
+}
+
+/* v4.0: 用户菜单 */
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  border-radius: var(--radius-full);
+  background: var(--bg-base);
+  border: 1px solid var(--card-border);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+
+  &:hover {
+    border-color: var(--brand-primary-lighter);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .user-avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--brand-gradient);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .user-name {
+    font-size: 13px;
+    color: var(--text-primary);
+    font-weight: 500;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 
