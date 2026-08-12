@@ -31,6 +31,8 @@
       />
       <div class="pane-actions">
         <el-button type="primary" :loading="saving" :icon="Check" @click="saveText">保存 PRD</el-button>
+        <!-- v3.14: 载入示例 PRD -->
+        <el-button :icon="MagicStick" @click="useSample">使用示例</el-button>
         <el-button v-if="prdContent" :icon="View" @click="previewVisible = true">预览完整</el-button>
       </div>
     </div>
@@ -129,9 +131,11 @@
 import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  UploadFilled, Check, View, Download, Document
+  UploadFilled, Check, View, Download, Document, MagicStick
 } from '@element-plus/icons-vue'
 import { getPrd, updatePrd, uploadPrdPdf, fetchPrdUrl } from '@/api/project'
+// v3.14: 内置示例 PRD（快速体验 PRD 驱动生成）
+import samplePrd from '@/assets/samples/order-prd.md?raw'
 
 const props = defineProps({ projectId: String })
 
@@ -196,6 +200,13 @@ async function saveText() {
   } finally {
     saving.value = false
   }
+}
+
+// v3.14: 载入内置示例 PRD 到编辑器（不自动保存，用户确认后保存生效）
+function useSample() {
+  textForm.value.content = samplePrd
+  activeTab.value = 'text'
+  ElMessage.info('已载入示例 PRD（电商订单系统），点击"保存 PRD"后即可生成用例')
 }
 
 // md/txt 上传：浏览器端 FileReader 读取文本，再调用 updatePrd 保存

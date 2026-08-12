@@ -4,6 +4,34 @@
 
 ---
 
+## v3.14 — 冷启动与工程基础
+
+**日期**: 2026-08-12
+**基线**: v3.13
+**主题**: 内置示例 PRD + 最小单元测试 + CI 构建门禁
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| src/test/.../CsvExporterTest.java | 新增单测 | CSV 表头/内容/BOM/列表拼接 |
+| src/test/.../XmindServiceTest.java | 新增单测 | XMind 生成→解析 round-trip |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| assets/samples/order-prd.md | 新增示例 PRD | 电商订单系统完整示例 |
+| components/PrdPanel.vue | 新增"使用示例"按钮 | 一键载入示例 PRD |
+| .github/workflows/ci.yml | 新增 CI | 后端 mvn test + 前端 npm build 门禁 |
+
+### 验证结果
+
+- 后端测试: Tests run 2, Failures 0, BUILD SUCCESS
+- 前端构建: ✓ built in 11.92s
+
+---
+
 ## v3.13 — 结果输出与用例资产
 
 **日期**: 2026-08-12
