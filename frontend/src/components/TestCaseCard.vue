@@ -735,6 +735,8 @@ const props = defineProps({
   testCase: { type: Object, default: () => ({}) },
   editable: { type: Boolean, default: false },
   visible: { type: Boolean, default: false },
+  // v3.12: 项目默认执行 URL（可选，自动带入执行对话框）
+  defaultTargetUrl: { type: String, default: '' },
   canGoPrev: { type: Boolean, default: false },
   canGoNext: { type: Boolean, default: false },
   mode: { type: String, default: 'view' }
@@ -954,7 +956,7 @@ const goNext = () => emit('next')
 
 // 执行测试用例
 const openExecuteDialog = () => {
-  targetUrl.value = 'http://localhost:5173'
+  targetUrl.value = props.defaultTargetUrl || 'http://localhost:5173'
   executeMode.value = 'agent'
   executeDialogVisible.value = true
 }

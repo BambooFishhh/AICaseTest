@@ -467,6 +467,19 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v3.11](docs/v3.11/PRD_v3.11_执行闭环补全.md)
 
+### v3.12 — 执行体验增强
+
+高频执行路径的体验升级。
+
+- 后端: 用例列表新增执行状态筛选（not_executed/running/passed/failed）
+- 后端: 项目生成参数新增 `defaultTargetUrl`（默认执行 URL）；批次接口补 `executions` 别名修复列表为空 bug
+- 前端: 用例列表新增执行状态列 + "重跑失败（N）"/"执行已批准（N）"一键批量执行
+- 前端: 单条/批量执行对话框自动带入项目默认 URL
+- 前端: "生成用例"前置预检（无 PRD 且未分析时禁用并提示）
+- 前端: 批次结果页失败用例错误摘要折叠区
+
+详见：[PRD v3.12](docs/v3.12/PRD_v3.12_执行体验增强.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -506,6 +519,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v3.9 | XMind 导入与脑图查看入口（逆向解析 XMind + 移除 JSON/CSV + 查看脑图按钮） | ✅ 完成 |
 | v3.10 | 前端界面优化（全局设计系统/导航/项目卡片/流程条/用例列表视觉升级） | ✅ 完成 |
 | v3.11 | 执行闭环补全（执行状态回写 + 执行历史页 + 覆盖率矩阵跳转修复） | ✅ 完成 |
+| v3.12 | 执行体验增强（状态列/筛选/快捷执行/默认URL/生成预检/批次失败摘要） | ✅ 完成 |
 
 ## API 概览
 
@@ -526,9 +540,9 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | PUT | `/api/projects/{id}/prd` | 更新文本 PRD |
 | POST | `/api/projects/{id}/prd/upload` | 上传 PDF（PDFBox 解析） |
 | POST | `/api/projects/{id}/prd/fetch` | 抓取在线链接 PRD（Jsoup） |
-| GET | `/api/projects/{id}/generation-params` | 获取生成参数（v3.4） |
-| PUT | `/api/projects/{id}/generation-params` | 更新生成参数（v3.4） |
-| GET | `/api/projects/{id}/testcases` | 用例列表（分页+筛选+覆盖率） |
+| GET | `/api/projects/{id}/generation-params` | 获取生成参数（v3.4，v3.12 含 defaultTargetUrl） |
+| PUT | `/api/projects/{id}/generation-params` | 更新生成参数（v3.4，v3.12 含 defaultTargetUrl） |
+| GET | `/api/projects/{id}/testcases` | 用例列表（分页+筛选+覆盖率，v3.12 支持 executionStatus 筛选） |
 | GET | `/api/projects/{id}/coverage/matrix` | 覆盖率矩阵（每转换覆盖详情） |
 | GET | `/api/projects/{id}/testcases/{tcId}` | 用例详情 |
 | PUT | `/api/projects/{id}/testcases/{tcId}` | 更新用例 |
@@ -553,7 +567,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | GET | `/api/executions/{eid}/video` | 下载执行录屏视频 WebM（v2.8） |
 | POST | `/api/projects/{pid}/testcases/batch-execute` | 批量执行（v2.1） |
 | GET | `/api/filesystem/dirs?path=` | 目录列表（path 为空返回根盘符，v3.1） |
-| GET | `/api/batches/{batchId}` | 查询批次状态（v2.1） |
+| GET | `/api/batches/{batchId}` | 查询批次状态（v2.1，v3.12 增加 executions 别名） |
 | GET | `/api/health` | 健康检查 |
 
 ## License

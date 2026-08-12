@@ -54,9 +54,10 @@ public class TestCaseController {
             @RequestParam(required = false) String type,
             @RequestParam(required = false) String module,
             @RequestParam(required = false) String keyword,
-            @RequestParam(required = false) String reviewStatus) {
+            @RequestParam(required = false) String reviewStatus,
+            @RequestParam(required = false) String executionStatus) {
         return ApiResponse.success(testCaseService.listTestCases(
-                projectId, page, pageSize, type, module, keyword, reviewStatus));
+                projectId, page, pageSize, type, module, keyword, reviewStatus, executionStatus));
     }
 
     @GetMapping("/{testcaseId}")

@@ -415,8 +415,16 @@ public class TestCaseService {
 
     public TestCaseListResponse listTestCases(String projectId, int page, int pageSize,
                                                String type, String module, String keyword,
-                                               String reviewStatus) {
+                                               String reviewStatus, String executionStatus) {
         List<TestCase> all = testCaseRepository.findByProjectId(projectId);
+
+        // v3.12: 执行状态筛选（not_executed/running/passed/failed，历史数据 null 视为 not_executed）
+        if (executionStatus != null && !executionStatus.isBlank()) {
+            all = all.stream()
+                    .filter(tc -> executionStatus.equals(
+                            tc.getExecutionStatus() == null ? "not_executed" : tc.getExecutionStatus()))
+                    .collect(Collectors.toList());
+        }
 
         // v1.8: 评审状态筛选（历史数据 null 视为 draft）
         if (reviewStatus != null && !reviewStatus.isBlank()) {

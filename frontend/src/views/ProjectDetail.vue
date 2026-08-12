@@ -100,6 +100,7 @@
                 type="primary"
                 :icon="MagicStick"
                 :disabled="!canGenerate"
+                :title="generateBlockedReason"
                 @click="handleGenerate"
               >
                 生成用例
@@ -230,9 +231,23 @@ const canAnalyze = computed(() => {
   return hasSourcePath.value && (s === 'created' || s === 'failed')
 })
 
+// v3.12: 生成前置预检——created 且无 PRD 时不可生成（无任何上下文）
+const hasPrd = computed(() => {
+  return !!project.value?.prdContent && project.value.prdContent.trim() !== ''
+})
+
 const canGenerate = computed(() => {
   const s = project.value?.status
-  return s !== 'analyzing' && s !== 'generating'
+  if (s === 'analyzing' || s === 'generating') return false
+  if (s === 'created' && !hasPrd.value) return false
+  return true
+})
+
+const generateBlockedReason = computed(() => {
+  const s = project.value?.status
+  if (s === 'analyzing' || s === 'generating') return '正在处理中，请稍候'
+  if (s === 'created' && !hasPrd.value) return '请先提供 PRD 或完成代码分析后再生成用例'
+  return ''
 })
 
 const canMindmap = computed(() => project.value?.status === 'completed')

@@ -128,6 +128,8 @@ public class ExecutionService {
         result.put("failed", failed);
         result.put("completed", total - running);
         result.put("records", records);
+        // v3.12: 前端读取 executions 别名（原仅有 records，导致批次列表为空）
+        result.put("executions", records);
         return result;
     }
 

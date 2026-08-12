@@ -80,6 +80,35 @@
         </div>
       </section>
 
+      <!-- v3.12: 失败用例错误摘要 -->
+      <section v-if="failedExecutions.length > 0" class="failure-section">
+        <el-collapse>
+          <el-collapse-item :name="'failures'">
+            <template #title>
+              <div class="failure-title">
+                <el-icon :size="16"><CircleClose /></el-icon>
+                <span>失败用例（{{ failedExecutions.length }}）</span>
+              </div>
+            </template>
+            <div v-for="row in failedExecutions" :key="row.id" class="failure-item">
+              <div class="failure-item-head">
+                <span class="failure-case-title">{{ row.testCaseTitle || '-' }}</span>
+                <el-button
+                  type="primary"
+                  link
+                  :icon="View"
+                  @click="goToExecution(row.id)"
+                >
+                  查看详情
+                </el-button>
+              </div>
+              <div v-if="row.errorMessage" class="failure-error">{{ row.errorMessage }}</div>
+              <div v-else class="failure-error muted">无错误详情，请点击查看步骤结果</div>
+            </div>
+          </el-collapse-item>
+        </el-collapse>
+      </section>
+
       <!-- 用例执行列表 -->
       <section class="list-section">
         <div class="section-head">
@@ -101,9 +130,9 @@
           highlight-current-row
           @row-click="handleRowClick"
         >
-          <el-table-column prop="caseTitle" label="用例标题" min-width="240">
+          <el-table-column prop="testCaseTitle" label="用例标题" min-width="240">
             <template #default="{ row }">
-              <span class="case-title">{{ row.caseTitle || '-' }}</span>
+              <span class="case-title">{{ row.testCaseTitle || '-' }}</span>
             </template>
           </el-table-column>
           <el-table-column label="状态" width="120">
@@ -121,11 +150,11 @@
           <el-table-column label="操作" width="120" align="center">
             <template #default="{ row }">
               <el-button
-                v-if="row.executionId"
+                v-if="row.id"
                 type="primary"
                 link
                 :icon="View"
-                @click.stop="goToExecution(row.executionId)"
+                @click.stop="goToExecution(row.id)"
               >查看详情</el-button>
               <span v-else class="text-muted">-</span>
             </template>
@@ -164,6 +193,11 @@ let pollTimer = null
 const executions = computed(() => {
   const list = batch.value?.executions
   return Array.isArray(list) ? list : []
+})
+
+// v3.12: 失败用例（错误摘要折叠区）
+const failedExecutions = computed(() => {
+  return executions.value.filter((r) => r.status === 'failed')
 })
 
 // 统计数据
@@ -254,8 +288,8 @@ function stopPoll() {
 
 // 点击用例行跳转到执行详情
 function handleRowClick(row) {
-  if (row.executionId) {
-    goToExecution(row.executionId)
+  if (row.id) {
+    goToExecution(row.id)
   }
 }
 
@@ -444,6 +478,62 @@ onUnmounted(() => {
   &.status-failed { color: var(--color-danger); background: var(--color-danger-bg); }
   &.status-running { color: var(--color-warning); background: var(--color-warning-bg); }
   &.status-pending { color: var(--text-secondary); background: #f1f5f9; }
+}
+
+/* ===== v3.12: 失败用例摘要 ===== */
+.failure-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 8px 16px;
+  box-shadow: var(--shadow-xs);
+  margin-bottom: var(--space-lg);
+}
+
+.failure-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-danger);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.failure-item {
+  padding: 12px 14px;
+  background: #fef2f2;
+  border: 1px solid var(--color-danger-bg);
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.failure-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.failure-case-title {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.failure-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-danger);
+  line-height: 1.5;
+  word-break: break-all;
+
+  &.muted {
+    color: var(--text-tertiary);
+  }
 }
 
 /* ===== 列表 ===== */

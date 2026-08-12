@@ -4,6 +4,37 @@
 
 ---
 
+## v3.12 — 执行体验增强
+
+**日期**: 2026-08-12
+**基线**: v3.11
+**主题**: 执行状态可视化与快捷操作 + 默认执行 URL + 生成前置预检 + 批次失败摘要
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| service/TestCaseService.java | listTestCases 新增 executionStatus 筛选 | 未执行/执行中/通过/失败 |
+| controller/TestCaseController.java | 参数透传 | - |
+| dto/GenerationParams.java | 新增 defaultTargetUrl | 项目默认执行 URL |
+| service/ExecutionService.java | getBatchStatus 新增 executions 别名 | 修复批次列表为空的数据映射 bug |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| views/TestCaseList.vue | 执行状态列/筛选 + 快捷执行 | 状态胶囊列；重跑失败/执行已批准一键批量执行；默认 URL 带入执行对话框 |
+| components/TestCaseCard.vue | 新增 defaultTargetUrl prop | 单条执行对话框默认带入项目 URL |
+| views/ProjectDetail.vue | 生成前置预检 | created 且无 PRD 时禁用"生成用例"并提示 |
+| views/BatchResult.vue | 修复列表映射 + 失败摘要 | 读取 executions/id/testCaseTitle；失败用例错误摘要折叠区 |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS
+- 前端构建: ✓ built in 12.26s
+
+---
+
 ## v3.11 — 执行闭环补全
 
 **日期**: 2026-08-12

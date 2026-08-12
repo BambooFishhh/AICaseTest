@@ -117,6 +117,19 @@
           <el-option label="已批准" value="approved" />
           <el-option label="已拒绝" value="rejected" />
         </el-select>
+        <!-- v3.12: 执行状态筛选 -->
+        <el-select
+          v-model="filters.executionStatus"
+          placeholder="执行状态筛选"
+          clearable
+          size="default"
+          @change="handleFilter"
+        >
+          <el-option label="未执行" value="not_executed" />
+          <el-option label="执行中" value="running" />
+          <el-option label="通过" value="passed" />
+          <el-option label="失败" value="failed" />
+        </el-select>
         <el-input
           v-model="filters.keyword"
           placeholder="搜索用例标题/模块"
@@ -205,6 +218,25 @@
       <div class="action-left">
         <el-button :icon="Upload" @click="triggerImportXmind">导入 XMind</el-button>
         <el-button type="success" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
+        <!-- v3.12: 快捷批量执行 -->
+        <el-button
+          type="danger"
+          plain
+          :icon="RefreshRight"
+          :disabled="failedCount === 0"
+          @click="handleRerunFailed"
+        >
+          重跑失败<span v-if="failedCount > 0">（{{ failedCount }}）</span>
+        </el-button>
+        <el-button
+          type="success"
+          plain
+          :icon="CircleCheck"
+          :disabled="approvedCount === 0"
+          @click="handleExecuteApproved"
+        >
+          执行已批准<span v-if="approvedCount > 0">（{{ approvedCount }}）</span>
+        </el-button>
         <input
           ref="xmindFileInput"
           type="file"
@@ -306,6 +338,14 @@
             <span v-else-if="!row.isModule" class="text-muted">未评分</span>
           </template>
         </el-table-column>
+        <!-- v3.12: 执行状态列 -->
+        <el-table-column label="执行" width="80">
+          <template #default="{ row }">
+            <span v-if="!row.isModule" class="status-pill" :class="`status-${executionStatusKey(row.executionStatus)}`">
+              <i class="status-dot"></i>{{ executionStatusText(row.executionStatus) }}
+            </span>
+          </template>
+        </el-table-column>
         <el-table-column label="评审" width="70">
           <template #default="{ row }">
             <el-tag v-if="!row.isModule" :type="reviewTagType(row.reviewStatus)" size="small" effect="light">
@@ -389,6 +429,7 @@
       <test-case-card
         v-if="currentTestCase"
         :test-case="currentTestCase"
+        :default-target-url="defaultTargetUrl"
         :editable="true"
         :can-go-prev="currentIndex > 0"
         :can-go-next="currentIndex < testCases.length - 1"
@@ -484,6 +525,15 @@
             <el-checkbox label="data">数据</el-checkbox>
           </el-checkbox-group>
           <div class="form-tip">不选 = 全部类型（当前版本仅作为生成提示，不强制过滤）</div>
+        </el-form-item>
+        <!-- v3.12: 默认执行 URL -->
+        <el-form-item label="默认执行URL">
+          <el-input
+            v-model="genParams.defaultTargetUrl"
+            placeholder="例如 http://localhost:5173"
+            clearable
+          />
+          <div class="form-tip">执行用例时自动带入的默认地址，可在执行对话框覆盖</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -597,9 +647,13 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 
-const filters = reactive({ module: '', type: '', priority: '', keyword: '', reviewStatus: '' })
+const filters = reactive({
+  module: '', type: '', priority: '', keyword: '', reviewStatus: '', executionStatus: ''
+})
 // v3.11: 覆盖率矩阵关联用例的内存 ID 筛选（独立于 filters，避免依赖 keyword 搜索）
 const idFilter = ref([])
+// v3.12: 项目默认执行 URL
+const defaultTargetUrl = ref('')
 
 const dialogVisible = ref(false)
 const currentTestCase = ref(null)
@@ -709,6 +763,42 @@ function reviewText(status) {
   return { draft: '草稿', reviewed: '已评审', approved: '已批准', rejected: '已拒绝' }[status] || status || '草稿'
 }
 
+// v3.12: 执行状态展示
+function executionStatusKey(status) {
+  const key = status || 'not_executed'
+  return ['not_executed', 'running', 'passed', 'failed'].includes(key) ? key : 'not_executed'
+}
+
+function executionStatusText(status) {
+  return { not_executed: '未执行', running: '执行中', passed: '通过', failed: '失败' }[status] || '未执行'
+}
+
+// v3.12: 快捷执行统计（基于当前已加载列表）
+const failedCount = computed(() => testCases.value.filter((tc) => tc.executionStatus === 'failed').length)
+const approvedCount = computed(() => testCases.value.filter((tc) => tc.reviewStatus === 'approved').length)
+
+// v3.12: 重跑失败用例
+function handleRerunFailed() {
+  const failed = testCases.value.filter((tc) => tc.executionStatus === 'failed')
+  if (failed.length === 0) {
+    ElMessage.warning('没有失败用例')
+    return
+  }
+  selectedRows.value = failed
+  openBatchExecuteDialog()
+}
+
+// v3.12: 执行已批准用例
+function handleExecuteApproved() {
+  const approved = testCases.value.filter((tc) => tc.reviewStatus === 'approved')
+  if (approved.length === 0) {
+    ElMessage.warning('没有已批准用例')
+    return
+  }
+  selectedRows.value = approved
+  openBatchExecuteDialog()
+}
+
 async function handleReviewCommand(command) {
   const ids = selectedRows.value.map((tc) => tc.id)
   const text = { reviewed: '已评审', approved: '已批准', rejected: '已拒绝', draft: '草稿' }[command]
@@ -762,6 +852,7 @@ async function loadList() {
     if (filters.type) params.type = filters.type
     if (filters.keyword) params.keyword = filters.keyword
     if (filters.reviewStatus) params.reviewStatus = filters.reviewStatus
+    if (filters.executionStatus) params.executionStatus = filters.executionStatus
     const res = await listTestCases(projectId, params)
     const data = res.data || {}
     testCases.value = data.testCases || []
@@ -919,7 +1010,7 @@ function openBatchExecuteDialog() {
     ElMessage.warning('请先选择要执行的用例')
     return
   }
-  batchTargetUrl.value = 'http://localhost:5173'
+  batchTargetUrl.value = defaultTargetUrl.value || 'http://localhost:5173'
   batchExecuteDialogVisible.value = true
 }
 
@@ -1121,7 +1212,8 @@ const savingParams = ref(false)
 const genParams = ref({
   caseDensity: 'medium',
   temperature: 0.4,
-  focusTypes: []
+  focusTypes: [],
+  defaultTargetUrl: ''
 })
 
 async function handleOpenGenParams() {
@@ -1132,11 +1224,23 @@ async function handleOpenGenParams() {
       genParams.value = {
         caseDensity: res.data.caseDensity || 'medium',
         temperature: typeof res.data.temperature === 'number' ? res.data.temperature : 0.4,
-        focusTypes: Array.isArray(res.data.focusTypes) ? res.data.focusTypes : []
+        focusTypes: Array.isArray(res.data.focusTypes) ? res.data.focusTypes : [],
+        defaultTargetUrl: res.data.defaultTargetUrl || ''
       }
+      defaultTargetUrl.value = genParams.value.defaultTargetUrl
     }
   } catch {
     // 拉取失败用默认值
+  }
+}
+
+// v3.12: 加载默认执行 URL
+async function loadDefaultTargetUrl() {
+  try {
+    const res = await getGenerationParams(projectId)
+    defaultTargetUrl.value = res.data?.defaultTargetUrl || ''
+  } catch {
+    // 静默失败，保持默认值
   }
 }
 
@@ -1158,7 +1262,7 @@ function goBack() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+  await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix(), loadDefaultTargetUrl()])
   if (route.query.generate === '1') {
     router.replace({ path: route.path })
     try {
@@ -1412,6 +1516,27 @@ onUnmounted(() => {
 
 .case-title {
   color: var(--text-primary);
+}
+
+/* v3.12: 执行状态胶囊 */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  &.status-passed { color: var(--color-success); }
+  &.status-failed { color: var(--color-danger); }
+  &.status-running { color: var(--color-warning); }
+  &.status-not_executed { color: var(--text-tertiary); }
 }
 
 .module-label {
