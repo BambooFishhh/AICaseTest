@@ -4,6 +4,29 @@
 
 ---
 
+## v3.18 — 前端体验打磨
+
+**日期**: 2026-08-12
+**基线**: v3.17
+**主题**: 表格列设置/密度/筛选持久化 + 窄屏适配 + 骨架屏/过渡 + 空状态引导 + 步骤过滤 + 版本号动态化 + 深色主题 + 脑图导出 PNG
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| views/TestCaseList.vue | 显示设置 + 筛选持久化 + 空状态 + 骨架屏 | 列显隐/紧凑密度 localStorage；筛选条件记忆；空列表引导；加载骨架 |
+| views/ExecutionResult.vue | 仅显示失败 + 失败高亮 | 步骤过滤与结果色 |
+| App.vue | 深色主题 + 版本号动态化 + 窄屏折叠 + 路由过渡 | html.dark 切换；package.json 版本；≤1024px 自动折叠 |
+| main.js / styles/index.scss | 深色主题支持 | Element Plus dark css-vars + 令牌覆盖 |
+| views/MindMapPreview.vue | 导出 PNG | SVG → canvas 下载 |
+
+### 验证结果
+
+- 后端测试: Tests run 2, Failures 0, BUILD SUCCESS（无后端改动）
+- 前端构建: ✓ built in 12.82s
+
+---
+
 ## v3.17 — 平台化打磨
 
 **日期**: 2026-08-12

@@ -13,6 +13,10 @@
         <el-button :disabled="!hasData" :icon="Download" @click="handleDownload">
           下载 .xmind
         </el-button>
+        <!-- v3.18: 导出 PNG -->
+        <el-button :disabled="!hasData" :icon="Picture" @click="exportPng">
+          导出 PNG
+        </el-button>
       </div>
     </header>
 
@@ -122,7 +126,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Markmap } from 'markmap-view'
 import {
-  ArrowLeft, Share, Download, Files, CircleCheck, CircleClose, Aim, Coin, FullScreen
+  ArrowLeft, Share, Download, Picture, Files, CircleCheck, CircleClose, Aim, Coin, FullScreen
 } from '@element-plus/icons-vue'
 import { previewMindmap, generateMindmap, downloadMindmapUrl } from '@/api/mindmap'
 
@@ -383,6 +387,41 @@ async function handleGenerate() {
 
 function handleDownload() {
   window.open(downloadMindmapUrl(projectId))
+}
+
+// v3.18: 脑图导出 PNG（SVG → canvas）
+function exportPng() {
+  const svg = chartRef.value
+  if (!svg) return
+  const bounds = svg.getBoundingClientRect()
+  const width = Math.max(bounds.width || 1200, 1200)
+  const height = Math.max(bounds.height || 900, 900)
+  const clone = svg.cloneNode(true)
+  clone.setAttribute('width', width)
+  clone.setAttribute('height', height)
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+  const xml = new XMLSerializer().serializeToString(clone)
+  const url = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml;charset=utf-8' }))
+  const img = new Image()
+  img.onload = () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, width, height)
+    ctx.drawImage(img, 0, 0, width, height)
+    URL.revokeObjectURL(url)
+    const a = document.createElement('a')
+    a.href = canvas.toDataURL('image/png')
+    a.download = `${previewData.value?.title || 'mindmap'}.png`
+    a.click()
+  }
+  img.onerror = () => {
+    URL.revokeObjectURL(url)
+    ElMessage.error('导出 PNG 失败')
+  }
+  img.src = url
 }
 
 function goBack() {

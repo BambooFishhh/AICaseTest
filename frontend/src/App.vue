@@ -68,27 +68,63 @@
           </nav>
         </div>
         <div class="topbar-right">
-          <span class="version-tag">v4.0</span>
+          <!-- v3.18: 深色主题开关 -->
+          <button class="theme-toggle" :title="isDark ? '切换到浅色模式' : '切换到深色模式'" @click="toggleTheme">
+            <el-icon :size="16">
+              <Sunny v-if="!isDark" />
+              <Moon v-else />
+            </el-icon>
+          </button>
+          <!-- v3.18: 版本号动态化 -->
+          <span class="version-tag">{{ appVersion }}</span>
         </div>
       </header>
 
       <!-- 内容区域 -->
       <main class="app-content">
-        <router-view />
+        <!-- v3.18: 路由过渡 -->
+        <router-view v-slot="{ Component }">
+          <transition name="fade-slide" mode="out-in">
+            <component :is="Component" />
+          </transition>
+        </router-view>
       </main>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  FolderOpened, Setting, Fold, Expand, DataAnalysis, View, Document, Clock, Share, Picture
+  FolderOpened, Setting, Fold, Expand, DataAnalysis, View, Document, Clock, Share, Picture,
+  Sunny, Moon
 } from '@element-plus/icons-vue'
+// v3.18: 版本号动态化
+import pkg from '../package.json'
 
 const route = useRoute()
 const sidebarCollapsed = ref(false)
+// v3.18: 深色主题
+const isDark = ref(localStorage.getItem('aicase-theme') === 'dark')
+const appVersion = `v${pkg.version}`
+
+function applyTheme() {
+  document.documentElement.classList.toggle('dark', isDark.value)
+}
+
+function toggleTheme() {
+  isDark.value = !isDark.value
+  localStorage.setItem('aicase-theme', isDark.value ? 'dark' : 'light')
+  applyTheme()
+}
+
+// v3.18: 窄屏自动折叠侧边栏
+function handleResize() {
+  if (window.innerWidth <= 1024 && !sidebarCollapsed.value) {
+    sidebarCollapsed.value = true
+  }
+}
 
 const navItems = [
   { path: '/dashboard', label: '仪表盘', icon: DataAnalysis },
@@ -122,6 +158,16 @@ const projectSubNav = computed(() => {
     { path: `/projects/${id}/state-machines`, label: '状态机覆盖', icon: Share },
     { path: `/projects/${id}/mindmap`, label: '脑图预览', icon: Picture }
   ]
+})
+
+onMounted(() => {
+  applyTheme()
+  handleResize()
+  window.addEventListener('resize', handleResize)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleResize)
 })
 </script>
 
@@ -340,10 +386,45 @@ const projectSubNav = computed(() => {
   font-weight: 600;
 }
 
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+
+  &:hover {
+    background: var(--el-color-primary-light-9);
+    color: var(--brand-primary);
+  }
+}
+
 .app-content {
   flex: 1;
   overflow-y: auto;
   padding: 0;
+}
+
+/* v3.18: 路由过渡 */
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition: all var(--transition-normal);
+}
+
+.fade-slide-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 
 /* ===== 响应式 ===== */

@@ -266,6 +266,21 @@
         <el-button :icon="Operation" @click="openSuiteDialog">测试集</el-button>
         <!-- v3.15: 多执行环境 -->
         <el-button :icon="Connection" @click="openEnvDialog">执行环境</el-button>
+        <!-- v3.18: 显示设置（列显隐 + 密度） -->
+        <el-popover placement="bottom-end" :width="240" trigger="click">
+          <template #reference>
+            <el-button :icon="Setting">显示设置</el-button>
+          </template>
+          <div class="view-settings">
+            <div v-for="col in columnOptions" :key="col.key" class="vs-row">
+              <el-checkbox v-model="columnSettings[col.key]">{{ col.label }}</el-checkbox>
+            </div>
+            <div class="vs-row vs-density">
+              <span>紧凑表格</span>
+              <el-switch v-model="tableDense" />
+            </div>
+          </div>
+        </el-popover>
         <input
           ref="xmindFileInput"
           type="file"
@@ -292,10 +307,29 @@
       </el-button>
     </div>
 
+    <!-- v3.18: 空状态引导 -->
+    <section v-if="!loading && !streaming && treeData.length === 0" class="empty-guide">
+      <el-empty description="暂无测试用例" :image-size="110">
+        <div class="empty-actions">
+          <el-button type="primary" :icon="MagicStick" @click="handleRegenerate">生成用例</el-button>
+          <el-button :icon="Upload" @click="triggerImportXmind">导入 XMind</el-button>
+          <el-button :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
+        </div>
+      </el-empty>
+    </section>
+
     <!-- 用例树状表格 -->
     <section class="table-section">
+      <el-skeleton
+        v-if="loading && testCases.length === 0"
+        :rows="8"
+        animated
+        class="table-skeleton"
+      />
       <el-table
+        v-else
         :data="treeData"
+        :size="tableSize"
         row-key="id"
         :tree-props="{ children: 'children' }"
         :row-class-name="rowClassName"
@@ -322,21 +356,21 @@
             <span v-else class="case-title">{{ row.title }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="类型" width="80">
+        <el-table-column v-if="columnSettings.type" label="类型" width="80">
           <template #default="{ row }">
             <el-tag v-if="!row.isModule" :type="typeTagType(row.type)" size="small" effect="light">
               {{ typeText(row.type) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="优先级" width="70">
+        <el-table-column v-if="columnSettings.priority" label="优先级" width="70">
           <template #default="{ row }">
             <el-tag v-if="!row.isModule" :type="priorityTagType(row.priority)" size="small" effect="plain">
               {{ row.priority }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="前置条件" min-width="160" show-overflow-tooltip>
+        <el-table-column v-if="columnSettings.preconditions" label="前置条件" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.isModule"></span>
             <span v-else-if="row.preconditions && row.preconditions.length" class="detail-summary">
@@ -345,7 +379,7 @@
             <span v-else class="text-muted">无</span>
           </template>
         </el-table-column>
-        <el-table-column label="测试步骤" min-width="160" show-overflow-tooltip>
+        <el-table-column v-if="columnSettings.steps" label="测试步骤" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.isModule"></span>
             <span v-else-if="row.steps && row.steps.length" class="detail-summary">
@@ -354,7 +388,7 @@
             <span v-else class="text-muted">无</span>
           </template>
         </el-table-column>
-        <el-table-column label="预期结果" min-width="160" show-overflow-tooltip>
+        <el-table-column v-if="columnSettings.expectedResults" label="预期结果" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.isModule"></span>
             <span v-else-if="row.expectedResults && row.expectedResults.length" class="detail-summary">
@@ -363,7 +397,7 @@
             <span v-else class="text-muted">无</span>
           </template>
         </el-table-column>
-        <el-table-column label="质量" width="90">
+        <el-table-column v-if="columnSettings.quality" label="质量" width="90">
           <template #default="{ row }">
             <el-progress
               v-if="!row.isModule && row.qualityScore > 0"
@@ -375,14 +409,14 @@
           </template>
         </el-table-column>
         <!-- v3.12: 执行状态列 -->
-        <el-table-column label="执行" width="80">
+        <el-table-column v-if="columnSettings.execution" label="执行" width="80">
           <template #default="{ row }">
             <span v-if="!row.isModule" class="status-pill" :class="`status-${executionStatusKey(row.executionStatus)}`">
               <i class="status-dot"></i>{{ executionStatusText(row.executionStatus) }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="评审" width="70">
+        <el-table-column v-if="columnSettings.review" label="评审" width="70">
           <template #default="{ row }">
             <el-tag v-if="!row.isModule" :type="reviewTagType(row.reviewStatus)" size="small" effect="light">
               {{ reviewText(row.reviewStatus) }}
@@ -700,14 +734,14 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Delete, Download, Upload, Check, ArrowDown, VideoPlay,
   Setting, Plus, View, RefreshRight, Share, Files, CircleCheck,
   CircleClose, Aim, Coin, FolderOpened, ArrowLeft, Loading, DataAnalysis,
-  Clock, Filter, CopyDocument, Operation, Connection
+  Clock, Filter, CopyDocument, Operation, Connection, MagicStick
 } from '@element-plus/icons-vue'
 import {
   listTestCases, streamGenerate, streamGenerateAppend,
@@ -772,6 +806,55 @@ const pageSize = ref(20)
 const filters = reactive({
   module: '', type: '', priority: '', keyword: '', reviewStatus: '', executionStatus: ''
 })
+// v3.18: 筛选条件持久化
+const FILTER_KEY = 'tcl-filters'
+
+function saveFilters() {
+  localStorage.setItem(FILTER_KEY, JSON.stringify(filters))
+}
+
+function loadFilters() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FILTER_KEY) || '{}')
+    Object.keys(saved).forEach((k) => {
+      if (k in filters) filters[k] = saved[k]
+    })
+  } catch {
+    // 忽略损坏数据
+  }
+}
+
+watch(filters, saveFilters, { deep: true })
+
+// v3.18: 列显隐设置与表格密度
+const columnOptions = [
+  { key: 'type', label: '类型' },
+  { key: 'priority', label: '优先级' },
+  { key: 'preconditions', label: '前置条件' },
+  { key: 'steps', label: '测试步骤' },
+  { key: 'expectedResults', label: '预期结果' },
+  { key: 'quality', label: '质量' },
+  { key: 'execution', label: '执行状态' },
+  { key: 'review', label: '评审' }
+]
+const columnSettings = reactive({
+  type: true, priority: true, preconditions: true, steps: true,
+  expectedResults: true, quality: true, execution: true, review: true
+})
+try {
+  const savedCols = JSON.parse(localStorage.getItem('tcl-columns') || '{}')
+  Object.keys(savedCols).forEach((k) => {
+    if (k in columnSettings) columnSettings[k] = savedCols[k]
+  })
+} catch {
+  // 忽略损坏数据
+}
+watch(columnSettings, (val) => localStorage.setItem('tcl-columns', JSON.stringify(val)), { deep: true })
+
+const tableDense = ref(localStorage.getItem('tcl-size') === 'small')
+const tableSize = computed(() => (tableDense.value ? 'small' : 'default'))
+watch(tableDense, (val) => localStorage.setItem('tcl-size', val ? 'small' : 'default'))
+
 // v3.11: 覆盖率矩阵关联用例的内存 ID 筛选（独立于 filters，避免依赖 keyword 搜索）
 const idFilter = ref([])
 // v3.12: 项目默认执行 URL
@@ -1636,6 +1719,7 @@ function goBack() {
 }
 
 onMounted(async () => {
+  loadFilters()
   await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix(), loadDefaultTargetUrl()])
   if (route.query.generate === '1') {
     router.replace({ path: route.path })
@@ -2106,6 +2190,43 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* ===== v3.18: 显示设置 / 空状态 / 骨架屏 ===== */
+.view-settings {
+  .vs-row {
+    margin-bottom: 8px;
+  }
+
+  .vs-density {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px dashed var(--card-border-light);
+    padding-top: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+}
+
+.empty-guide {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  box-shadow: var(--shadow-xs);
+  margin-bottom: var(--space-md);
+
+  .empty-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+}
+
+.table-skeleton {
+  padding: 16px;
 }
 
 /* ===== 过渡动画 ===== */

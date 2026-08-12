@@ -360,3 +360,50 @@ ol {
     }
   }
 }
+
+/* ============================================================
+   v3.18 深色主题令牌覆盖（配合 html.dark + Element Plus dark css-vars）
+   ============================================================ */
+html.dark {
+  --bg-base: #0f172a;
+  --bg-surface: #1e293b;
+  --card-border: #334155;
+  --card-border-light: #334155;
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-tertiary: #94a3b8;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-card-hover: 0 8px 24px rgba(0, 0, 0, 0.4);
+
+  body {
+    background-color: #0f172a;
+    background-image:
+      radial-gradient(1100px 460px at 88% -8%, rgba(124, 92, 255, 0.10), transparent 62%),
+      radial-gradient(900px 420px at -8% 2%, rgba(76, 111, 255, 0.12), transparent 58%);
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #1e293b;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #475569;
+
+    &:hover {
+      background: #64748b;
+    }
+  }
+
+  .el-card {
+    background: var(--bg-surface);
+  }
+
+  .el-table {
+    --el-table-bg-color: var(--bg-surface);
+    --el-table-tr-bg-color: var(--bg-surface);
+    --el-table-header-bg-color: #243349;
+    --el-table-header-text-color: #cbd5e1;
+    --el-table-border-color: #334155;
+    --el-table-row-hover-bg-color: #26344d;
+  }
+}

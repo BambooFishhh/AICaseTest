@@ -9,6 +9,8 @@ import router from './router'
 // Element Plus 全量引入
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
+// v3.18: Element Plus 深色主题 CSS 变量
+import 'element-plus/theme-chalk/dark/css-vars.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 
 // 全局组件

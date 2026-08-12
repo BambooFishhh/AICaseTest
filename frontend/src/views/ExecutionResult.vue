@@ -117,13 +117,18 @@
         <div class="section-head">
           <div class="section-head-text">
             <h2 class="section-title">执行步骤</h2>
-            <p class="section-desc">共 {{ steps.length }} 个步骤</p>
+            <p class="section-desc">共 {{ displayedSteps.length }} 个步骤{{ onlyFailed ? '（仅失败）' : '' }}</p>
+          </div>
+          <!-- v3.18: 仅显示失败 -->
+          <div class="steps-filter">
+            <span class="filter-label">仅显示失败</span>
+            <el-switch v-model="onlyFailed" />
           </div>
         </div>
 
         <div class="step-list">
           <article
-            v-for="step in steps"
+            v-for="step in displayedSteps"
             :key="step.id || step.stepIndex"
             class="step-card"
             :class="stepResultClass(step.result)"
@@ -291,6 +296,13 @@ const executionSnapshot = computed(() => {
   } catch {
     return null
   }
+})
+
+// v3.18: 仅显示失败步骤
+const onlyFailed = ref(false)
+const displayedSteps = computed(() => {
+  if (!onlyFailed.value) return steps.value
+  return steps.value.filter((s) => s.result === 'failed')
 })
 
 // 录屏播放状态
@@ -730,6 +742,14 @@ onUnmounted(() => {
   margin-bottom: var(--space-lg);
 }
 
+.steps-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 .step-list {
   display: flex;
   flex-direction: column;
@@ -743,6 +763,16 @@ onUnmounted(() => {
   overflow: hidden;
   box-shadow: var(--shadow-xs);
   transition: all var(--transition-normal);
+
+  /* v3.18: 失败/通过步骤高亮 */
+  &.step-result-failed {
+    border-color: var(--color-danger);
+    background: linear-gradient(180deg, var(--color-danger-bg), var(--bg-surface));
+  }
+
+  &.step-result-passed {
+    border-color: rgba(16, 185, 129, 0.45);
+  }
 
   &:hover {
     box-shadow: var(--shadow-sm);
