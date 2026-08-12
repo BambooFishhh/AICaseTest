@@ -10,6 +10,16 @@
         </div>
       </div>
       <div v-if="batch" class="page-actions">
+        <!-- v4.2: 取消批次 -->
+        <el-button
+          v-if="runningCount > 0 || queuedCount > 0"
+          type="danger"
+          :icon="CircleClose"
+          :loading="cancelling"
+          @click="handleCancelBatch"
+        >
+          取消批次
+        </el-button>
         <!-- v3.13: 批次报告在线预览 + 下载 -->
         <el-button type="primary" :icon="Document" @click="previewReport">预览批次报告</el-button>
         <el-button :icon="Download" @click="downloadReport">下载批次报告</el-button>
@@ -70,6 +80,20 @@
             <div class="stat-body">
               <div class="stat-value">{{ runningCount }}</div>
               <div class="stat-label">运行中</div>
+            </div>
+          </div>
+          <div class="stat-card stat-queued">
+            <div class="stat-icon"><el-icon :size="20"><Timer /></el-icon></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ queuedCount }}</div>
+              <div class="stat-label">排队中</div>
+            </div>
+          </div>
+          <div class="stat-card stat-cancelled">
+            <div class="stat-icon"><el-icon :size="20"><CircleCloseFilled /></el-icon></div>
+            <div class="stat-body">
+              <div class="stat-value">{{ cancelledCount }}</div>
+              <div class="stat-label">已取消</div>
             </div>
           </div>
           <div class="stat-card stat-total">
@@ -178,9 +202,10 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowLeft, Loading, View, Download, Document, CircleCheck, CircleClose, Files
+  ArrowLeft, Loading, View, Download, Document, CircleCheck, CircleClose, CircleCloseFilled, Files, Timer
 } from '@element-plus/icons-vue'
-import { getBatch } from '@/api/execution'
+import { getBatch, cancelBatch } from '@/api/execution'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const route = useRoute()
 const router = useRouter()
@@ -205,11 +230,13 @@ const failedExecutions = computed(() => {
 // 统计数据
 const totalCount = computed(() => batch.value?.total || executions.value.length || 0)
 const runningCount = computed(() => batch.value?.running ?? 0)
+const queuedCount = computed(() => batch.value?.queued ?? 0)
+const cancelledCount = computed(() => batch.value?.cancelled ?? 0)
 const passedCount = computed(() => batch.value?.passed ?? 0)
 const failedCount = computed(() => batch.value?.failed ?? 0)
-const completedCount = computed(() => passedCount.value + failedCount.value)
+const completedCount = computed(() => passedCount.value + failedCount.value + cancelledCount.value)
 
-const isRunning = computed(() => runningCount.value > 0)
+const isRunning = computed(() => runningCount.value > 0 || queuedCount.value > 0)
 
 const progressPercent = computed(() => {
   if (totalCount.value === 0) return 0
@@ -236,7 +263,8 @@ const statusLabel = (status) => {
     passed: '通过',
     failed: '失败',
     running: '执行中',
-    pending: '等待中'
+    pending: '排队中',
+    cancelled: '已取消'
   }
   return map[status] || status || '-'
 }
@@ -301,6 +329,31 @@ function goToExecution(executionId) {
 
 function downloadReport() {
   window.open(`/api/batches/${batchId}/report?download=1`, '_blank')
+}
+
+// v4.2: 取消批次
+const cancelling = ref(false)
+
+async function handleCancelBatch() {
+  try {
+    await ElMessageBox.confirm(
+      '确定取消该批次吗？排队中的任务将直接取消，运行中的任务会尽快停止。',
+      '确认取消批次',
+      { confirmButtonText: '确定取消', cancelButtonText: '继续执行', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  cancelling.value = true
+  try {
+    const res = await cancelBatch(batchId)
+    ElMessage.success(`已取消 ${res.data?.cancelledPending ?? 0} 个排队任务，${res.data?.cancelledRunning ?? 0} 个运行中任务正在停止`)
+    await loadBatch()
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    cancelling.value = false
+  }
 }
 
 // v3.13: 批次报告在线预览（inline）
@@ -460,6 +513,8 @@ onUnmounted(() => {
   &.stat-passed .stat-icon { background: var(--color-success); }
   &.stat-failed .stat-icon { background: var(--color-danger); }
   &.stat-running .stat-icon { background: var(--color-warning); }
+  &.stat-queued .stat-icon { background: #06b6d4; }
+  &.stat-cancelled .stat-icon { background: #94a3b8; }
   &.stat-total .stat-icon { background: var(--brand-primary); }
 }
 
@@ -485,6 +540,7 @@ onUnmounted(() => {
   &.status-failed { color: var(--color-danger); background: var(--color-danger-bg); }
   &.status-running { color: var(--color-warning); background: var(--color-warning-bg); }
   &.status-pending { color: var(--text-secondary); background: #f1f5f9; }
+  &.status-cancelled { color: var(--text-tertiary); background: #f1f5f9; }
 }
 
 /* ===== v3.12: 失败用例摘要 ===== */

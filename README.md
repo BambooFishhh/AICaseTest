@@ -572,6 +572,17 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v4.1](docs/v4.1/PRD_v4.1_安全校验与权限.md)
 
+### v4.2 — 多线程高并发治理
+
+并发治理与批量执行体验。
+
+- 后端: 线程池参数化（环境变量可调）+ 新增独立执行线程池（批量不再挤占分析）
+- 后端: 项目级执行并发配额（默认 3，可配置），超出自动排队
+- 后端: 批量执行支持取消（排队直接取消、运行中步骤检查点停止）；同一用例重复触发被拒绝
+- 前端: 批次页新增"排队中/已取消"统计与"取消批次"按钮
+
+详见：[PRD v4.2](docs/v4.2/PRD_v4.2_多线程高并发.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -620,6 +631,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v3.18 | 前端体验打磨（列设置/密度/深色主题/窄屏/空状态/PNG导出等） | ✅ 完成 |
 | v4.0 | 账号体系与登录（注册/登录/JWT + 数据归属隔离 + 存量迁移） | ✅ 完成 |
 | v4.1 | 安全校验与权限（防爆破/密码策略/改密/CORS收敛/审计） | ✅ 完成 |
+| v4.2 | 多线程高并发（线程池治理/并发配额/批量排队取消/幂等） | ✅ 完成 |
 
 ## API 概览
 
@@ -629,6 +641,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | POST | `/api/auth/login` | 登录，返回 token + user（v4.0） |
 | GET | `/api/auth/me` | 当前用户（v4.0） |
 | POST | `/api/auth/change-password` | 修改密码（v4.1） |
+| POST | `/api/batches/{batchId}/cancel` | 取消批次执行（v4.2） |
 | GET | `/api/projects` | 项目列表 |
 | POST | `/api/projects` | 创建项目 |
 | GET | `/api/projects/{id}` | 项目详情 |

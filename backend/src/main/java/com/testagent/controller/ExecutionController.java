@@ -82,6 +82,13 @@ public class ExecutionController {
         return ApiResponse.success(executionService.getBatchStatus(batchId));
     }
 
+    /** v4.2: 取消批次执行 */
+    @PostMapping("/batches/{batchId}/cancel")
+    public ApiResponse<Map<String, Object>> cancelBatch(@PathVariable String batchId) {
+        executionService.getBatchStatus(batchId); // v4.0: 越权校验
+        return ApiResponse.success(executionService.cancelBatch(batchId));
+    }
+
     /** v2.4: 下载单次执行报告（自包含 HTML） */
     @GetMapping("/executions/{executionId}/report")
     public ResponseEntity<String> downloadReport(

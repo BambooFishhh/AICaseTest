@@ -4,6 +4,37 @@
 
 ---
 
+## v4.2 — 多线程高并发治理
+
+**日期**: 2026-08-13
+**基线**: v4.1
+**主题**: 线程池参数化 + 独立执行池 + 项目级并发配额 + 批量排队/取消 + 幂等
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| config/AsyncConfig.java + application.yml | 线程池参数化 + executionExecutor | 批量执行不再占用分析池；参数可环境变量调整 |
+| service/ProjectExecutionLimiter.java | 项目级并发配额 | 默认每项目同时执行 ≤3，超出排队 |
+| service/ExecutionService.java | 排队/取消/幂等 | 批量记录 pending→running；cancelBatch；运行中步骤检查点停止；重复触发拒绝 |
+| repository/ExecutionRecordRepository.java | 状态查询 | findByTestCaseIdAndStatus |
+| controller/ExecutionController.java | 批次取消端点 | POST /api/batches/{id}/cancel |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| views/BatchResult.vue | 排队/已取消统计 + 取消批次 | 排队中/已取消卡片；取消按钮与确认 |
+| views/ExecutionResult.vue / ExecutionHistory.vue | cancelled 状态展示 | 已取消标签 |
+| api/execution.js | cancelBatch | - |
+
+### 验证结果
+
+- 后端测试: Tests run 2, Failures 0, BUILD SUCCESS
+- 前端构建: ✓ built in 11.94s
+
+---
+
 ## v4.1 — 安全校验与权限
 
 **日期**: 2026-08-12

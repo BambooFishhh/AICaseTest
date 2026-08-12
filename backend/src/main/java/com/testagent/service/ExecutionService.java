@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.entity.ExecutionRecord;
 import com.testagent.entity.ExecutionStep;
 import com.testagent.entity.TestCase;
+import com.testagent.common.BusinessException;
 import com.testagent.repository.ExecutionRecordRepository;
 import com.testagent.repository.ExecutionStepRepository;
 import com.testagent.repository.TestCaseRepository;
@@ -16,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -50,6 +52,13 @@ public class ExecutionService {
     @Autowired
     private ProjectAccessService projectAccessService;
 
+    @Autowired
+    private ProjectExecutionLimiter projectExecutionLimiter;
+
+    // v4.2: 执行取消标志（executionId → cancelled）
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean>
+            executionCancellations = new java.util.concurrent.ConcurrentHashMap<>();
+
     /**
      * 异步执行测试用例。
      */
@@ -66,13 +75,20 @@ public class ExecutionService {
         TestCase testCase = testCaseRepository.findById(testCaseId)
                 .orElseThrow(() -> new IllegalArgumentException("用例不存在: " + testCaseId));
 
+        // v4.2: 幂等——单条执行时若该用例已有 running 记录则拒绝
+        if (batchId == null
+                && !executionRecordRepository.findByTestCaseIdAndStatus(testCaseId, "running").isEmpty()) {
+            throw new BusinessException(50012, "该用例正在执行中，请勿重复触发", HttpStatus.BAD_REQUEST);
+        }
+
         String executionId = UUID.randomUUID().toString().substring(0, 8);
         ExecutionRecord record = ExecutionRecord.builder()
                 .id(executionId)
                 .projectId(projectId)
                 .testCaseId(testCaseId)
                 .testCaseTitle(testCase.getTitle())
-                .status("running")
+                // v4.2: 批量任务先进入排队（pending），真正启动后置 running
+                .status(batchId != null ? "pending" : "running")
                 .startTime(LocalDateTime.now())
                 .mode(mode)
                 .batchId(batchId)
@@ -137,21 +153,25 @@ public class ExecutionService {
             projectAccessService.assertProjectAccess(records.get(0).getProjectId());
         }
         int total = records.size();
-        int running = 0, passed = 0, failed = 0;
+        int running = 0, passed = 0, failed = 0, queued = 0, cancelled = 0;
         for (ExecutionRecord r : records) {
             switch (r.getStatus()) {
                 case "running" -> running++;
                 case "passed" -> passed++;
                 case "failed" -> failed++;
+                case "pending" -> queued++;
+                case "cancelled" -> cancelled++;
             }
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("batchId", batchId);
         result.put("total", total);
         result.put("running", running);
+        result.put("queued", queued);
+        result.put("cancelled", cancelled);
         result.put("passed", passed);
         result.put("failed", failed);
-        result.put("completed", total - running);
+        result.put("completed", total - running - queued);
         result.put("records", records);
         // v3.12: 前端读取 executions 别名（原仅有 records，导致批次列表为空）
         result.put("executions", records);
@@ -159,15 +179,55 @@ public class ExecutionService {
     }
 
     /**
+     * v4.2: 取消批次——排队任务直接取消，运行中任务置取消标志（步骤检查点停止）。
+     */
+    public Map<String, Object> cancelBatch(String batchId) {
+        List<ExecutionRecord> records = executionRecordRepository.findByBatchIdOrderByStartTimeAsc(batchId);
+        int cancelledPending = 0, cancelledRunning = 0;
+        for (ExecutionRecord r : records) {
+            if ("pending".equals(r.getStatus())) {
+                r.setStatus("cancelled");
+                r.setEndTime(LocalDateTime.now());
+                r.setSummary("已取消（未开始）");
+                executionRecordRepository.save(r);
+                cancelledPending++;
+                // 恢复用例执行状态
+                updateTestCaseExecutionStatus(r.getTestCaseId(), "not_executed");
+            } else if ("running".equals(r.getStatus())) {
+                executionCancellations.put(r.getId(), new java.util.concurrent.atomic.AtomicBoolean(true));
+                cancelledRunning++;
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("batchId", batchId);
+        result.put("cancelledPending", cancelledPending);
+        result.put("cancelledRunning", cancelledRunning);
+        return result;
+    }
+
+    /**
      * v2.8: Agent 模式异步执行（PlaywrightRecordSkill）。
      */
-    @Async("analysisExecutor")
+    @Async("executionExecutor")
     void runAgentAsync(String executionId, TestCase testCase, String targetUrl) {
         List<ExecutionStep> steps = new ArrayList<>();
         int passed = 0, failed = 0, skipped = 0;
         String sessionId = null;
         String errorMessage = null;
         String videoPath = null;
+        boolean cancelled = false;
+
+        // v4.2: 项目级并发配额（排队等待）→ 启动时置 running
+        projectExecutionLimiter.acquire(testCase.getProjectId());
+        try {
+            ExecutionRecord started = executionRecordRepository.findById(executionId).orElse(null);
+            if (started != null && !"running".equals(started.getStatus())) {
+                started.setStatus("running");
+                executionRecordRepository.save(started);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to mark execution {} running", executionId, e);
+        }
 
         try {
             // 1. 启动浏览器（Playwright 自动开始录屏）
@@ -188,6 +248,11 @@ public class ExecutionService {
             } else {
                 String testCaseContext = "用例: " + testCase.getTitle() + ", 模块: " + testCase.getModule();
                 for (int i = 0; i < stepNodes.size(); i++) {
+                    // v4.2: 取消检查点
+                    if (isExecutionCancelled(executionId)) {
+                        cancelled = true;
+                        break;
+                    }
                     JsonNode stepNode = stepNodes.get(i);
                     try {
                         ExecutionStep step = executionAgent.executeStep(sessionId, stepNode, testCaseContext, i + 1, executionId);
@@ -230,11 +295,19 @@ public class ExecutionService {
             if (sessionId != null) {
                 try { playwrightSkill.closeSession(sessionId); } catch (Exception e) { log.warn("Failed to close session", e); }
             }
+            projectExecutionLimiter.release(testCase.getProjectId());
         }
 
         // 更新执行记录
-        String status = failed > 0 ? "failed" : "passed";
-        String summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped);
+        String status;
+        String summary;
+        if (cancelled) {
+            status = "cancelled";
+            summary = "已取消";
+        } else {
+            status = failed > 0 ? "failed" : "passed";
+            summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped);
+        }
         ExecutionRecord finalRecord = executionRecordRepository.findById(executionId).orElse(null);
         if (finalRecord != null) {
             finalRecord.setStatus(status);
@@ -246,8 +319,9 @@ public class ExecutionService {
             executionRecordRepository.save(finalRecord);
         }
 
-        // v3.11: 执行结束回写用例执行状态
-        updateTestCaseExecutionStatus(testCase.getId(), status);
+        // v3.11/v4.2: 执行结束回写用例执行状态（取消则恢复未执行）
+        updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
+        executionCancellations.remove(executionId);
 
         // 保存证据
         try {
@@ -271,13 +345,26 @@ public class ExecutionService {
     /**
      * v2.8: 程序化模式异步执行（PlaywrightRecordSkill）。
      */
-    @Async("analysisExecutor")
+    @Async("executionExecutor")
     void runAsync(String executionId, TestCase testCase, String targetUrl) {
         List<ExecutionStep> steps = new ArrayList<>();
         int passed = 0, failed = 0, skipped = 0;
         String sessionId = null;
         String errorMessage = null;
         String videoPath = null;
+        boolean cancelled = false;
+
+        // v4.2: 项目级并发配额 → 启动时置 running
+        projectExecutionLimiter.acquire(testCase.getProjectId());
+        try {
+            ExecutionRecord started = executionRecordRepository.findById(executionId).orElse(null);
+            if (started != null && !"running".equals(started.getStatus())) {
+                started.setStatus("running");
+                executionRecordRepository.save(started);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to mark execution {} running", executionId, e);
+        }
 
         try {
             // 1. 启动浏览器（Playwright 自动开始录屏）
@@ -314,6 +401,11 @@ public class ExecutionService {
             } else {
                 // 按结构化步骤执行
                 for (int i = 0; i < stepNodes.size(); i++) {
+                    // v4.2: 取消检查点
+                    if (isExecutionCancelled(executionId)) {
+                        cancelled = true;
+                        break;
+                    }
                     JsonNode node = stepNodes.get(i);
                     String action = node.path("action").asText("");
                     String target = node.path("target").asText("");
@@ -409,11 +501,19 @@ public class ExecutionService {
                     log.warn("Failed to close browser session", e);
                 }
             }
+            projectExecutionLimiter.release(testCase.getProjectId());
         }
 
         // 更新执行记录
-        String status = failed > 0 ? "failed" : "passed";
-        String summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped);
+        String status;
+        String summary;
+        if (cancelled) {
+            status = "cancelled";
+            summary = "已取消";
+        } else {
+            status = failed > 0 ? "failed" : "passed";
+            summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped);
+        }
 
         ExecutionRecord finalRecord = executionRecordRepository.findById(executionId).orElse(null);
         if (finalRecord != null) {
@@ -426,8 +526,9 @@ public class ExecutionService {
             executionRecordRepository.save(finalRecord);
         }
 
-        // v3.11: 执行结束回写用例执行状态
-        updateTestCaseExecutionStatus(testCase.getId(), status);
+        // v3.11/v4.2: 执行结束回写用例执行状态（取消则恢复未执行）
+        updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
+        executionCancellations.remove(executionId);
 
         // 保存证据
         try {
@@ -480,5 +581,11 @@ public class ExecutionService {
         } catch (Exception e) {
             log.warn("Failed to update test case {} execution status: {}", testCaseId, e.getMessage());
         }
+    }
+
+    // v4.2: 执行取消标志检查
+    private boolean isExecutionCancelled(String executionId) {
+        java.util.concurrent.atomic.AtomicBoolean flag = executionCancellations.get(executionId);
+        return flag != null && flag.get();
     }
 }

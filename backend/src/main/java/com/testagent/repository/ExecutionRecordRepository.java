@@ -15,4 +15,7 @@ public interface ExecutionRecordRepository extends JpaRepository<ExecutionRecord
 
     /** v2.4: 按批次查询（无排序） */
     List<ExecutionRecord> findByBatchId(String batchId);
+
+    /** v4.2: 按用例与状态查询（执行幂等） */
+    List<ExecutionRecord> findByTestCaseIdAndStatus(String testCaseId, String status);
 }
