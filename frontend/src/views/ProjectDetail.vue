@@ -145,9 +145,9 @@
               <el-button :icon="Document" :disabled="!canViewTestcases" @click="goTestcases">
                 查看用例
               </el-button>
-              <el-button :icon="Share" @click="goMindmap">脑图预览</el-button>
+              <el-button :icon="Share" :disabled="!canViewMindmap" @click="goMindmap">脑图预览</el-button>
               <!-- v3.11: 执行历史入口 -->
-              <el-button :icon="Clock" @click="goExecutions">执行历史</el-button>
+              <el-button :icon="Clock" :disabled="!canViewExecutions" @click="goExecutions">执行历史</el-button>
               <!-- v3.16: 项目导出备份 -->
               <el-button v-if="canOperate" :icon="Download" @click="exportProject">导出备份</el-button>
             </div>
@@ -292,6 +292,12 @@ const canViewAnalysis = computed(() => project.value?.status !== 'created')
 const canViewTestcases = computed(() => {
   const s = project.value?.status
   return s === 'analyzed' || s === 'completed'
+})
+// v4.5: 查看类按钮前置条件——对应阶段未完成时置灰
+const canViewMindmap = computed(() => project.value?.status === 'completed')
+const canViewExecutions = computed(() => {
+  const s = project.value?.status
+  return s !== 'created' && s !== 'analyzing'
 })
 
 async function refreshProject() {

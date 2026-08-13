@@ -107,13 +107,13 @@
           </span>
           <span v-if="sourceRef" class="summary-ref">来源：{{ sourceRef }}</span>
         </div>
-        <div class="summary-preview">{{ prdPreview }}</div>
+        <div class="summary-preview md-body" v-html="renderedPrd"></div>
       </div>
     </Transition>
 
     <!-- 预览对话框 -->
     <el-dialog v-model="previewVisible" title="PRD 预览" width="760px">
-      <pre class="prd-full-text">{{ prdContent }}</pre>
+      <div class="prd-full-text md-body" v-html="renderedPrd"></div>
     </el-dialog>
   </section>
 </template>
@@ -136,6 +136,9 @@ import {
 import { getPrd, updatePrd, uploadPrdPdf, fetchPrdUrl } from '@/api/project'
 // v3.14: 内置示例 PRD（快速体验 PRD 驱动生成）
 import samplePrd from '@/assets/samples/order-prd.md?raw'
+// v4.5: Markdown 渲染（marked + DOMPurify 防 XSS）
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 const props = defineProps({ projectId: String })
 
@@ -154,9 +157,13 @@ const linkError = ref('')
 
 const prdPreview = computed(() => {
   if (!prdContent.value) return ''
-  return prdContent.value.length > 200
-    ? prdContent.value.substring(0, 200) + '...'
-    : prdContent.value
+  // 渲染完整 Markdown，视觉上用 max-height 截断，保证 HTML 完整不破版
+  return renderedPrd.value
+})
+
+const renderedPrd = computed(() => {
+  if (!prdContent.value) return ''
+  return DOMPurify.sanitize(marked.parse(prdContent.value))
 })
 
 const sourceTagType = computed(() =>
@@ -430,7 +437,6 @@ async function fetchLink() {
   font-size: 13px;
   color: var(--text-secondary);
   line-height: 1.7;
-  white-space: pre-wrap;
   word-break: break-all;
   max-height: 140px;
   overflow-y: auto;
@@ -439,13 +445,58 @@ async function fetchLink() {
 .prd-full-text {
   max-height: 60vh;
   overflow: auto;
-  white-space: pre-wrap;
   word-break: break-all;
   font-size: 13px;
-  background: #f8fafc;
+  background: var(--bg-surface);
   padding: 14px;
   border-radius: var(--radius-md);
   border: 1px solid var(--card-border-light);
   font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+/* ===== Markdown 渲染排版 ===== */
+.md-body {
+  line-height: 1.7;
+  color: var(--text-primary);
+
+  h1, h2, h3, h4, h5 {
+    margin: 12px 0 8px;
+    line-height: 1.4;
+    color: var(--text-primary);
+  }
+  h1 { font-size: 20px; }
+  h2 { font-size: 18px; }
+  h3 { font-size: 16px; }
+  p { margin: 6px 0; }
+  ul, ol { padding-left: 20px; margin: 6px 0; }
+  ul { list-style: disc; }
+  ol { list-style: decimal; }
+  li { margin: 2px 0; }
+  code {
+    background: var(--bg-base);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: 'Consolas', 'Monaco', monospace;
+  }
+  pre {
+    background: var(--bg-base);
+    padding: 12px;
+    border-radius: 8px;
+    overflow: auto;
+    margin: 8px 0;
+    code { background: transparent; padding: 0; }
+  }
+  table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+  th, td { border: 1px solid var(--card-border); padding: 6px 10px; font-size: 13px; }
+  th { background: var(--bg-base); font-weight: 600; }
+  blockquote {
+    border-left: 3px solid var(--brand-primary-lightest);
+    padding-left: 12px;
+    color: var(--text-secondary);
+    margin: 8px 0;
+  }
+  a { color: var(--brand-primary); }
+  img { max-width: 100%; }
 }
 </style>

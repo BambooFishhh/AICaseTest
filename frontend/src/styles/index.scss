@@ -403,8 +403,14 @@ html.dark {
     --el-table-bg-color: var(--bg-surface);
     --el-table-tr-bg-color: var(--bg-surface);
     --el-table-header-bg-color: #243349;
-    --el-table-header-text-color: #cbd5e1;
+    --el-table-header-text-color: #e2e8f0;
+    --el-table-text-color: #e2e8f0;
     --el-table-border-color: #334155;
     --el-table-row-hover-bg-color: #26344d;
+    color: #e2e8f0;
+
+    td.el-table__cell {
+      color: #e2e8f0;
+    }
   }
 }
