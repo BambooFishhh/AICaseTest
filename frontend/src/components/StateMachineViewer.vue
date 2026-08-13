@@ -38,6 +38,7 @@
  */
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import * as echarts from 'echarts'
+import { displayState, displayTrigger } from '@/utils/stateLabel'
 
 const props = defineProps({
   states: {
@@ -109,17 +110,20 @@ const buildNodes = () => {
       },
       label: {
         show: true,
-        formatter: typeLabel + state.name,
+        formatter: typeLabel + displayState(state.name),
         fontSize: 12,
         color: '#0f172a',
         fontWeight: 600
       },
       tooltip: {
         formatter: () => {
-          let html = `<b>${state.name}</b><br/>`
+          let html = `<b>${displayState(state.name)}</b><br/>`
           html += `类型: ${state.type || 'normal'}<br/>`
           if (state.description) {
-            html += `描述: ${state.description}`
+            html += `描述: ${state.description}<br/>`
+          }
+          if (state.name && displayState(state.name) !== state.name) {
+            html += `原始值: ${state.name}`
           }
           return html
         }
@@ -143,9 +147,11 @@ const isCovered = (tran) => {
 const buildEdges = () => {
   if (!props.transitions || props.transitions.length === 0) return []
   return props.transitions.map((tran) => {
-    const label = [tran.trigger, tran.condition]
-      .filter(Boolean)
-      .join(' / ')
+    const parts = []
+    if (tran.trigger) parts.push(displayTrigger(tran.trigger))
+    if (tran.condition) parts.push(displayTrigger(tran.condition))
+    const label = parts.join(' / ')
+    const rawLabel = [tran.trigger, tran.condition].filter(Boolean).join(' / ')
     const covered = isCovered(tran)
     return {
       source: tran.from,
@@ -168,6 +174,12 @@ const buildEdges = () => {
         borderRadius: 4,
         borderColor: '#e2e8f0',
         borderWidth: 1
+      },
+      rawLabel: rawLabel,
+      tooltip: {
+        formatter: () => {
+          return `${displayState(tran.from)} → ${displayState(tran.to)}<br/>触发: ${rawLabel}`
+        }
       }
     }
   })
@@ -178,7 +190,7 @@ const buildForbiddenEdges = () => {
   if (!props.forbiddenTransitions || props.forbiddenTransitions.length === 0)
     return []
   return props.forbiddenTransitions.map((tran) => {
-    const label = tran.reason ? `禁止: ${tran.reason}` : '禁止'
+    const label = tran.reason ? `禁止: ${displayTrigger(tran.reason)}` : '禁止'
     return {
       source: tran.from,
       target: tran.to,
@@ -220,9 +232,8 @@ const buildOption = () => {
         }
         if (params.dataType === 'edge') {
           const data = params.data
-          return `${data.source} → ${data.target}<br/>${
-            data.label ? data.label.formatter : ''
-          }`
+          const raw = data.rawLabel || ''
+          return `${displayState(data.source)} → ${displayState(data.target)}<br/>触发: ${raw || '—'}`
         }
         return params.name
       },

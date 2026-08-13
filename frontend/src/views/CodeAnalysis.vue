@@ -103,7 +103,9 @@
                     <span class="sub-count">{{ (sm.states || []).length }}</span>
                   </h4>
                   <el-table :data="sm.states || []" stripe size="small">
-                    <el-table-column prop="name" label="名称" min-width="120" />
+                    <el-table-column label="名称" min-width="180">
+                      <template #default="{ row }">{{ displayState(row.name) }}</template>
+                    </el-table-column>
                     <el-table-column prop="type" label="类型" width="100">
                       <template #default="{ row }">
                         <el-tag v-if="row.type" size="small" effect="light">{{ row.type }}</el-tag>
@@ -119,14 +121,20 @@
                     <span class="sub-count">{{ (sm.transitions || []).length }}</span>
                   </h4>
                   <el-table :data="sm.transitions || []" stripe size="small">
-                    <el-table-column prop="from" label="源状态" min-width="120" />
+                    <el-table-column label="源状态" min-width="140">
+                      <template #default="{ row }">{{ displayState(row.from) }}</template>
+                    </el-table-column>
                     <el-table-column label="" width="40" align="center">
                       <template #default>
                         <el-icon class="arrow-icon"><Right /></el-icon>
                       </template>
                     </el-table-column>
-                    <el-table-column prop="to" label="目标状态" min-width="120" />
-                    <el-table-column prop="trigger" label="触发条件" min-width="150" show-overflow-tooltip />
+                    <el-table-column label="目标状态" min-width="140">
+                      <template #default="{ row }">{{ displayState(row.to) }}</template>
+                    </el-table-column>
+                    <el-table-column label="触发条件" min-width="150" show-overflow-tooltip>
+                      <template #default="{ row }">{{ displayTrigger(row.trigger) }}</template>
+                    </el-table-column>
                     <el-table-column prop="condition" label="约束" min-width="150" show-overflow-tooltip />
                   </el-table>
                 </div>
@@ -388,6 +396,7 @@ import {
 } from '@element-plus/icons-vue'
 import { getAnalysis, getStateMachines } from '@/api/analysis'
 import StateMachineViewer from '@/components/StateMachineViewer.vue'
+import { displayState, displayTrigger } from '@/utils/stateLabel'
 
 const route = useRoute()
 const router = useRouter()
