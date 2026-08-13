@@ -58,11 +58,20 @@
             <div class="info-label">创建时间</div>
             <div class="info-value">{{ formatDate(project.createdAt) }}</div>
           </div>
-          <div class="info-item">
+          <div class="info-item tech-stack-item">
             <div class="info-label">技术栈</div>
             <div class="info-value">
               <div v-if="techStackList.length" class="tech-tags">
-                <span v-for="tech in techStackList" :key="tech" class="tech-tag">{{ tech }}</span>
+                <span v-for="tech in visibleTechStack" :key="tech" class="tech-tag">{{ tech }}</span>
+                <el-button
+                  v-if="techStackList.length > MAX_TECH_VISIBLE"
+                  link
+                  size="small"
+                  class="tech-more"
+                  @click="techExpanded = !techExpanded"
+                >
+                  {{ techExpanded ? '收起' : `全部 ${techStackList.length} 个` }}
+                </el-button>
               </div>
               <span v-else class="text-muted">尚未分析</span>
             </div>
@@ -223,6 +232,13 @@ const techStackList = computed(() => {
   if (typeof ts === 'object') return Object.keys(ts)
   return []
 })
+
+// 技术栈标签过多时折叠展示
+const MAX_TECH_VISIBLE = 8
+const techExpanded = ref(false)
+const visibleTechStack = computed(() =>
+  techExpanded.value ? techStackList.value : techStackList.value.slice(0, MAX_TECH_VISIBLE)
+)
 
 const hasSourcePath = computed(() => {
   return !!project.value?.sourcePath && project.value.sourcePath.trim() !== ''
@@ -545,10 +561,16 @@ onUnmounted(() => {
   }
 }
 
+/* 技术栈独占整行，避免撑高其他格子造成留白 */
+.tech-stack-item {
+  grid-column: 1 / -1;
+}
+
 .tech-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  align-items: center;
 }
 
 .tech-tag {
@@ -560,6 +582,10 @@ onUnmounted(() => {
   border-radius: var(--radius-full);
   font-size: 12px;
   font-weight: 500;
+}
+
+.tech-more {
+  padding: 0 4px;
 }
 
 /* ===== 操作区 ===== */
