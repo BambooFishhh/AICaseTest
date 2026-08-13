@@ -9,6 +9,7 @@
  *   OPENAI_API_KEY  — LLM API Key
  *   OPENAI_BASE_URL — LLM API 地址（默认 https://api.xiaomimimo.com/v1）
  *   OPENAI_MODEL    — 模型名称（默认 gpt-4o）
+ *   LLM_API_KEY / LLM_BASE_URL / LLM_MODEL — 兼容后端容器注入的 LLM_* 变量（v4.4 修复）
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -20,9 +21,9 @@ import {
 import OpenAI from 'openai';
 import fs from 'fs';
 
-const apiKey = process.env.OPENAI_API_KEY || '';
-const baseUrl = process.env.OPENAI_BASE_URL || 'https://api.xiaomimimo.com/v1';
-const model = process.env.OPENAI_MODEL || 'gpt-4o';
+const apiKey = process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || '';
+const baseUrl = process.env.OPENAI_BASE_URL || process.env.LLM_BASE_URL || 'https://api.xiaomimimo.com/v1';
+const model = process.env.OPENAI_MODEL || process.env.LLM_MODEL || 'gpt-4o';
 
 const client = new OpenAI({ apiKey, baseURL: baseUrl });
 
