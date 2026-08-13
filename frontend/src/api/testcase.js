@@ -8,7 +8,9 @@ export function triggerGenerate(projectId, params) {
 // 事件类型：progress（进度文本）、case（单条用例）、complete（完成，含 total）、cancelled（取消）、error（失败）。
 // v3.3: 新增 cancelled 事件 + onCancelled 回调，区分"取消"与"失败"。
 export function streamGenerate(projectId, { onProgress, onCase, onComplete, onCancelled, onError } = {}) {
-  const url = `/api/projects/${projectId}/testcases/generate-stream`
+  // EventSource 无法带 Authorization 头，改用 ?token= 查询参数认证
+  const token = encodeURIComponent(localStorage.getItem('aicase-token') || '')
+  const url = `/api/projects/${projectId}/testcases/generate-stream?token=${token}`
   const es = new EventSource(url)
 
   es.addEventListener('progress', (e) => {
@@ -50,7 +52,9 @@ export function streamGenerateAppend(
   const params = new URLSearchParams()
   if (type) params.set('type', type)
   const query = params.toString() ? `?${params.toString()}` : ''
-  const url = `/api/projects/${projectId}/testcases/generate-stream-append${query}`
+  const token = encodeURIComponent(localStorage.getItem('aicase-token') || '')
+  const sep = query ? '&' : '?'
+  const url = `/api/projects/${projectId}/testcases/generate-stream-append${query}${sep}token=${token}`
   const es = new EventSource(url)
 
   es.addEventListener('progress', (e) => {

@@ -303,7 +303,8 @@ async function refreshProject() {
 function handleAnalyze() {
   ElMessage.success('分析已启动')
   pollingMessage.value = '正在启动分析...'
-  analyzeEs = new EventSource(`/api/projects/${projectId}/analyze-stream`)
+  const token = encodeURIComponent(localStorage.getItem('aicase-token') || '')
+  analyzeEs = new EventSource(`/api/projects/${projectId}/analyze-stream?token=${token}`)
 
   analyzeEs.addEventListener('progress', (e) => {
     try {
