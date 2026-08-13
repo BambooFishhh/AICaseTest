@@ -145,7 +145,6 @@ public class TestCaseService {
      */
     @Async("generationExecutor")
     public void runGenerateStream(String projectId, SseEmitter emitter) {
-        projectAccessService.assertOperateAccess(projectId);
         AtomicBoolean clientGone = new AtomicBoolean(false);
         AtomicBoolean cancelled = new AtomicBoolean(false);
         // v3.3: 客户端断开同时置 cancelled（不只跳过 send，还要停止生成 + 跳过落库）
@@ -239,7 +238,6 @@ public class TestCaseService {
      */
     @Async("generationExecutor")
     public void runGenerateStreamAppend(String projectId, String type, SseEmitter emitter) {
-        projectAccessService.assertOperateAccess(projectId);
         AtomicBoolean clientGone = new AtomicBoolean(false);
         AtomicBoolean cancelled = new AtomicBoolean(false);
         emitter.onCompletion(() -> {

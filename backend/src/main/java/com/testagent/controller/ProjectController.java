@@ -117,6 +117,7 @@ public class ProjectController {
      */
     @GetMapping("/{projectId}/testcases/generate-stream")
     public SseEmitter generateStream(@PathVariable String projectId) {
+        projectAccessService.assertOperateAccess(projectId);
         ProjectDTO project = projectService.getProject(projectId);
         if ("generating".equals(project.getStatus())) {
             // 已在生成中：推送 error 事件并立即关闭
@@ -144,6 +145,7 @@ public class ProjectController {
     @GetMapping("/{projectId}/testcases/generate-stream-append")
     public SseEmitter generateStreamAppend(@PathVariable String projectId,
                                             @RequestParam(required = false) String type) {
+        projectAccessService.assertOperateAccess(projectId);
         ProjectDTO project = projectService.getProject(projectId);
         if ("generating".equals(project.getStatus())) {
             SseEmitter err = new SseEmitter(0L);
