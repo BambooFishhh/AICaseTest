@@ -22,15 +22,20 @@ FROM eclipse-temurin:17-jre
 
 WORKDIR /app
 
-# 安装 curl（healthcheck）+ Node.js（MCP Server 运行时）
-RUN apt-get update && apt-get install -y --no-install-recommends curl nodejs npm \
-    && rm -rf /var/lib/apt/lists/*
+# 安装 curl（healthcheck）+ Node.js 22（MCP Server 运行时，apt 默认 node 版本过低）
+# 使用国内镜像加速：apt 阿里云 / Node npmmirror
+RUN sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list \
+    && apt-get update && apt-get install -y --no-install-recommends curl ca-certificates xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://npmmirror.com/mirrors/node/v22.14.0/node-v22.14.0-linux-x64.tar.xz \
+        | tar -xJ -C /usr/local --strip-components=1
 
 # 复制构建产物
 COPY --from=builder /build/target/*.jar app.jar
 # 复制 MCP Server 并安装依赖 + Playwright Chromium 浏览器
 COPY --from=builder /build/mcp-server ./mcp-server
 COPY --from=builder /build/playwright-mcp-server ./playwright-mcp-server
+ENV PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright
 RUN cd playwright-mcp-server \
     && npm install --registry=https://registry.npmmirror.com \
     && npx playwright install --with-deps chromium

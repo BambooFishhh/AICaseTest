@@ -54,7 +54,12 @@ public class McpConnection {
         try {
             String projectRoot = System.getProperty("user.dir");
             // user.dir 在 backend 目录下运行时是 backend/，需要回退一级到项目根目录
-            String fullPath = Path.of(projectRoot, "..", scriptPath).normalize().toString();
+            Path candidate = Path.of(projectRoot, "..", scriptPath).normalize();
+            // 容器内 user.dir 即项目根（/app）时，".." 会拼错，回退到 user.dir 下
+            if (!java.nio.file.Files.exists(candidate)) {
+                candidate = Path.of(projectRoot, scriptPath).normalize();
+            }
+            String fullPath = candidate.toString();
 
             List<String> command = new ArrayList<>();
             command.add(nodePath);
