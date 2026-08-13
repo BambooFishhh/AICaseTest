@@ -220,6 +220,15 @@
         <!-- v3.16: XMind 导入模板 -->
         <el-button :icon="Download" @click="downloadXmindTemplate">模板</el-button>
         <el-button type="success" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
+        <!-- 批量执行：常驻入口（未选中时禁用） -->
+        <el-button
+          type="success"
+          :icon="VideoPlay"
+          :disabled="selectedRows.length === 0"
+          @click="openBatchExecuteDialog"
+        >
+          批量执行
+        </el-button>
         <!-- v3.12: 快捷批量执行 -->
         <el-button
           type="danger"
@@ -423,6 +432,20 @@
             </el-tag>
           </template>
         </el-table-column>
+        <!-- 操作列：单条执行入口 -->
+        <el-table-column label="操作" width="90" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="!row.isModule"
+              type="primary"
+              link
+              :icon="VideoPlay"
+              @click.stop="openRowExecute(row)"
+            >
+              执行
+            </el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </section>
 
@@ -555,6 +578,35 @@
           :icon="VideoPlay"
           :loading="batchExecuting"
           @click="confirmBatchExecute"
+        >
+          确认执行
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 单条执行对话框 -->
+    <el-dialog v-model="rowExecuteDialogVisible" title="执行测试用例" width="480px">
+      <el-form label-width="100px">
+        <el-form-item label="用例">
+          <span class="row-execute-title">{{ rowExecuteCase?.title || '-' }}</span>
+        </el-form-item>
+        <el-form-item label="待测页面URL">
+          <el-input v-model="rowExecuteUrl" placeholder="http://localhost:5173" clearable />
+        </el-form-item>
+        <el-form-item label="执行模式">
+          <el-radio-group v-model="rowExecuteMode">
+            <el-radio value="agent">Agent 模式</el-radio>
+            <el-radio value="programmatic">程序化模式</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rowExecuteDialogVisible = false">取消</el-button>
+        <el-button
+          type="success"
+          :icon="VideoPlay"
+          :loading="rowExecuting"
+          @click="confirmRowExecute"
         >
           确认执行
         </el-button>
@@ -757,7 +809,7 @@ import {
   createSuite, listSuites, deleteSuite, executeSuite
 } from '@/api/suite'
 import { generateMindmap } from '@/api/mindmap'
-import { executeBatch } from '@/api/execution'
+import { executeBatch, executeTestCase } from '@/api/execution'
 import { useProjectStore } from '@/stores/project'
 import TestCaseCard from '@/components/TestCaseCard.vue'
 import TestCaseVersionDrawer from '@/components/TestCaseVersionDrawer.vue'
@@ -1486,6 +1538,46 @@ async function confirmBatchExecute() {
   }
 }
 
+// ===== 单条执行（列表"操作"列） =====
+const rowExecuteDialogVisible = ref(false)
+const rowExecuteCase = ref(null)
+const rowExecuteUrl = ref('')
+const rowExecuteMode = ref('agent')
+const rowExecuting = ref(false)
+
+function openRowExecute(row) {
+  rowExecuteCase.value = row
+  rowExecuteUrl.value = defaultTargetUrl.value || 'http://localhost:5173'
+  rowExecuteMode.value = 'agent'
+  rowExecuteDialogVisible.value = true
+}
+
+async function confirmRowExecute() {
+  if (!rowExecuteCase.value) return
+  if (!rowExecuteUrl.value || !rowExecuteUrl.value.trim()) {
+    ElMessage.warning('请输入待测页面URL')
+    return
+  }
+  rowExecuting.value = true
+  try {
+    const res = await executeTestCase(
+      projectId,
+      rowExecuteCase.value.id,
+      rowExecuteUrl.value.trim(),
+      rowExecuteMode.value
+    )
+    const eid = res.data?.executionId
+    rowExecuteDialogVisible.value = false
+    if (eid) {
+      router.push(`/projects/${projectId}/executions/${eid}`)
+    }
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    rowExecuting.value = false
+  }
+}
+
 async function handleVersionRollback() {
   await Promise.all([loadList(), loadAllForStats()])
   if (currentTestCase.value?.id) {
@@ -2179,6 +2271,15 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.row-execute-title {
+  display: inline-block;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
 }
 
 /* ===== v3.18: 显示设置 / 空状态 / 骨架屏 ===== */
