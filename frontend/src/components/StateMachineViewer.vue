@@ -90,6 +90,8 @@ const buildNodes = () => {
   if (!props.states || props.states.length === 0) return []
   return props.states.map((state) => {
     const color = getColorByType(state.type)
+    const nodeId = state.code || state.name
+    const labelText = state.name || state.code || ''
     const typeLabel =
       state.type === 'initial'
         ? '【初始】'
@@ -97,8 +99,8 @@ const buildNodes = () => {
           ? '【终止】'
           : ''
     return {
-      id: state.name,
-      name: state.name,
+      id: nodeId,
+      name: nodeId,
       symbol: 'circle',
       symbolSize: 64,
       itemStyle: {
@@ -110,20 +112,20 @@ const buildNodes = () => {
       },
       label: {
         show: true,
-        formatter: typeLabel + displayState(state.name),
+        formatter: typeLabel + displayState(labelText),
         fontSize: 12,
         color: '#0f172a',
         fontWeight: 600
       },
       tooltip: {
         formatter: () => {
-          let html = `<b>${displayState(state.name)}</b><br/>`
+          let html = `<b>${displayState(labelText)}</b><br/>`
           html += `类型: ${state.type || 'normal'}<br/>`
           if (state.description) {
             html += `描述: ${state.description}<br/>`
           }
-          if (state.name && displayState(state.name) !== state.name) {
-            html += `原始值: ${state.name}`
+          if (state.code && state.code !== state.name) {
+            html += `枚举: ${state.code}`
           }
           return html
         }
