@@ -458,7 +458,7 @@
                 执行
               </el-button>
               <el-dropdown trigger="click" @command="(s) => handleManualStatus(row, s)">
-                <el-button link :icon="EditPen">标记</el-button>
+                <el-button link :icon="EditPen" @click.stop>标记</el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="passed">通过</el-dropdown-item>
