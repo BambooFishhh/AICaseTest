@@ -2,8 +2,9 @@ services:
   # ========== 后端 ==========
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      # 需要仓库根作为上下文，以复制 mcp-server / playwright-mcp-server
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: test-agent-backend
     ports:
       - "8000:8000"

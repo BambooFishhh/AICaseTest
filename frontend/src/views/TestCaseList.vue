@@ -808,6 +808,7 @@ import {
 import {
   createSuite, listSuites, deleteSuite, executeSuite
 } from '@/api/suite'
+import { downloadAuth } from '@/utils/download'
 import { generateMindmap } from '@/api/mindmap'
 import { executeBatch, executeTestCase } from '@/api/execution'
 import { useProjectStore } from '@/stores/project'
@@ -1229,7 +1230,7 @@ function triggerImportXmind() {
 
 // v3.16: 下载 XMind 导入模板
 function downloadXmindTemplate() {
-  window.open(`/api/projects/${projectId}/testcases/xmind-template`, '_blank')
+  downloadAuth(`/api/projects/${projectId}/testcases/xmind-template`, 'xmind_template.xmind')
 }
 
 async function handleImportXmind(e) {

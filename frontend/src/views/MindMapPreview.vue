@@ -129,6 +129,7 @@ import {
   ArrowLeft, Share, Download, Picture, Files, CircleCheck, CircleClose, Aim, Coin, FullScreen
 } from '@element-plus/icons-vue'
 import { previewMindmap, generateMindmap, downloadMindmapUrl } from '@/api/mindmap'
+import { downloadAuth } from '@/utils/download'
 
 const route = useRoute()
 const router = useRouter()
@@ -386,7 +387,7 @@ async function handleGenerate() {
 }
 
 function handleDownload() {
-  window.open(downloadMindmapUrl(projectId))
+  downloadAuth(downloadMindmapUrl(projectId), 'mindmap.xmind')
 }
 
 // v3.18: 脑图导出 PNG（SVG → canvas）

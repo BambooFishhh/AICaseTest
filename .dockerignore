@@ -1,0 +1,12 @@
+.git
+.gitignore
+data
+outputs
+.m2-repo
+backend/target
+frontend/node_modules
+frontend/dist
+mcp-server/node_modules
+playwright-mcp-server/node_modules
+docs
+.env

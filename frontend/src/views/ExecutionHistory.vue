@@ -158,6 +158,7 @@ import {
   Download
 } from '@element-plus/icons-vue'
 import { getExecutions } from '@/api/execution'
+import { openAuthPreview } from '@/utils/download'
 
 const route = useRoute()
 const router = useRouter()
@@ -308,7 +309,7 @@ function goToDetail(row) {
 }
 
 function downloadReport(row) {
-  window.open(`/api/executions/${row.id}/report`, '_blank')
+  openAuthPreview(`/api/executions/${row.id}/report`)
 }
 
 function goTestcases() {

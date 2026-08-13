@@ -205,6 +205,7 @@ import {
   ArrowLeft, Loading, View, Download, Document, CircleCheck, CircleClose, CircleCloseFilled, Files, Timer
 } from '@element-plus/icons-vue'
 import { getBatch, cancelBatch } from '@/api/execution'
+import { openAuthPreview, downloadAuth } from '@/utils/download'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const route = useRoute()
@@ -328,7 +329,7 @@ function goToExecution(executionId) {
 }
 
 function downloadReport() {
-  window.open(`/api/batches/${batchId}/report?download=1`, '_blank')
+  downloadAuth(`/api/batches/${batchId}/report?download=1`, 'batch_report.html')
 }
 
 // v4.2: 取消批次
@@ -358,7 +359,7 @@ async function handleCancelBatch() {
 
 // v3.13: 批次报告在线预览（inline）
 function previewReport() {
-  window.open(`/api/batches/${batchId}/report`, '_blank')
+  openAuthPreview(`/api/batches/${batchId}/report`)
 }
 
 function goBack() {

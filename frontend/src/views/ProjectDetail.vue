@@ -178,6 +178,7 @@ import { getProject } from '@/api/project'
 import PrdPanel from '@/components/PrdPanel.vue'
 import { triggerAnalysis } from '@/api/analysis'
 import { generateMindmap, downloadMindmapUrl } from '@/api/mindmap'
+import { downloadAuth } from '@/utils/download'
 import { useProjectStore } from '@/stores/project'
 
 const route = useRoute()
@@ -314,7 +315,7 @@ async function handleMindmap() {
 }
 
 function handleDownload() {
-  window.open(downloadMindmapUrl(projectId))
+  downloadAuth(downloadMindmapUrl(projectId), 'mindmap.xmind')
 }
 
 function goList() {
@@ -340,7 +341,7 @@ function goExecutions() {
 
 // v3.16: 项目导出备份（ZIP）
 function exportProject() {
-  window.open(`/api/projects/${projectId}/export`, '_blank')
+  downloadAuth(`/api/projects/${projectId}/export`, `project_${projectId}_backup.zip`)
 }
 
 onMounted(async () => {

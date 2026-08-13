@@ -273,6 +273,7 @@ import {
   ArrowLeft, Loading, Download, Document, VideoPlay, VideoPause, Camera, Picture
 } from '@element-plus/icons-vue'
 import { getExecution, getExecutionSteps, getExecutionVideoUrl } from '@/api/execution'
+import { openAuthPreview, downloadAuth } from '@/utils/download'
 
 const RECORDING_BASE_URL = 'http://localhost:8000'
 
@@ -395,12 +396,12 @@ function pausePlay() {
 }
 
 function downloadReport() {
-  window.open(`/api/executions/${executionId}/report?download=1`, '_blank')
+  downloadAuth(`/api/executions/${executionId}/report?download=1`, 'execution_report.html')
 }
 
 // v3.13: 报告在线预览（inline）
 function previewReport() {
-  window.open(`/api/executions/${executionId}/report`, '_blank')
+  openAuthPreview(`/api/executions/${executionId}/report`)
 }
 
 // 状态标签颜色: passed=success, failed=danger, running=warning, pending=info
