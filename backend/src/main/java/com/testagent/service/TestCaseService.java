@@ -806,6 +806,22 @@ public class TestCaseService {
         return TestCaseDTO.from(tc);
     }
 
+    // v4.3: 手动标记执行状态（未执行/通过/阻塞/失败）
+    private static final java.util.Set<String> MANUAL_EXECUTION_STATUSES =
+            java.util.Set.of("not_executed", "passed", "failed", "blocked");
+
+    @Transactional
+    public TestCaseDTO updateExecutionStatus(String projectId, String testcaseId, String status) {
+        projectAccessService.assertProjectAccess(projectId);
+        if (status == null || !MANUAL_EXECUTION_STATUSES.contains(status)) {
+            throw BusinessException.invalidParam("非法的执行状态: " + status);
+        }
+        TestCase tc = findTestCase(projectId, testcaseId);
+        tc.setExecutionStatus(status);
+        testCaseRepository.save(tc);
+        return TestCaseDTO.from(tc);
+    }
+
     @Transactional
     public TestCaseDTO updateTestCase(String projectId, String testcaseId, UpdateTestCaseRequest req) {
         projectAccessService.assertProjectAccess(projectId);

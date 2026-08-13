@@ -432,18 +432,30 @@
             </el-tag>
           </template>
         </el-table-column>
-        <!-- 操作列：单条执行入口 -->
-        <el-table-column label="操作" width="90" fixed="right">
+        <!-- 操作列：单条执行 + 手动标记状态 -->
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
-            <el-button
-              v-if="!row.isModule"
-              type="primary"
-              link
-              :icon="VideoPlay"
-              @click.stop="openRowExecute(row)"
-            >
-              执行
-            </el-button>
+            <template v-if="!row.isModule">
+              <el-button
+                type="primary"
+                link
+                :icon="VideoPlay"
+                @click.stop="openRowExecute(row)"
+              >
+                执行
+              </el-button>
+              <el-dropdown trigger="click" @command="(s) => handleManualStatus(row, s)">
+                <el-button link :icon="EditPen">标记</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="passed">通过</el-dropdown-item>
+                    <el-dropdown-item command="blocked">阻塞</el-dropdown-item>
+                    <el-dropdown-item command="failed">失败</el-dropdown-item>
+                    <el-dropdown-item command="not_executed" divided>未执行</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </template>
           </template>
         </el-table-column>
       </el-table>
@@ -793,13 +805,13 @@ import {
   Search, Delete, Download, Upload, Check, ArrowDown, VideoPlay,
   Setting, Plus, View, RefreshRight, Share, Files, CircleCheck,
   CircleClose, Aim, Coin, FolderOpened, ArrowLeft, Loading, DataAnalysis,
-  Clock, Filter, CopyDocument, Operation, Connection, MagicStick
+  Clock, Filter, CopyDocument, Operation, Connection, MagicStick, EditPen
 } from '@element-plus/icons-vue'
 import {
   listTestCases, streamGenerate, streamGenerateAppend,
   cancelGenerate, createTestCase, deleteTestCase,
   batchDeleteTestCases, importXmind, reviewTestCases,
-  exportTestCases, importTestCases, copyToProject
+  exportTestCases, importTestCases, copyToProject, updateTestCaseExecutionStatus
 } from '@/api/testcase'
 import {
   getProject, getGenerationParams, updateGenerationParams, listProjects,
@@ -1025,11 +1037,34 @@ function reviewText(status) {
 // v3.12: 执行状态展示
 function executionStatusKey(status) {
   const key = status || 'not_executed'
-  return ['not_executed', 'running', 'passed', 'failed'].includes(key) ? key : 'not_executed'
+  return ['not_executed', 'running', 'passed', 'failed', 'blocked'].includes(key) ? key : 'not_executed'
 }
 
 function executionStatusText(status) {
-  return { not_executed: '未执行', running: '执行中', passed: '通过', failed: '失败' }[status] || '未执行'
+  return { not_executed: '未执行', running: '执行中', passed: '通过', failed: '失败', blocked: '阻塞' }[status] || '未执行'
+}
+
+// 手动标记执行状态
+const manualStatusLabels = { passed: '通过', blocked: '阻塞', failed: '失败', not_executed: '未执行' }
+
+async function handleManualStatus(row, status) {
+  const label = manualStatusLabels[status] || status
+  try {
+    await ElMessageBox.confirm(
+      `确定将用例「${row.title}」的执行状态标记为「${label}」吗？`,
+      '手动标记执行状态',
+      { confirmButtonText: '确定标记', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await updateTestCaseExecutionStatus(projectId, row.id, status)
+    ElMessage.success(`已标记为「${label}」`)
+    await Promise.all([loadList(), loadAllForStats()])
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
 }
 
 // v3.12: 快捷执行统计（基于当前已加载列表）
@@ -2084,6 +2119,7 @@ onUnmounted(() => {
   &.status-failed { color: var(--color-danger); }
   &.status-running { color: var(--color-warning); }
   &.status-not_executed { color: var(--text-tertiary); }
+  &.status-blocked { color: var(--text-tertiary); }
 }
 
 .module-label {

@@ -103,6 +103,11 @@ export function updateTestCase(projectId, tcId, data) {
   return request.put(`/projects/${projectId}/testcases/${tcId}`, data)
 }
 
+// v4.3: 手动标记执行状态（not_executed/passed/blocked/failed）
+export function updateTestCaseExecutionStatus(projectId, tcId, status) {
+  return request.put(`/projects/${projectId}/testcases/${tcId}/execution-status`, { status })
+}
+
 export function deleteTestCase(projectId, tcId) {
   return request.delete(`/projects/${projectId}/testcases/${tcId}`)
 }

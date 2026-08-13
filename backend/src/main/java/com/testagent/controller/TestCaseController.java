@@ -82,6 +82,16 @@ public class TestCaseController {
         return ApiResponse.success(testCaseService.updateTestCase(projectId, testcaseId, req));
     }
 
+    // 手动标记执行状态（not_executed/passed/blocked/failed）
+    @PutMapping("/{testcaseId}/execution-status")
+    public ApiResponse<TestCaseDTO> updateExecutionStatus(
+            @PathVariable String projectId,
+            @PathVariable String testcaseId,
+            @RequestBody Map<String, String> body) {
+        return ApiResponse.success(
+                testCaseService.updateExecutionStatus(projectId, testcaseId, body.get("status")));
+    }
+
     @DeleteMapping("/{testcaseId}")
     public ApiResponse<Void> deleteTestCase(
             @PathVariable String projectId,
