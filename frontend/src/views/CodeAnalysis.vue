@@ -414,8 +414,8 @@ const projectId = route.params.id
 
 const loading = ref(false)
 const activeTab = ref('stateMachines')
-// v4.5: 前端分析面板可折叠（默认全部展开）
-const activeFrontend = ref(['forms', 'states', 'selectors', 'flows'])
+// v4.5: 前端分析面板可折叠（默认折叠）
+const activeFrontend = ref([])
 const analysis = ref(null)
 const stateMachines = ref([])
 const methodFilter = ref('')
