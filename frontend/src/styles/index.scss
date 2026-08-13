@@ -346,7 +346,8 @@ ol {
 
 .fade-in { animation: fadeIn var(--transition-normal); }
 .fade-in-up { animation: fadeInUp var(--transition-normal); }
-.is-loading { animation: spin 1s linear infinite; }
+/* 仅让图标旋转，避免 el-button loading 时整个按钮跟着转（is-loading 也会加到 button 上） */
+.el-icon.is-loading { animation: spin 1s linear infinite; }
 
 /* ===== 响应式 ===== */
 @media (max-width: 768px) {
