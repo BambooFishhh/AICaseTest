@@ -4,6 +4,32 @@
 
 ---
 
+## v4.4 — 分析流式化
+
+**日期**: 2026-08-13
+**基线**: v4.3
+**主题**: 代码分析改为 SSE 流式推送实时阶段进度
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| service/AnalysisService.java | 进度回调 + 流式分析 | 阶段：扫描结构/后端/前端/状态机/完成；runAnalysisStream 推送 progress/complete/error |
+| controller/ProjectController.java | analyze-stream 端点 | GET /api/projects/{id}/analyze-stream（操作权限 + created/failed 守卫） |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| views/ProjectDetail.vue | 开始分析改用 EventSource | 实时显示阶段进度；完成/失败自动刷新；卸载关闭连接 |
+
+### 验证结果
+
+- 后端测试: Tests run 2, Failures 0, BUILD SUCCESS
+- 前端构建: ✓ built in 14.21s
+
+---
+
 ## v4.3 — 项目组与权限
 
 **日期**: 2026-08-13

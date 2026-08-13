@@ -19,10 +19,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.http.MediaType;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import jakarta.annotation.PostConstruct;
 
@@ -53,6 +58,11 @@ public class AnalysisService {
     @Autowired
     private StateMachineAgent stateMachineAgent;
 
+    @FunctionalInterface
+    public interface ProgressCallback {
+        void update(String message);
+    }
+
     /**
      * v3.9fix: 启动时清理重复的 CodeAnalysis 记录（每个项目只保留最新一条）。
      */
@@ -80,6 +90,13 @@ public class AnalysisService {
 
     @Async("analysisExecutor")
     public void runAnalysis(String projectId, String sourcePath) {
+        runAnalysisWithProgress(projectId, sourcePath, null);
+    }
+
+    /**
+     * v4.4: 分析主流程（支持进度回调）。
+     */
+    public void runAnalysisWithProgress(String projectId, String sourcePath, ProgressCallback progressCb) {
         // v3.9fix: 删除旧的分析记录，避免多次分析导致 NonUniqueResult
         codeAnalysisRepository.findAllByProjectId(projectId).forEach(codeAnalysisRepository::delete);
 
@@ -90,11 +107,14 @@ public class AnalysisService {
 
         try {
             updateProjectStatus(projectId, "analyzing");
+            report(progressCb, "正在扫描项目结构...");
 
             ScanResult scanResult = projectScanner.scan(sourcePath);
+            report(progressCb, "项目结构扫描完成，正在解析后端代码...");
 
             FrontendResult frontendResult = null;
             if (scanResult.getFrontendDir() != null && !scanResult.getFrontendDir().isBlank()) {
+                report(progressCb, "正在解析前端代码...");
                 frontendResult = vueAnalyzer.analyze(scanResult.getFrontendDir());
             }
 
@@ -102,6 +122,7 @@ public class AnalysisService {
             if (scanResult.getBackendDir() != null && !scanResult.getBackendDir().isBlank()) {
                 backendResult = springAnalyzer.analyze(scanResult.getBackendDir());
             }
+            report(progressCb, "代码解析完成，正在提取状态机...");
 
             analysis.setFrontendResult(frontendResult != null
                     ? objectMapper.writeValueAsString(frontendResult) : "{}");
@@ -125,6 +146,7 @@ public class AnalysisService {
             }
 
             updateProjectStatus(projectId, "analyzed");
+            report(progressCb, "分析完成");
             log.info("Analysis completed for project {}", projectId);
 
         } catch (Exception e) {
@@ -133,6 +155,60 @@ public class AnalysisService {
             analysis.setErrorMessage(e.getMessage() != null ? e.getMessage() : "Unknown error");
             codeAnalysisRepository.save(analysis);
             updateProjectStatus(projectId, "failed");
+        }
+    }
+
+    /**
+     * v4.4: SSE 流式分析——progress/complete/error 事件。
+     */
+    @Async("analysisExecutor")
+    public void runAnalysisStream(String projectId, SseEmitter emitter) {
+        AtomicBoolean clientGone = new AtomicBoolean(false);
+        emitter.onCompletion(() -> clientGone.set(true));
+        emitter.onTimeout(() -> clientGone.set(true));
+        emitter.onError(e -> clientGone.set(true));
+
+        try {
+            Project project = projectRepository.findById(projectId)
+                    .orElseThrow(() -> new IllegalStateException("项目不存在: " + projectId));
+            runAnalysisWithProgress(projectId, project.getSourcePath(), msg -> {
+                if (!clientGone.get()) {
+                    try {
+                        Map<String, Object> data = new LinkedHashMap<>();
+                        data.put("message", msg);
+                        emitter.send(SseEmitter.event().name("progress")
+                                .data(data, MediaType.APPLICATION_JSON));
+                    } catch (Exception ignored) {
+                        clientGone.set(true);
+                    }
+                }
+            });
+            if (!clientGone.get()) {
+                Map<String, Object> data = new LinkedHashMap<>();
+                data.put("message", "分析完成");
+                emitter.send(SseEmitter.event().name("complete").data(data, MediaType.APPLICATION_JSON));
+            }
+            emitter.complete();
+        } catch (Exception e) {
+            log.error("Stream analysis failed for project {}", projectId, e);
+            try {
+                Map<String, Object> data = new LinkedHashMap<>();
+                data.put("message", e.getMessage() != null ? e.getMessage() : "分析失败");
+                emitter.send(SseEmitter.event().name("error").data(data, MediaType.APPLICATION_JSON));
+            } catch (Exception ignored) {
+                // 客户端可能已断开
+            }
+            emitter.complete();
+        }
+    }
+
+    private void report(ProgressCallback progressCb, String message) {
+        if (progressCb != null) {
+            try {
+                progressCb.update(message);
+            } catch (Exception ignored) {
+                // 回调失败不影响分析
+            }
         }
     }
 

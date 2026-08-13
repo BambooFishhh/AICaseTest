@@ -5,7 +5,9 @@ import com.testagent.dto.CreateProjectRequest;
 import com.testagent.dto.GenerateRequest;
 import com.testagent.dto.GenerationParams;
 import com.testagent.dto.ProjectDTO;
+import com.testagent.service.AnalysisService;
 import com.testagent.service.BackupService;
+import com.testagent.service.ProjectAccessService;
 import com.testagent.service.ProjectService;
 import com.testagent.service.TestCaseService;
 import jakarta.validation.Valid;
@@ -44,6 +46,12 @@ public class ProjectController {
     @Autowired
     private BackupService backupService;
 
+    @Autowired
+    private AnalysisService analysisService;
+
+    @Autowired
+    private ProjectAccessService projectAccessService;
+
     @GetMapping
     public ApiResponse<List<ProjectDTO>> listProjects() {
         return ApiResponse.success(projectService.listProjects());
@@ -69,6 +77,29 @@ public class ProjectController {
     public ResponseEntity<ApiResponse<Void>> triggerAnalysis(@PathVariable String projectId) {
         projectService.triggerAnalysis(projectId);
         return ResponseEntity.accepted().body(ApiResponse.accepted("分析已启动"));
+    }
+
+    // v4.4: 流式分析（SSE，progress/complete/error）
+    @GetMapping("/{projectId}/analyze-stream")
+    public SseEmitter analyzeStream(@PathVariable String projectId) {
+        projectAccessService.assertOperateAccess(projectId);
+        ProjectDTO project = projectService.getProject(projectId);
+        String status = project.getStatus();
+        if (!"created".equals(status) && !"failed".equals(status)) {
+            SseEmitter err = new SseEmitter(0L);
+            try {
+                err.send(SseEmitter.event().name("error").data(
+                        Map.of("message", "当前状态不允许分析: " + status),
+                        MediaType.APPLICATION_JSON));
+                err.complete();
+            } catch (Exception ignored) {
+                // 客户端可能已断开
+            }
+            return err;
+        }
+        SseEmitter emitter = new SseEmitter(5L * 60 * 1000);
+        analysisService.runAnalysisStream(projectId, emitter);
+        return emitter;
     }
 
     @PostMapping("/{projectId}/generate")

@@ -594,6 +594,15 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v4.3](docs/v4.3/PRD_v4.3_项目组与权限.md)
 
+### v4.4 — 分析流式化
+
+代码分析从"一句等待文案 + 轮询"升级为 SSE 实时阶段进度。
+
+- 后端: 分析流程按阶段推送进度（扫描结构/后端/前端/状态机），新增 `GET /api/projects/{id}/analyze-stream`
+- 前端: 项目详情"开始分析"改用 EventSource 实时显示进度，完成/失败自动刷新
+
+详见：[PRD v4.4](docs/v4.4/PRD_v4.4_分析流式化.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -644,6 +653,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v4.1 | 安全校验与权限（防爆破/密码策略/改密/CORS收敛/审计） | ✅ 完成 |
 | v4.2 | 多线程高并发（线程池治理/并发配额/批量排队取消/幂等） | ✅ 完成 |
 | v4.3 | 项目组与权限（组共享/成员角色/复制执行隔离） | ✅ 完成 |
+| v4.4 | 分析流式化（SSE 实时阶段进度） | ✅ 完成 |
 
 ## API 概览
 
@@ -665,6 +675,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | GET | `/api/projects/{id}/analysis` | 获取分析结果 |
 | POST | `/api/projects/{id}/testcases/generate` | 触发用例生成 |
 | GET | `/api/projects/{id}/testcases/generate-stream` | 流式生成用例（SSE，推送 progress/case/complete/cancelled/error，v3.2） |
+| GET | `/api/projects/{id}/analyze-stream` | 流式分析（SSE，推送 progress/complete/error，v4.4） |
 | GET | `/api/projects/{id}/testcases/generate-stream-append?type={type}` | 流式追加生成用例（SSE，不删除现有用例 + 类型过滤 + 跨去重，v3.5） |
 | POST | `/api/projects/{id}/testcases/generate-cancel` | 取消流式生成（v3.3，v3.5 同时适用于追加生成） |
 | POST | `/api/projects/{id}/testcases` | 手动创建测试用例（v3.6） |

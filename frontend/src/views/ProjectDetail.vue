@@ -186,7 +186,6 @@ import {
 } from '@element-plus/icons-vue'
 import { getProject } from '@/api/project'
 import PrdPanel from '@/components/PrdPanel.vue'
-import { triggerAnalysis } from '@/api/analysis'
 import { generateMindmap, downloadMindmapUrl } from '@/api/mindmap'
 import { downloadAuth } from '@/utils/download'
 import { useProjectStore } from '@/stores/project'
@@ -198,6 +197,8 @@ const projectId = route.params.id
 
 const loading = ref(false)
 const pollingMessage = ref('')
+// v4.4: 流式分析 EventSource
+let analyzeEs = null
 
 const project = computed(() => projectStore.currentProject)
 
@@ -298,22 +299,43 @@ async function refreshProject() {
   projectStore.currentProject = res.data
 }
 
-async function handleAnalyze() {
-  try {
-    await triggerAnalysis(projectId)
-    ElMessage.success('分析已启动')
-    pollingMessage.value = '正在分析代码结构，请稍候...'
-    projectStore.startPolling(projectId, (status) => {
-      pollingMessage.value = ''
-      if (status === 'analyzed') {
-        ElMessage.success('分析完成')
-      } else if (status === 'failed') {
-        ElMessage.error('分析失败')
+// v4.4: 流式分析——SSE 实时阶段进度
+function handleAnalyze() {
+  ElMessage.success('分析已启动')
+  pollingMessage.value = '正在启动分析...'
+  analyzeEs = new EventSource(`/api/projects/${projectId}/analyze-stream`)
+
+  analyzeEs.addEventListener('progress', (e) => {
+    try {
+      pollingMessage.value = JSON.parse(e.data).message
+    } catch {
+      // 忽略解析失败
+    }
+  })
+
+  analyzeEs.addEventListener('complete', () => {
+    analyzeEs?.close()
+    analyzeEs = null
+    pollingMessage.value = ''
+    ElMessage.success('分析完成')
+    refreshProject()
+  })
+
+  analyzeEs.addEventListener('error', (e) => {
+    let msg = '分析连接异常'
+    if (e.data) {
+      try {
+        msg = JSON.parse(e.data).message || msg
+      } catch {
+        // 保持默认
       }
-    })
-  } catch (e) {
-    // 错误已由响应拦截器统一提示
-  }
+    }
+    analyzeEs?.close()
+    analyzeEs = null
+    pollingMessage.value = ''
+    ElMessage.error(msg === '分析连接异常' ? '分析失败，请重试' : msg)
+    refreshProject()
+  })
 }
 
 function handleGenerate() {
@@ -370,6 +392,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (analyzeEs) {
+    analyzeEs.close()
+    analyzeEs = null
+  }
   projectStore.stopPolling()
 })
 </script>
