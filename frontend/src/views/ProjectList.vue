@@ -11,6 +11,34 @@
       </div>
     </header>
 
+    <!-- 筛选区 -->
+    <section class="filter-section">
+      <el-input
+        v-model="keyword"
+        placeholder="搜索项目名称 / 源码路径"
+        clearable
+        :prefix-icon="Search"
+        class="filter-search"
+        @input="applyFilter"
+        @clear="applyFilter"
+      />
+      <el-select
+        v-model="statusFilter"
+        placeholder="状态筛选"
+        clearable
+        class="filter-status"
+        @change="applyFilter"
+      >
+        <el-option
+          v-for="(text, key) in statusTextMap"
+          :key="key"
+          :label="text"
+          :value="key"
+        />
+      </el-select>
+      <span class="filter-count">共 {{ filteredProjects.length }} 个项目</span>
+    </section>
+
     <!-- 加载骨架屏 -->
     <div v-if="loading" class="skeleton-grid">
       <div v-for="i in 6" :key="i" class="skeleton-card">
@@ -28,10 +56,18 @@
       <el-button type="primary" :icon="Plus" @click="goCreate">立即创建</el-button>
     </div>
 
+    <!-- 筛选无结果 -->
+    <div v-else-if="filteredProjects.length === 0" class="empty-state">
+      <el-icon :size="64" class="empty-icon"><Search /></el-icon>
+      <h3 class="empty-title">没有匹配的项目</h3>
+      <p class="empty-desc">试试调整关键词或状态筛选</p>
+      <el-button @click="clearFilter">清除筛选</el-button>
+    </div>
+
     <!-- 项目卡片网格 -->
     <div v-else class="project-grid">
       <article
-        v-for="project in projects"
+        v-for="project in filteredProjects"
         :key="project.id"
         class="project-card"
         :class="`is-${project.status}`"
@@ -86,15 +122,38 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Plus, Folder, FolderOpened, Clock, Delete, Document } from '@element-plus/icons-vue'
+import { Plus, Folder, FolderOpened, Clock, Delete, Document, Search } from '@element-plus/icons-vue'
 import { listProjects, deleteProject } from '@/api/project'
 
 const router = useRouter()
 const projects = ref([])
 const loading = ref(false)
+// 筛选
+const keyword = ref('')
+const statusFilter = ref('')
+
+const filteredProjects = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  return projects.value.filter((p) => {
+    if (statusFilter.value && p.status !== statusFilter.value) return false
+    if (!kw) return true
+    const name = (p.name || '').toLowerCase()
+    const path = (p.sourcePath || '').toLowerCase()
+    return name.includes(kw) || path.includes(kw)
+  })
+})
+
+function applyFilter() {
+  // 计算属性自动响应
+}
+
+function clearFilter() {
+  keyword.value = ''
+  statusFilter.value = ''
+}
 
 const statusTextMap = {
   created: '已创建',
@@ -179,6 +238,36 @@ onMounted(loadProjects)
 @keyframes shimmer {
   0% { background-position: 100% 50%; }
   100% { background-position: 0 50%; }
+}
+
+/* ===== 筛选区 ===== */
+.filter-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-xs);
+
+  .filter-search {
+    flex: 1;
+    min-width: 220px;
+    max-width: 420px;
+  }
+
+  .filter-status {
+    width: 160px;
+  }
+
+  .filter-count {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    margin-left: auto;
+  }
 }
 
 /* ===== 空状态 ===== */
