@@ -34,7 +34,7 @@ public class AnalysisController {
 
     @GetMapping("/analysis")
     public ApiResponse<AnalysisResultDTO> getAnalysis(@PathVariable String projectId) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertViewAccess(projectId);
         CodeAnalysis analysis = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId)
                 .orElseThrow(() -> BusinessException.notFound("分析结果不存在"));
         return ApiResponse.success(AnalysisResultDTO.from(analysis));
@@ -42,7 +42,7 @@ public class AnalysisController {
 
     @GetMapping("/state-machines")
     public ApiResponse<List<StateMachineDTO>> getStateMachines(@PathVariable String projectId) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertViewAccess(projectId);
         List<StateMachineDTO> dtos = stateMachineRepository.findByProjectId(projectId).stream()
                 .map(StateMachineDTO::from)
                 .collect(Collectors.toList());

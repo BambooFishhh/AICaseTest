@@ -583,6 +583,17 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v4.2](docs/v4.2/PRD_v4.2_多线程高并发.md)
 
+### v4.3 — 项目组与权限
+
+部门共享 + 精细化权限 + 执行隔离。
+
+- 后端: 项目组（创建/成员管理），成员角色 VIEWER（只读）/ OPERATOR（增删改查+执行），仅组创建者可指派
+- 后端: 项目归属组，同组成员可查看组内全部项目；访问级别 OWNER/OPERATOR/VIEWER 分级校验
+- 后端: 复制执行（快照执行不回写原用例状态，完全隔离）
+- 前端: 项目组管理页、创建项目选组、列表组标识与只读标记、按权限隐藏操作、复制执行入口
+
+详见：[PRD v4.3](docs/v4.3/PRD_v4.3_项目组与权限.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -632,6 +643,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v4.0 | 账号体系与登录（注册/登录/JWT + 数据归属隔离 + 存量迁移） | ✅ 完成 |
 | v4.1 | 安全校验与权限（防爆破/密码策略/改密/CORS收敛/审计） | ✅ 完成 |
 | v4.2 | 多线程高并发（线程池治理/并发配额/批量排队取消/幂等） | ✅ 完成 |
+| v4.3 | 项目组与权限（组共享/成员角色/复制执行隔离） | ✅ 完成 |
 
 ## API 概览
 
@@ -642,6 +654,9 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | GET | `/api/auth/me` | 当前用户（v4.0） |
 | POST | `/api/auth/change-password` | 修改密码（v4.1） |
 | POST | `/api/batches/{batchId}/cancel` | 取消批次执行（v4.2） |
+| POST | `/api/projects/{id}/testcases/copy-execute` | 复制执行（快照，不影响原用例，v4.3） |
+| GET/POST/PUT/DELETE | `/api/groups`、`/api/groups/{id}/members` | 项目组与成员管理（v4.3） |
+| GET | `/api/users` | 用户查询（成员候选，v4.3） |
 | GET | `/api/projects` | 项目列表 |
 | POST | `/api/projects` | 创建项目 |
 | GET | `/api/projects/{id}` | 项目详情 |

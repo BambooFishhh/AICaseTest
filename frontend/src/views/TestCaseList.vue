@@ -7,11 +7,12 @@
         <h1 class="page-title">测试用例</h1>
       </div>
       <div class="page-actions">
-        <el-button :icon="Setting" @click="handleOpenGenParams">生成参数</el-button>
-        <el-button type="warning" :icon="Plus" :disabled="streaming" @click="handleOpenAppendDialog">
+        <el-button v-if="canOperate" :icon="Setting" @click="handleOpenGenParams">生成参数</el-button>
+        <el-button v-if="canOperate" type="warning" :icon="Plus" :disabled="streaming" @click="handleOpenAppendDialog">
           追加生成
         </el-button>
         <el-button
+          v-if="canOperate"
           type="primary"
           :icon="RefreshRight"
           :loading="regenerating"
@@ -20,16 +21,26 @@
         >
           重新生成
         </el-button>
-        <el-button :icon="Share" :loading="generatingMap" @click="handleGenerateMindmap">
+        <el-button v-if="canOperate" :icon="Share" :loading="generatingMap" @click="handleGenerateMindmap">
           生成脑图
         </el-button>
-        <el-button v-if="mindmapGenerated" type="success" :icon="View" @click="handleViewMindmap">
+        <el-button v-if="canOperate && mindmapGenerated" type="success" :icon="View" @click="handleViewMindmap">
           查看脑图
         </el-button>
         <!-- v3.11: 执行历史入口 -->
         <el-button :icon="Clock" @click="goExecutions">执行历史</el-button>
       </div>
     </header>
+
+    <!-- v4.3: 只读提示 -->
+    <el-alert
+      v-if="!canOperate"
+      title="只读权限：可查看与复制执行用例。如需新增/编辑/生成，请联系项目组创建者开通操作权限。"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="info-alert"
+    />
 
     <!-- 统计卡片 -->
     <div class="stats-grid">
@@ -188,16 +199,16 @@
     <section v-if="selectedRows.length > 0" class="batch-toolbar">
       <span class="batch-count">已选 {{ selectedRows.length }} 条</span>
       <div class="batch-actions">
-        <el-button type="danger" :icon="Delete" @click="handleBatchDelete">
+        <el-button v-if="canOperate" type="danger" :icon="Delete" @click="handleBatchDelete">
           批量删除
         </el-button>
-        <el-button type="success" :icon="VideoPlay" @click="openBatchExecuteDialog">
+        <el-button v-if="canOperate" type="success" :icon="VideoPlay" @click="openBatchExecuteDialog">
           批量执行
         </el-button>
-        <el-button :icon="Download" @click="handleExportSelected">
+        <el-button v-if="canOperate" :icon="Download" @click="handleExportSelected">
           导出选中
         </el-button>
-        <el-dropdown @command="handleReviewCommand">
+        <el-dropdown v-if="canOperate" @command="handleReviewCommand">
           <el-button :icon="Check">
             批量评审<el-icon class="el-icon--right"><ArrowDown /></el-icon>
           </el-button>
@@ -216,21 +227,22 @@
     <!-- 主操作工具栏 -->
     <section class="action-toolbar">
       <div class="action-left">
-        <el-button :icon="Upload" @click="triggerImportXmind">导入 XMind</el-button>
+        <el-button v-if="canOperate" :icon="Upload" @click="triggerImportXmind">导入 XMind</el-button>
         <!-- v3.16: XMind 导入模板 -->
         <el-button :icon="Download" @click="downloadXmindTemplate">模板</el-button>
-        <el-button type="success" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
-        <!-- 批量执行：常驻入口（未选中时禁用） -->
+        <el-button v-if="canOperate" type="success" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
+        <!-- v4.3: 复制执行（只读成员也可用） -->
         <el-button
-          type="success"
-          :icon="VideoPlay"
+          type="warning"
+          :icon="CopyDocument"
           :disabled="selectedRows.length === 0"
-          @click="openBatchExecuteDialog"
+          @click="openCopyExecuteDialog"
         >
-          批量执行
+          复制执行
         </el-button>
         <!-- v3.12: 快捷批量执行 -->
         <el-button
+          v-if="canOperate"
           type="danger"
           plain
           :icon="RefreshRight"
@@ -240,6 +252,7 @@
           重跑失败<span v-if="failedCount > 0">（{{ failedCount }}）</span>
         </el-button>
         <el-button
+          v-if="canOperate"
           type="success"
           plain
           :icon="CircleCheck"
@@ -263,18 +276,18 @@
           </template>
         </el-dropdown>
         <!-- v3.13: 导入 JSON -->
-        <el-button :icon="Upload" @click="triggerImportJson">导入 JSON</el-button>
+        <el-button v-if="canOperate" :icon="Upload" @click="triggerImportJson">导入 JSON</el-button>
         <!-- v3.13: 跨项目复制 -->
-        <el-button :icon="CopyDocument" :disabled="selectedRows.length === 0" @click="openCopyDialog">
+        <el-button v-if="canOperate" :icon="CopyDocument" :disabled="selectedRows.length === 0" @click="openCopyDialog">
           复制到
         </el-button>
         <!-- v3.15: 测试集/回归集 -->
-        <el-button :icon="Files" :disabled="selectedRows.length === 0" @click="openSaveSuiteDialog">
+        <el-button v-if="canOperate" :icon="Files" :disabled="selectedRows.length === 0" @click="openSaveSuiteDialog">
           保存为测试集
         </el-button>
-        <el-button :icon="Operation" @click="openSuiteDialog">测试集</el-button>
+        <el-button v-if="canOperate" :icon="Operation" @click="openSuiteDialog">测试集</el-button>
         <!-- v3.15: 多执行环境 -->
-        <el-button :icon="Connection" @click="openEnvDialog">执行环境</el-button>
+        <el-button v-if="canOperate" :icon="Connection" @click="openEnvDialog">执行环境</el-button>
         <!-- v3.18: 显示设置（列显隐 + 密度） -->
         <el-popover placement="bottom-end" :width="240" trigger="click">
           <template #reference>
@@ -320,9 +333,9 @@
     <section v-if="!loading && !streaming && treeData.length === 0" class="empty-guide">
       <el-empty description="暂无测试用例" :image-size="110">
         <div class="empty-actions">
-          <el-button type="primary" :icon="MagicStick" @click="handleRegenerate">生成用例</el-button>
-          <el-button :icon="Upload" @click="triggerImportXmind">导入 XMind</el-button>
-          <el-button :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
+          <el-button v-if="canOperate" type="primary" :icon="MagicStick" @click="handleRegenerate">生成用例</el-button>
+          <el-button v-if="canOperate" :icon="Upload" @click="triggerImportXmind">导入 XMind</el-button>
+          <el-button v-if="canOperate" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
         </div>
       </el-empty>
     </section>
@@ -435,7 +448,7 @@
         <!-- 操作列：单条执行 + 手动标记状态 -->
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
-            <template v-if="!row.isModule">
+            <template v-if="!row.isModule && canOperate">
               <el-button
                 type="primary"
                 link
@@ -621,6 +634,35 @@
           @click="confirmRowExecute"
         >
           确认执行
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- v4.3: 复制执行对话框（快照执行，不影响原始用例） -->
+    <el-dialog v-model="copyExecuteDialogVisible" title="复制执行（不影响原始用例）" width="480px">
+      <el-form label-width="100px">
+        <el-form-item label="选中用例数">
+          <span>{{ selectedRows.length }} 条</span>
+        </el-form-item>
+        <el-form-item label="待测页面URL">
+          <el-input v-model="copyExecuteUrl" placeholder="http://localhost:5173" clearable />
+        </el-form-item>
+        <el-form-item label="执行模式">
+          <el-radio-group v-model="copyExecuteMode">
+            <el-radio value="agent">Agent 模式</el-radio>
+            <el-radio value="programmatic">程序化模式</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="copyExecuteDialogVisible = false">取消</el-button>
+        <el-button
+          type="warning"
+          :icon="CopyDocument"
+          :loading="copyExecuting"
+          @click="confirmCopyExecute"
+        >
+          复制并执行
         </el-button>
       </template>
     </el-dialog>
@@ -822,7 +864,7 @@ import {
 } from '@/api/suite'
 import { downloadAuth } from '@/utils/download'
 import { generateMindmap } from '@/api/mindmap'
-import { executeBatch, executeTestCase } from '@/api/execution'
+import { executeBatch, executeTestCase, copyExecute } from '@/api/execution'
 import { useProjectStore } from '@/stores/project'
 import TestCaseCard from '@/components/TestCaseCard.vue'
 import TestCaseVersionDrawer from '@/components/TestCaseVersionDrawer.vue'
@@ -924,6 +966,18 @@ watch(tableDense, (val) => localStorage.setItem('tcl-size', val ? 'small' : 'def
 const idFilter = ref([])
 // v3.12: 项目默认执行 URL
 const defaultTargetUrl = ref('')
+// v4.3: 访问级别 OWNER/OPERATOR/VIEWER
+const accessLevel = ref('OWNER')
+const canOperate = computed(() => accessLevel.value !== 'VIEWER')
+
+async function loadAccessLevel() {
+  try {
+    const res = await getProject(projectId)
+    accessLevel.value = res.data?.accessLevel || 'OWNER'
+  } catch {
+    accessLevel.value = 'OWNER'
+  }
+}
 
 const dialogVisible = ref(false)
 const currentTestCase = ref(null)
@@ -1614,6 +1668,48 @@ async function confirmRowExecute() {
   }
 }
 
+// ===== v4.3: 复制执行（快照执行，不回写原用例状态） =====
+const copyExecuteDialogVisible = ref(false)
+const copyExecuteUrl = ref('')
+const copyExecuteMode = ref('agent')
+const copyExecuting = ref(false)
+
+function openCopyExecuteDialog() {
+  if (selectedRows.value.length === 0) {
+    ElMessage.warning('请先选择要复制执行的用例')
+    return
+  }
+  copyExecuteUrl.value = defaultTargetUrl.value || 'http://localhost:5173'
+  copyExecuteMode.value = 'agent'
+  copyExecuteDialogVisible.value = true
+}
+
+async function confirmCopyExecute() {
+  if (!copyExecuteUrl.value || !copyExecuteUrl.value.trim()) {
+    ElMessage.warning('请输入待测页面URL')
+    return
+  }
+  copyExecuting.value = true
+  try {
+    const caseIds = selectedRows.value.map((tc) => tc.id)
+    const res = await copyExecute(projectId, {
+      caseIds,
+      targetUrl: copyExecuteUrl.value.trim(),
+      mode: copyExecuteMode.value
+    })
+    const batchId = res.data?.batchId
+    copyExecuteDialogVisible.value = false
+    ElMessage.success(`已复制 ${res.data?.caseCount ?? caseIds.length} 条用例执行，不影响原始用例`)
+    if (batchId) {
+      router.push(`/projects/${projectId}/batches/${batchId}`)
+    }
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    copyExecuting.value = false
+  }
+}
+
 async function handleVersionRollback() {
   await Promise.all([loadList(), loadAllForStats()])
   if (currentTestCase.value?.id) {
@@ -1837,7 +1933,9 @@ function goBack() {
 
 onMounted(async () => {
   loadFilters()
-  await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix(), loadDefaultTargetUrl()])
+  await Promise.all([
+    loadList(), loadAllForStats(), loadCoverageMatrix(), loadDefaultTargetUrl(), loadAccessLevel()
+  ])
   if (route.query.generate === '1') {
     router.replace({ path: route.path })
     try {

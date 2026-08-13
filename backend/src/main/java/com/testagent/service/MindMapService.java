@@ -80,7 +80,7 @@ public class MindMapService {
     }
 
     public MindMapDTO generateMindMap(String projectId, List<String> testcaseIds) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertOperateAccess(projectId);
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
 
@@ -131,7 +131,7 @@ public class MindMapService {
     }
 
     public ResponseEntity<Resource> downloadMindMap(String projectId) throws IOException {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertViewAccess(projectId);
         MindMap mindMap = mindMapRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId)
                 .orElseThrow(() -> BusinessException.notFound("脑图不存在，请先生成"));
 
@@ -151,7 +151,7 @@ public class MindMapService {
     }
 
     public MindMapPreviewNode previewMindMap(String projectId) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertViewAccess(projectId);
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
 

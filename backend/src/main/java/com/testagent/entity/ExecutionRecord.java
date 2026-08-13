@@ -63,4 +63,9 @@ public class ExecutionRecord {
 
     /** v4.1: 执行操作人（登录用户名） */
     private String operator;
+
+    /** v4.3: 是否回写原用例执行状态（复制执行为 false，完全隔离） */
+    @Column(name = "write_back")
+    @Builder.Default
+    private Boolean writeBack = true;
 }

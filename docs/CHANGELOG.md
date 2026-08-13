@@ -4,6 +4,40 @@
 
 ---
 
+## v4.3 — 项目组与权限
+
+**日期**: 2026-08-13
+**基线**: v4.2
+**主题**: 项目组共享 + 成员角色权限 + 复制执行隔离
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| entity/ProjectGroup + GroupMember + 仓库 | 项目组与成员 | VIEWER/OPERATOR 角色 |
+| service/GroupService + GroupController + UserController | 组 CRUD + 成员管理 + 用户查询 | 仅组创建者可指派 |
+| entity/Project + ProjectDTO | groupId + accessLevel | 项目归属组与当前用户访问级别 |
+| service/ProjectAccessService | OWNER/OPERATOR/VIEWER 分级 | 读=view，写/执行=operate |
+| service/ExecutionService + controller | 复制执行 | copy-execute 快照执行，不回写原用例状态 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| views/Groups.vue + api/group.js + api/user.js | 项目组管理页 | 建组/编辑/删除/成员角色管理 |
+| router + App.vue | /groups 路由 + 侧边栏入口 | - |
+| views/ProjectCreate.vue | 创建项目可选所属组 | - |
+| views/ProjectList.vue | 组徽标 + 只读标记 | - |
+| views/TestCaseList.vue | 权限门控 + 复制执行 | VIEWER 只读；复制执行独立批次 |
+| views/ProjectDetail.vue | 操作区权限门控 | VIEWER 隐藏写操作 + 只读提示 |
+
+### 验证结果
+
+- 后端测试: Tests run 2, Failures 0, BUILD SUCCESS
+- 前端构建: ✓ built in 16.17s
+
+---
+
 ## v4.2 — 多线程高并发治理
 
 **日期**: 2026-08-13

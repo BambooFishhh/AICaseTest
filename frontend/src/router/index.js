@@ -88,6 +88,12 @@ const routes = [
     name: 'Settings',
     component: () => import('@/views/Settings.vue'),
     meta: { title: '系统设置', breadcrumb: ['系统设置'] }
+  },
+  {
+    path: '/groups',
+    name: 'Groups',
+    component: () => import('@/views/Groups.vue'),
+    meta: { title: '项目组', breadcrumb: ['项目组'] }
   }
 ]
 

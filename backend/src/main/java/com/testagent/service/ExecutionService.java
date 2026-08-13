@@ -72,7 +72,7 @@ public class ExecutionService {
      * 异步执行测试用例。
      */
     public String execute(String projectId, String testCaseId, String targetUrl) {
-        return execute(projectId, testCaseId, targetUrl, "programmatic", null);
+        return execute(projectId, testCaseId, targetUrl, "programmatic", null, true);
     }
 
     /**
@@ -80,12 +80,20 @@ public class ExecutionService {
      * @param mode "programmatic" 或 "agent"
      */
     public String execute(String projectId, String testCaseId, String targetUrl, String mode, String batchId) {
-        projectAccessService.assertProjectAccess(projectId);
+        return execute(projectId, testCaseId, targetUrl, mode, batchId, true);
+    }
+
+    /**
+     * v4.3: writeBack=false 表示复制执行——不回写原用例状态，完全隔离。
+     */
+    public String execute(String projectId, String testCaseId, String targetUrl,
+                          String mode, String batchId, boolean writeBack) {
+        projectAccessService.assertOperateAccess(projectId);
         TestCase testCase = testCaseRepository.findById(testCaseId)
                 .orElseThrow(() -> new IllegalArgumentException("用例不存在: " + testCaseId));
 
         // v4.2: 幂等——单条执行时若该用例已有 running 记录则拒绝
-        if (batchId == null
+        if (writeBack && batchId == null
                 && !executionRecordRepository.findByTestCaseIdAndStatus(testCaseId, "running").isEmpty()) {
             throw new BusinessException(50012, "该用例正在执行中，请勿重复触发", HttpStatus.BAD_REQUEST);
         }
@@ -102,6 +110,7 @@ public class ExecutionService {
                 .mode(mode)
                 .batchId(batchId)
                 .operator(SecurityUtils.currentUsername())
+                .writeBack(writeBack)
                 .build();
         // v3.16: 记录执行时用例快照（回溯执行内容）
         try {
@@ -120,19 +129,21 @@ public class ExecutionService {
         }
         executionRecordRepository.save(record);
 
-        // v3.11: 执行启动时回写用例执行状态
-        try {
-            testCase.setExecutionStatus("running");
-            testCaseRepository.save(testCase);
-        } catch (Exception e) {
-            log.warn("Failed to mark test case {} as running: {}", testCaseId, e.getMessage());
+        // v3.11: 执行启动时回写用例执行状态（复制执行不回写）
+        if (writeBack) {
+            try {
+                testCase.setExecutionStatus("running");
+                testCaseRepository.save(testCase);
+            } catch (Exception e) {
+                log.warn("Failed to mark test case {} as running: {}", testCaseId, e.getMessage());
+            }
         }
 
         // 异步执行
         if ("agent".equals(mode)) {
-            runAgentAsync(executionId, testCase, targetUrl);
+            runAgentAsync(executionId, testCase, targetUrl, writeBack);
         } else {
-            runAsync(executionId, testCase, targetUrl);
+            runAsync(executionId, testCase, targetUrl, writeBack);
         }
         return executionId;
     }
@@ -141,7 +152,7 @@ public class ExecutionService {
      * v2.1: 批量执行多条测试用例。
      */
     public String executeBatch(String projectId, List<String> caseIds, String targetUrl) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertOperateAccess(projectId);
         String batchId = "batch-" + UUID.randomUUID().toString().substring(0, 8);
         for (String caseId : caseIds) {
             try {
@@ -154,12 +165,34 @@ public class ExecutionService {
     }
 
     /**
+     * v4.3: 复制执行——仅需 VIEW 权限；对选中用例做快照执行，不回写原用例状态。
+     */
+    public Map<String, Object> copyExecute(String projectId, List<String> caseIds,
+                                           String targetUrl, String mode) {
+        projectAccessService.assertViewAccess(projectId);
+        String batchId = "copy-" + UUID.randomUUID().toString().substring(0, 8);
+        int started = 0;
+        for (String caseId : caseIds) {
+            try {
+                execute(projectId, caseId, targetUrl, mode == null ? "agent" : mode, batchId, false);
+                started++;
+            } catch (Exception e) {
+                log.warn("Failed to start copy execution for case {}: {}", caseId, e.getMessage());
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("batchId", batchId);
+        result.put("caseCount", started);
+        return result;
+    }
+
+    /**
      * v2.1: 查询批次状态。
      */
     public Map<String, Object> getBatchStatus(String batchId) {
         List<ExecutionRecord> records = executionRecordRepository.findByBatchIdOrderByStartTimeAsc(batchId);
         if (!records.isEmpty()) {
-            projectAccessService.assertProjectAccess(records.get(0).getProjectId());
+            projectAccessService.assertViewAccess(records.get(0).getProjectId());
         }
         int total = records.size();
         int running = 0, passed = 0, failed = 0, queued = 0, cancelled = 0;
@@ -192,6 +225,9 @@ public class ExecutionService {
      */
     public Map<String, Object> cancelBatch(String batchId) {
         List<ExecutionRecord> records = executionRecordRepository.findByBatchIdOrderByStartTimeAsc(batchId);
+        if (!records.isEmpty()) {
+            projectAccessService.assertOperateAccess(records.get(0).getProjectId());
+        }
         int cancelledPending = 0, cancelledRunning = 0;
         for (ExecutionRecord r : records) {
             if ("pending".equals(r.getStatus())) {
@@ -200,8 +236,10 @@ public class ExecutionService {
                 r.setSummary("已取消（未开始）");
                 executionRecordRepository.save(r);
                 cancelledPending++;
-                // 恢复用例执行状态
-                updateTestCaseExecutionStatus(r.getTestCaseId(), "not_executed");
+                // 恢复用例执行状态（复制执行不回写）
+                if (Boolean.TRUE.equals(r.getWriteBack())) {
+                    updateTestCaseExecutionStatus(r.getTestCaseId(), "not_executed");
+                }
             } else if ("running".equals(r.getStatus())) {
                 markRunningCancelled(r.getId());
                 if (!isWorkerAlive(r.getId())) {
@@ -223,7 +261,7 @@ public class ExecutionService {
     public Map<String, Object> cancelExecution(String executionId) {
         ExecutionRecord record = executionRecordRepository.findById(executionId)
                 .orElseThrow(() -> BusinessException.notFound("执行记录不存在: " + executionId));
-        projectAccessService.assertProjectAccess(record.getProjectId());
+        projectAccessService.assertOperateAccess(record.getProjectId());
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("executionId", executionId);
@@ -233,7 +271,9 @@ public class ExecutionService {
             record.setEndTime(LocalDateTime.now());
             record.setSummary("已取消（未开始）");
             executionRecordRepository.save(record);
-            updateTestCaseExecutionStatus(record.getTestCaseId(), "not_executed");
+            if (Boolean.TRUE.equals(record.getWriteBack())) {
+                updateTestCaseExecutionStatus(record.getTestCaseId(), "not_executed");
+            }
             result.put("cancelled", true);
             result.put("stage", "pending");
         } else if ("running".equals(status)) {
@@ -258,7 +298,7 @@ public class ExecutionService {
      * v2.8: Agent 模式异步执行（PlaywrightRecordSkill）。
      */
     @Async("executionExecutor")
-    void runAgentAsync(String executionId, TestCase testCase, String targetUrl) {
+    void runAgentAsync(String executionId, TestCase testCase, String targetUrl, boolean writeBack) {
         List<ExecutionStep> steps = new ArrayList<>();
         int passed = 0, failed = 0, skipped = 0;
         String sessionId = null;
@@ -291,7 +331,9 @@ public class ExecutionService {
                 pending.setSummary("已取消");
                 executionRecordRepository.save(pending);
             }
-            updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
+            if (writeBack) {
+                updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
+            }
             executionCancellations.remove(executionId);
             executionHeartbeats.remove(executionId);
             return;
@@ -390,8 +432,10 @@ public class ExecutionService {
             executionRecordRepository.save(finalRecord);
         }
 
-        // v3.11/v4.2: 执行结束回写用例执行状态（取消则恢复未执行）
-        updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
+        // v3.11/v4.2: 执行结束回写用例执行状态（复制执行不回写；取消则恢复未执行）
+        if (writeBack) {
+            updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
+        }
         executionCancellations.remove(executionId);
         executionHeartbeats.remove(executionId);
 
@@ -418,7 +462,7 @@ public class ExecutionService {
      * v2.8: 程序化模式异步执行（PlaywrightRecordSkill）。
      */
     @Async("executionExecutor")
-    void runAsync(String executionId, TestCase testCase, String targetUrl) {
+    void runAsync(String executionId, TestCase testCase, String targetUrl, boolean writeBack) {
         List<ExecutionStep> steps = new ArrayList<>();
         int passed = 0, failed = 0, skipped = 0;
         String sessionId = null;
@@ -451,7 +495,9 @@ public class ExecutionService {
                 pending.setSummary("已取消");
                 executionRecordRepository.save(pending);
             }
-            updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
+            if (writeBack) {
+                updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
+            }
             executionCancellations.remove(executionId);
             executionHeartbeats.remove(executionId);
             return;
@@ -620,8 +666,10 @@ public class ExecutionService {
             executionRecordRepository.save(finalRecord);
         }
 
-        // v3.11/v4.2: 执行结束回写用例执行状态（取消则恢复未执行）
-        updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
+        // v3.11/v4.2: 执行结束回写用例执行状态（复制执行不回写；取消则恢复未执行）
+        if (writeBack) {
+            updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
+        }
         executionCancellations.remove(executionId);
         executionHeartbeats.remove(executionId);
 
@@ -649,13 +697,13 @@ public class ExecutionService {
     public ExecutionRecord getExecution(String executionId) {
         ExecutionRecord record = executionRecordRepository.findById(executionId).orElse(null);
         if (record != null) {
-            projectAccessService.assertProjectAccess(record.getProjectId());
+            projectAccessService.assertViewAccess(record.getProjectId());
         }
         return record;
     }
 
     public List<ExecutionRecord> getExecutionsByProject(String projectId) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertViewAccess(projectId);
         return executionRecordRepository.findByProjectIdOrderByStartTimeDesc(projectId);
     }
 
@@ -713,7 +761,9 @@ public class ExecutionService {
         record.setEndTime(LocalDateTime.now());
         record.setSummary("已取消");
         executionRecordRepository.save(record);
-        updateTestCaseExecutionStatus(record.getTestCaseId(), "not_executed");
+        if (Boolean.TRUE.equals(record.getWriteBack())) {
+            updateTestCaseExecutionStatus(record.getTestCaseId(), "not_executed");
+        }
         executionCancellations.remove(record.getId());
         executionHeartbeats.remove(record.getId());
         executionSessions.remove(record.getId());

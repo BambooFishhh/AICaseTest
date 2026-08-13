@@ -22,6 +22,12 @@ public class ProjectDTO {
     // v4.0: 归属用户
     private String userId;
 
+    // v4.3: 所属项目组
+    private String groupId;
+
+    // v4.3: 当前用户访问级别 OWNER/OPERATOR/VIEWER/NONE
+    private String accessLevel;
+
     private Map<String, Object> techStack;
 
     private String status;
@@ -54,6 +60,7 @@ public class ProjectDTO {
                 .sourceType(entity.getSourceType())
                 .sourcePath(entity.getSourcePath())
                 .userId(entity.getUserId())
+                .groupId(entity.getGroupId())
                 .techStack(JsonHelper.parseMap(entity.getTechStack()))
                 .status(entity.getStatus())
                 .settings(JsonHelper.parseMap(entity.getSettings()))

@@ -45,7 +45,7 @@ public class BackupService {
     private ProjectAccessService projectAccessService;
 
     public byte[] buildProjectBackup(String projectId) throws IOException {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertViewAccess(projectId);
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         List<TestCase> cases = testCaseRepository.findByProjectId(projectId);

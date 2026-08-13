@@ -31,6 +31,10 @@ public class Project {
     @Column(name = "user_id", length = 64)
     private String userId;
 
+    // v4.3: 所属项目组（可空）
+    @Column(name = "group_id", length = 64)
+    private String groupId;
+
     @Column(name = "tech_stack", columnDefinition = "TEXT")
     private String techStack = "{}";
 

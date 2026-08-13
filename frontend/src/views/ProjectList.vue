@@ -86,6 +86,23 @@
             <div class="card-meta">
               <el-icon :size="12"><Clock /></el-icon>
               <span>{{ formatDate(project.createdAt) }}</span>
+              <el-tag
+                v-if="groupName(project.groupId)"
+                size="small"
+                type="info"
+                effect="plain"
+                class="group-tag"
+              >
+                {{ groupName(project.groupId) }}
+              </el-tag>
+              <el-tag
+                v-if="project.accessLevel === 'VIEWER'"
+                size="small"
+                type="warning"
+                effect="plain"
+              >
+                只读
+              </el-tag>
             </div>
           </div>
           <span class="status-pill" :class="`status-${project.status}`">
@@ -127,10 +144,12 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Plus, Folder, FolderOpened, Clock, Delete, Document, Search } from '@element-plus/icons-vue'
 import { listProjects, deleteProject } from '@/api/project'
+import { listGroups } from '@/api/group'
 
 const router = useRouter()
 const projects = ref([])
 const loading = ref(false)
+const groups = ref([])
 // 筛选
 const keyword = ref('')
 const statusFilter = ref('')
@@ -145,6 +164,12 @@ const filteredProjects = computed(() => {
     return name.includes(kw) || path.includes(kw)
   })
 })
+
+function groupName(groupId) {
+  if (!groupId) return ''
+  const g = groups.value.find((x) => x.id === groupId)
+  return g ? g.name : ''
+}
 
 function applyFilter() {
   // 计算属性自动响应
@@ -185,6 +210,15 @@ async function loadProjects() {
   }
 }
 
+async function loadGroups() {
+  try {
+    const res = await listGroups()
+    groups.value = res.data || []
+  } catch {
+    groups.value = []
+  }
+}
+
 function goCreate() {
   router.push('/projects/create')
 }
@@ -199,7 +233,10 @@ async function handleDelete(id) {
   loadProjects()
 }
 
-onMounted(loadProjects)
+onMounted(() => {
+  loadProjects()
+  loadGroups()
+})
 </script>
 
 <style scoped lang="scss">

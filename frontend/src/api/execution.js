@@ -9,6 +9,11 @@ export function cancelExecution(eid) {
   return request.post(`/executions/${eid}/cancel`)
 }
 
+// v4.3: 复制执行（快照执行，不回写原用例状态）
+export function copyExecute(projectId, data) {
+  return request.post(`/projects/${projectId}/testcases/copy-execute`, data)
+}
+
 export function getExecution(eid) {
   return request.get(`/executions/${eid}`)
 }

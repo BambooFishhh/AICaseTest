@@ -7,16 +7,20 @@ import com.testagent.dto.GenerateRequest;
 import com.testagent.dto.GenerationParams;
 import com.testagent.dto.ProjectDTO;
 import com.testagent.entity.Project;
+import com.testagent.entity.ProjectGroup;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.http.HttpStatus;
 import com.testagent.repository.CodeAnalysisRepository;
+import com.testagent.repository.GroupMemberRepository;
 import com.testagent.repository.MindMapRepository;
+import com.testagent.repository.ProjectGroupRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.security.SecurityUtils;
+import com.testagent.security.AccessLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,6 +52,12 @@ public class ProjectService {
     private ProjectAccessService projectAccessService;
 
     @Autowired
+    private ProjectGroupRepository projectGroupRepository;
+
+    @Autowired
+    private GroupMemberRepository groupMemberRepository;
+
+    @Autowired
     private CodeAnalysisRepository codeAnalysisRepository;
 
     @Autowired
@@ -71,13 +81,14 @@ public class ProjectService {
 
     public List<ProjectDTO> listProjects() {
         List<Project> all = projectRepository.findAllByOrderByCreatedAtDesc();
-        // v4.0: 非管理员只返回自己的项目
-        if (!SecurityUtils.isAdmin()) {
-            String uid = projectAccessService.requireCurrentUserId();
-            all = all.stream().filter(p -> uid.equals(p.getUserId())).toList();
-        }
         return all.stream()
-                .map(ProjectDTO::from)
+                // v4.3: 仅返回有访问权限的项目（创建者/组成员/管理员）
+                .filter(p -> projectAccessService.getAccessLevel(p.getId()) != AccessLevel.NONE)
+                .map(p -> {
+                    ProjectDTO dto = ProjectDTO.from(p);
+                    dto.setAccessLevel(projectAccessService.getAccessLevel(p.getId()).name());
+                    return dto;
+                })
                 .collect(Collectors.toList());
     }
 
@@ -98,6 +109,18 @@ public class ProjectService {
         project.setSourcePath(req.getSourcePath());
         project.setStatus("created");
         project.setUserId(projectAccessService.requireCurrentUserId());
+        // v4.3: 归属项目组（可选，需属于该组）
+        if (req.getGroupId() != null && !req.getGroupId().isBlank()) {
+            ProjectGroup group = projectGroupRepository.findById(req.getGroupId())
+                    .orElseThrow(() -> BusinessException.notFound("项目组不存在: " + req.getGroupId()));
+            String uid = projectAccessService.requireCurrentUserId();
+            boolean inGroup = group.getOwnerId().equals(uid)
+                    || groupMemberRepository.findByGroupIdAndUserId(group.getId(), uid).isPresent();
+            if (!inGroup) {
+                throw new BusinessException(40306, "不属于该项目组，无法创建组内项目", HttpStatus.FORBIDDEN);
+            }
+            project.setGroupId(group.getId());
+        }
         project.setTechStack("{}");
         project.setSettings("{}");
         // v3.17: 新建项目初始化系统级默认生成参数
@@ -114,15 +137,17 @@ public class ProjectService {
     }
 
     public ProjectDTO getProject(String id) {
-        projectAccessService.assertProjectAccess(id);
+        projectAccessService.assertViewAccess(id);
         Project project = projectRepository.findById(id)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + id));
-        return ProjectDTO.from(project);
+        ProjectDTO dto = ProjectDTO.from(project);
+        dto.setAccessLevel(projectAccessService.getAccessLevel(id).name());
+        return dto;
     }
 
     @Transactional
     public void deleteProject(String id) {
-        projectAccessService.assertProjectAccess(id);
+        projectAccessService.assertOperateAccess(id);
         Project project = projectRepository.findById(id)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + id));
 
@@ -135,7 +160,7 @@ public class ProjectService {
 
     @Transactional
     public void triggerAnalysis(String id) {
-        projectAccessService.assertProjectAccess(id);
+        projectAccessService.assertOperateAccess(id);
         Project project = projectRepository.findById(id)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + id));
         String status = project.getStatus();
@@ -148,7 +173,7 @@ public class ProjectService {
 
     @Transactional
     public void triggerGenerate(String id, GenerateRequest req) {
-        projectAccessService.assertProjectAccess(id);
+        projectAccessService.assertOperateAccess(id);
         Project project = projectRepository.findById(id)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + id));
         String status = project.getStatus();
@@ -166,7 +191,7 @@ public class ProjectService {
     // ==================== v1.10: PRD 驱动相关 ====================
 
     public Map<String, Object> getPrd(String projectId) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertViewAccess(projectId);
         Project p = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         Map<String, Object> r = new LinkedHashMap<>();
@@ -178,7 +203,7 @@ public class ProjectService {
 
     @Transactional
     public ProjectDTO updatePrd(String projectId, String prdContent) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertOperateAccess(projectId);
         Project p = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         p.setPrdContent(prdContent);
@@ -190,7 +215,7 @@ public class ProjectService {
 
     @Transactional
     public ProjectDTO uploadPrdPdf(String projectId, MultipartFile file) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertOperateAccess(projectId);
         Project p = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         String text;
@@ -208,7 +233,7 @@ public class ProjectService {
 
     @Transactional
     public ProjectDTO fetchPrdUrl(String projectId, String url) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertOperateAccess(projectId);
         if (url == null || url.isBlank()) {
             throw BusinessException.invalidParam("url 不能为空");
         }
@@ -234,7 +259,7 @@ public class ProjectService {
 
     // v3.4: 获取生成参数（从 Project.settings JSON 解析，失败降级默认值）
     public GenerationParams getGenerationParams(String projectId) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertViewAccess(projectId);
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         return parseGenerationParams(project.getSettings());
@@ -243,7 +268,7 @@ public class ProjectService {
     // v3.4: 更新生成参数（写入 Project.settings JSON 的 generationParams 字段）
     @Transactional
     public GenerationParams updateGenerationParams(String projectId, GenerationParams params) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertOperateAccess(projectId);
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         try {
@@ -260,7 +285,7 @@ public class ProjectService {
 
     // v3.15: 多执行环境——读取 settings.executionEnvironments
     public Map<String, Object> getExecutionEnvironments(String projectId) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertViewAccess(projectId);
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         Map<String, Object> result = new LinkedHashMap<>();
@@ -294,7 +319,7 @@ public class ProjectService {
     // v3.15: 更新多执行环境，激活环境 URL 同步到 defaultTargetUrl
     @Transactional
     public Map<String, Object> updateExecutionEnvironments(String projectId, Map<String, Object> payload) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertOperateAccess(projectId);
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         @SuppressWarnings("unchecked")

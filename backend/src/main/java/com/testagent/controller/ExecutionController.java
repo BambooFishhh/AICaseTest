@@ -76,6 +76,18 @@ public class ExecutionController {
         return ApiResponse.success(Map.of("batchId", batchId));
     }
 
+    /** v4.3: 复制执行（快照执行，不回写原用例状态，仅需只读权限） */
+    @PostMapping("/projects/{projectId}/testcases/copy-execute")
+    public ApiResponse<Map<String, Object>> copyExecute(
+            @PathVariable String projectId,
+            @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<String> caseIds = (List<String>) body.get("caseIds");
+        String targetUrl = (String) body.get("targetUrl");
+        String mode = (String) body.get("mode");
+        return ApiResponse.success(executionService.copyExecute(projectId, caseIds, targetUrl, mode));
+    }
+
     /** v2.1: 查询批次状态 */
     @GetMapping("/batches/{batchId}")
     public ApiResponse<Map<String, Object>> getBatch(@PathVariable String batchId) {

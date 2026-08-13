@@ -23,7 +23,7 @@ public class CoverageController {
 
     @GetMapping("/matrix")
     public ApiResponse<Object> getCoverageMatrix(@PathVariable String projectId) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertViewAccess(projectId);
         return ApiResponse.success(coverageService.getCoverageMatrix(projectId));
     }
 }

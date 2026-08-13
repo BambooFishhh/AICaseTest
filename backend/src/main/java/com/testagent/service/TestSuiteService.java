@@ -33,7 +33,7 @@ public class TestSuiteService {
 
     @Transactional
     public Map<String, Object> create(String projectId, String name, List<String> caseIds) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertOperateAccess(projectId);
         if (name == null || name.isBlank()) {
             throw new BusinessException(50006, "测试集名称不能为空", HttpStatus.BAD_REQUEST);
         }
@@ -54,7 +54,7 @@ public class TestSuiteService {
     }
 
     public List<Map<String, Object>> list(String projectId) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertViewAccess(projectId);
         return testSuiteRepository.findByProjectIdOrderByCreatedAtDesc(projectId).stream()
                 .map(this::toMap)
                 .toList();
@@ -62,7 +62,7 @@ public class TestSuiteService {
 
     @Transactional
     public void delete(String projectId, String suiteId) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertOperateAccess(projectId);
         TestSuite suite = testSuiteRepository.findById(suiteId)
                 .orElseThrow(() -> BusinessException.notFound("测试集不存在: " + suiteId));
         if (!projectId.equals(suite.getProjectId())) {
@@ -73,7 +73,7 @@ public class TestSuiteService {
 
     @Transactional
     public Map<String, Object> run(String projectId, String suiteId, String targetUrl) {
-        projectAccessService.assertProjectAccess(projectId);
+        projectAccessService.assertOperateAccess(projectId);
         TestSuite suite = testSuiteRepository.findById(suiteId)
                 .orElseThrow(() -> BusinessException.notFound("测试集不存在: " + suiteId));
         if (!projectId.equals(suite.getProjectId())) {

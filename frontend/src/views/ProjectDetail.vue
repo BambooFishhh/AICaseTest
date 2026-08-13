@@ -89,7 +89,7 @@
         </div>
         <div class="action-grid">
           <!-- 主线操作 -->
-          <div class="action-card primary-action">
+          <div v-if="canOperate" class="action-card primary-action">
             <div class="action-card-head">
               <el-icon :size="18"><Operation /></el-icon>
               <span class="action-card-title">主线操作</span>
@@ -149,11 +149,21 @@
               <!-- v3.11: 执行历史入口 -->
               <el-button :icon="Clock" @click="goExecutions">执行历史</el-button>
               <!-- v3.16: 项目导出备份 -->
-              <el-button :icon="Download" @click="exportProject">导出备份</el-button>
+              <el-button v-if="canOperate" :icon="Download" @click="exportProject">导出备份</el-button>
             </div>
           </div>
         </div>
       </section>
+
+      <!-- v4.3: 只读提示 -->
+      <el-alert
+        v-if="project && !canOperate"
+        title="只读权限：可查看项目与复制执行用例。如需生成/修改/分析，请联系项目组创建者开通操作权限。"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="readonly-alert"
+      />
 
       <!-- 轮询状态提示 -->
       <Transition name="fade">
@@ -190,6 +200,12 @@ const loading = ref(false)
 const pollingMessage = ref('')
 
 const project = computed(() => projectStore.currentProject)
+
+// v4.3: 访问级别（OWNER/OPERATOR 可操作，VIEWER 只读）
+const canOperate = computed(() => {
+  const level = project.value?.accessLevel
+  return level !== 'VIEWER'
+})
 
 const flowSteps = [
   { key: 'create', title: '创建项目', desc: '填写项目基础信息' },

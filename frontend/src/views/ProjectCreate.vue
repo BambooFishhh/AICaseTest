@@ -36,6 +36,21 @@
           />
         </el-form-item>
 
+        <!-- v4.3: 所属项目组（可选） -->
+        <el-form-item label="所属项目组">
+          <el-select
+            v-model="form.groupId"
+            placeholder="不选则为个人项目"
+            clearable
+            style="width: 100%"
+            size="large"
+            :loading="groupsLoading"
+          >
+            <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id" />
+          </el-select>
+          <div class="form-item-tip">加入项目组后，组内成员可查看该项目；操作权限由组创建者指派</div>
+        </el-form-item>
+
         <el-form-item label="来源类型" prop="sourceType">
           <div class="source-type-grid">
             <label
@@ -131,7 +146,9 @@ import {
   FolderOpened, Link, CircleCheckFilled
 } from '@element-plus/icons-vue'
 import { createProject } from '@/api/project'
+import { listGroups } from '@/api/group'
 import DirSelector from '@/components/DirSelector.vue'
+import { onMounted } from 'vue'
 
 const router = useRouter()
 const formRef = ref()
@@ -139,9 +156,12 @@ const submitting = ref(false)
 
 const form = reactive({
   name: '',
+  groupId: '',
   sourceType: 'local_path',
   sourcePath: ''
 })
+const groups = ref([])
+const groupsLoading = ref(false)
 
 const sourceTypes = [
   { value: 'local_path', label: '本地路径', desc: '从本地代码目录读取', icon: markRaw(FolderOpened) },
@@ -204,6 +224,7 @@ async function handleSubmit() {
     try {
       const res = await createProject({
         name: form.name,
+        groupId: form.groupId || undefined,
         sourceType: form.sourceType,
         sourcePath: form.sourcePath
       })
@@ -214,6 +235,20 @@ async function handleSubmit() {
     }
   })
 }
+
+async function loadGroups() {
+  groupsLoading.value = true
+  try {
+    const res = await listGroups()
+    groups.value = res.data || []
+  } catch {
+    groups.value = []
+  } finally {
+    groupsLoading.value = false
+  }
+}
+
+onMounted(loadGroups)
 
 function goBack() {
   router.back()
