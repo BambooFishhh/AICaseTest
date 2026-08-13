@@ -32,9 +32,18 @@ app:
     password: ${APP_ADMIN_PASSWORD:admin123}
   # v4.2: 线程池与并发配额
   executor:
-    analysis: { core: ${EXECUTOR_ANALYSIS_CORE:2}, max: ${EXECUTOR_ANALYSIS_MAX:4}, queue: ${EXECUTOR_ANALYSIS_QUEUE:20} }
-    generation: { core: ${EXECUTOR_GENERATION_CORE:2}, max: ${EXECUTOR_GENERATION_MAX:4}, queue: ${EXECUTOR_GENERATION_QUEUE:20} }
-    execution: { core: ${EXECUTOR_EXECUTION_CORE:2}, max: ${EXECUTOR_EXECUTION_MAX:8}, queue: ${EXECUTOR_EXECUTION_QUEUE:200} }
+    analysis:
+      core: ${EXECUTOR_ANALYSIS_CORE:2}
+      max: ${EXECUTOR_ANALYSIS_MAX:4}
+      queue: ${EXECUTOR_ANALYSIS_QUEUE:20}
+    generation:
+      core: ${EXECUTOR_GENERATION_CORE:2}
+      max: ${EXECUTOR_GENERATION_MAX:4}
+      queue: ${EXECUTOR_GENERATION_QUEUE:20}
+    execution:
+      core: ${EXECUTOR_EXECUTION_CORE:2}
+      max: ${EXECUTOR_EXECUTION_MAX:8}
+      queue: ${EXECUTOR_EXECUTION_QUEUE:200}
     project-execution-max: ${PROJECT_EXECUTION_MAX:3}
 # v2.6: MCP 多 Server 配置
 mcp:
