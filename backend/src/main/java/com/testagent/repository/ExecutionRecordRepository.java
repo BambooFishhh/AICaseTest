@@ -18,4 +18,7 @@ public interface ExecutionRecordRepository extends JpaRepository<ExecutionRecord
 
     /** v4.2: 按用例与状态查询（执行幂等） */
     List<ExecutionRecord> findByTestCaseIdAndStatus(String testCaseId, String status);
+
+    /** 按状态查询（启动清扫卡死记录） */
+    List<ExecutionRecord> findByStatus(String status);
 }

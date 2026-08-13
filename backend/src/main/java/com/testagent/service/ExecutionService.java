@@ -63,6 +63,11 @@ public class ExecutionService {
     private final java.util.concurrent.ConcurrentHashMap<String, String> executionSessions =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    // 执行心跳（executionId → 最近一次活跃时间），用于识别"worker 已死但记录仍 running"
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> executionHeartbeats =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long HEARTBEAT_STALE_MS = 30_000L;
+
     /**
      * 异步执行测试用例。
      */
@@ -199,6 +204,9 @@ public class ExecutionService {
                 updateTestCaseExecutionStatus(r.getTestCaseId(), "not_executed");
             } else if ("running".equals(r.getStatus())) {
                 markRunningCancelled(r.getId());
+                if (!isWorkerAlive(r.getId())) {
+                    finalizeCancelled(r);
+                }
                 cancelledRunning++;
             }
         }
@@ -230,8 +238,15 @@ public class ExecutionService {
             result.put("stage", "pending");
         } else if ("running".equals(status)) {
             markRunningCancelled(executionId);
-            result.put("cancelled", true);
-            result.put("stage", "running");
+            if (!isWorkerAlive(executionId)) {
+                // worker 已死（卡死/重启遗留），直接完结
+                finalizeCancelled(record);
+                result.put("cancelled", true);
+                result.put("stage", "running-stale");
+            } else {
+                result.put("cancelled", true);
+                result.put("stage", "running");
+            }
         } else {
             result.put("cancelled", false);
             result.put("stage", "finished");
@@ -255,10 +270,12 @@ public class ExecutionService {
         projectExecutionLimiter.acquire(testCase.getProjectId());
         try {
             ExecutionRecord started = executionRecordRepository.findById(executionId).orElse(null);
-            if (started != null && !"running".equals(started.getStatus())) {
+            // 仅 pending 置 running，避免覆盖已取消/失败的状态
+            if (started != null && "pending".equals(started.getStatus())) {
                 started.setStatus("running");
                 executionRecordRepository.save(started);
             }
+            touchHeartbeat(executionId);
         } catch (Exception e) {
             log.warn("Failed to mark execution {} running", executionId, e);
         }
@@ -276,6 +293,7 @@ public class ExecutionService {
             }
             updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
             executionCancellations.remove(executionId);
+            executionHeartbeats.remove(executionId);
             return;
         }
 
@@ -304,6 +322,7 @@ public class ExecutionService {
                         cancelled = true;
                         break;
                     }
+                    touchHeartbeat(executionId);
                     JsonNode stepNode = stepNodes.get(i);
                     try {
                         ExecutionStep step = executionAgent.executeStep(sessionId, stepNode, testCaseContext, i + 1, executionId);
@@ -374,6 +393,7 @@ public class ExecutionService {
         // v3.11/v4.2: 执行结束回写用例执行状态（取消则恢复未执行）
         updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
         executionCancellations.remove(executionId);
+        executionHeartbeats.remove(executionId);
 
         // 保存证据
         try {
@@ -410,10 +430,12 @@ public class ExecutionService {
         projectExecutionLimiter.acquire(testCase.getProjectId());
         try {
             ExecutionRecord started = executionRecordRepository.findById(executionId).orElse(null);
-            if (started != null && !"running".equals(started.getStatus())) {
+            // 仅 pending 置 running，避免覆盖已取消/失败的状态
+            if (started != null && "pending".equals(started.getStatus())) {
                 started.setStatus("running");
                 executionRecordRepository.save(started);
             }
+            touchHeartbeat(executionId);
         } catch (Exception e) {
             log.warn("Failed to mark execution {} running", executionId, e);
         }
@@ -431,6 +453,7 @@ public class ExecutionService {
             }
             updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
             executionCancellations.remove(executionId);
+            executionHeartbeats.remove(executionId);
             return;
         }
 
@@ -475,6 +498,7 @@ public class ExecutionService {
                         cancelled = true;
                         break;
                     }
+                    touchHeartbeat(executionId);
                     JsonNode node = stepNodes.get(i);
                     String action = node.path("action").asText("");
                     String target = node.path("target").asText("");
@@ -599,6 +623,7 @@ public class ExecutionService {
         // v3.11/v4.2: 执行结束回写用例执行状态（取消则恢复未执行）
         updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
         executionCancellations.remove(executionId);
+        executionHeartbeats.remove(executionId);
 
         // 保存证据
         try {
@@ -670,5 +695,27 @@ public class ExecutionService {
                 log.warn("Failed to close session for cancelled execution {}", executionId, e);
             }
         }
+    }
+
+    // 心跳：worker 存活时定期更新
+    private void touchHeartbeat(String executionId) {
+        executionHeartbeats.put(executionId, System.currentTimeMillis());
+    }
+
+    private boolean isWorkerAlive(String executionId) {
+        Long last = executionHeartbeats.get(executionId);
+        return last != null && (System.currentTimeMillis() - last) < HEARTBEAT_STALE_MS;
+    }
+
+    // worker 已死：直接完结为已取消
+    private void finalizeCancelled(ExecutionRecord record) {
+        record.setStatus("cancelled");
+        record.setEndTime(LocalDateTime.now());
+        record.setSummary("已取消");
+        executionRecordRepository.save(record);
+        updateTestCaseExecutionStatus(record.getTestCaseId(), "not_executed");
+        executionCancellations.remove(record.getId());
+        executionHeartbeats.remove(record.getId());
+        executionSessions.remove(record.getId());
     }
 }

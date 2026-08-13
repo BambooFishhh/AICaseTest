@@ -1,8 +1,11 @@
 package com.testagent.config;
 
 import com.testagent.entity.Project;
+import com.testagent.entity.ExecutionRecord;
 import com.testagent.entity.User;
+import com.testagent.repository.ExecutionRecordRepository;
 import com.testagent.repository.ProjectRepository;
+import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +17,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.UUID;
+import java.time.LocalDateTime;
 
 /**
  * v4.0: 启动初始化——默认管理员 + 存量项目归属迁移。
@@ -31,6 +35,12 @@ public class DataInitializer implements CommandLineRunner {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private ExecutionRecordRepository executionRecordRepository;
+
+    @Autowired
+    private TestCaseRepository testCaseRepository;
 
     @Value("${app.admin.password:admin123}")
     private String adminPassword;
@@ -59,6 +69,29 @@ public class DataInitializer implements CommandLineRunner {
                 projectRepository.save(p);
             }
             log.info("v4.0: 已将 {} 个存量项目归属到默认管理员", orphanProjects.size());
+        }
+
+        // 启动清扫：重启后仍在 running/pending 的执行记录已无存活 worker，标记中断/取消
+        List<ExecutionRecord> stuck = new java.util.ArrayList<>();
+        stuck.addAll(executionRecordRepository.findByStatus("running"));
+        stuck.addAll(executionRecordRepository.findByStatus("pending"));
+        for (ExecutionRecord r : stuck) {
+            boolean wasRunning = "running".equals(r.getStatus());
+            r.setStatus(wasRunning ? "failed" : "cancelled");
+            r.setEndTime(LocalDateTime.now());
+            r.setSummary(wasRunning ? "服务重启导致执行中断" : "已取消（服务重启，任务未开始）");
+            if (wasRunning) {
+                r.setErrorMessage("服务重启，执行已中断");
+            }
+            executionRecordRepository.save(r);
+            // 用例执行状态恢复未执行
+            testCaseRepository.findById(r.getTestCaseId()).ifPresent(tc -> {
+                tc.setExecutionStatus("not_executed");
+                testCaseRepository.save(tc);
+            });
+        }
+        if (!stuck.isEmpty()) {
+            log.info("v4.3: 启动清扫 {} 条卡死的执行记录", stuck.size());
         }
     }
 }
