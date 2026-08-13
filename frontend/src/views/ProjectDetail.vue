@@ -409,16 +409,12 @@ onUnmounted(() => {
 }
 
 .flow-step {
-  flex: 1;
+  flex: 1 1 0;
   display: flex;
   align-items: flex-start;
   gap: 12px;
   position: relative;
-  min-width: 0;
-
-  &:last-child {
-    flex: 0;
-  }
+  min-width: 130px;
 
   .step-marker {
     flex-shrink: 0;
@@ -446,6 +442,9 @@ onUnmounted(() => {
     font-size: 13px;
     font-weight: 600;
     color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .step-desc {
@@ -647,6 +646,14 @@ onUnmounted(() => {
 }
 
 /* ===== 响应式 ===== */
+@media (max-width: 1100px) {
+  .flow-step {
+    .step-desc {
+      display: none;
+    }
+  }
+}
+
 @media (max-width: 768px) {
   .project-detail {
     padding: var(--space-md);
