@@ -89,6 +89,12 @@ public class ExecutionController {
         return ApiResponse.success(executionService.cancelBatch(batchId));
     }
 
+    /** 单条执行取消 */
+    @PostMapping("/executions/{executionId}/cancel")
+    public ApiResponse<Map<String, Object>> cancelExecution(@PathVariable String executionId) {
+        return ApiResponse.success(executionService.cancelExecution(executionId));
+    }
+
     /** v2.4: 下载单次执行报告（自包含 HTML） */
     @GetMapping("/executions/{executionId}/report")
     public ResponseEntity<String> downloadReport(

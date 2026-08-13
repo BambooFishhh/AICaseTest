@@ -10,6 +10,16 @@
         </div>
       </div>
       <div v-if="execution" class="page-actions">
+        <!-- 单条执行取消 -->
+        <el-button
+          v-if="execution.status === 'running'"
+          type="danger"
+          :icon="CircleClose"
+          :loading="cancelling"
+          @click="handleCancel"
+        >
+          取消执行
+        </el-button>
         <!-- v3.13: 报告在线预览 + 下载 -->
         <el-button type="primary" :icon="Document" @click="previewReport">预览报告</el-button>
         <el-button :icon="Download" @click="downloadReport">下载报告</el-button>
@@ -270,9 +280,10 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  ArrowLeft, Loading, Download, Document, VideoPlay, VideoPause, Camera, Picture
+  ArrowLeft, Loading, Download, Document, VideoPlay, VideoPause, Camera, Picture, CircleClose
 } from '@element-plus/icons-vue'
-import { getExecution, getExecutionSteps, getExecutionVideoUrl } from '@/api/execution'
+import { getExecution, getExecutionSteps, getExecutionVideoUrl, cancelExecution } from '@/api/execution'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { openAuthPreview, downloadAuth } from '@/utils/download'
 
 const RECORDING_BASE_URL = 'http://localhost:8000'
@@ -286,6 +297,7 @@ const loading = ref(true)
 const execution = ref(null)
 const steps = ref([])
 let pollTimer = null
+const cancelling = ref(false)
 
 // v3.16: 执行时用例快照（JSON 字符串 → 对象）
 const executionSnapshot = computed(() => {
@@ -402,6 +414,32 @@ function downloadReport() {
 // v3.13: 报告在线预览（inline）
 function previewReport() {
   openAuthPreview(`/api/executions/${executionId}/report`)
+}
+
+// 取消当前执行
+async function handleCancel() {
+  try {
+    await ElMessageBox.confirm(
+      '确定取消该执行吗？运行中的步骤会在下一个检查点停止。',
+      '确认取消执行',
+      { confirmButtonText: '确定取消', cancelButtonText: '继续执行', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  cancelling.value = true
+  try {
+    const res = await cancelExecution(executionId)
+    if (res.data?.cancelled) {
+      ElMessage.success('取消请求已发出，正在停止...')
+    } else {
+      ElMessage.info('执行已结束，无需取消')
+    }
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    cancelling.value = false
+  }
 }
 
 // 状态标签颜色: passed=success, failed=danger, running=warning, pending=info

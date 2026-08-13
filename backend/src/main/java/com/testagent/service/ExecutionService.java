@@ -59,6 +59,10 @@ public class ExecutionService {
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean>
             executionCancellations = new java.util.concurrent.ConcurrentHashMap<>();
 
+    // 执行中浏览器会话（executionId → sessionId），用于取消时强制关闭
+    private final java.util.concurrent.ConcurrentHashMap<String, String> executionSessions =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     /**
      * 异步执行测试用例。
      */
@@ -194,7 +198,7 @@ public class ExecutionService {
                 // 恢复用例执行状态
                 updateTestCaseExecutionStatus(r.getTestCaseId(), "not_executed");
             } else if ("running".equals(r.getStatus())) {
-                executionCancellations.put(r.getId(), new java.util.concurrent.atomic.AtomicBoolean(true));
+                markRunningCancelled(r.getId());
                 cancelledRunning++;
             }
         }
@@ -202,6 +206,36 @@ public class ExecutionService {
         result.put("batchId", batchId);
         result.put("cancelledPending", cancelledPending);
         result.put("cancelledRunning", cancelledRunning);
+        return result;
+    }
+
+    /**
+     * 单条执行取消：pending 直接取消；running 置取消标志并强制关闭浏览器会话。
+     */
+    public Map<String, Object> cancelExecution(String executionId) {
+        ExecutionRecord record = executionRecordRepository.findById(executionId)
+                .orElseThrow(() -> BusinessException.notFound("执行记录不存在: " + executionId));
+        projectAccessService.assertProjectAccess(record.getProjectId());
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("executionId", executionId);
+        String status = record.getStatus();
+        if ("pending".equals(status)) {
+            record.setStatus("cancelled");
+            record.setEndTime(LocalDateTime.now());
+            record.setSummary("已取消（未开始）");
+            executionRecordRepository.save(record);
+            updateTestCaseExecutionStatus(record.getTestCaseId(), "not_executed");
+            result.put("cancelled", true);
+            result.put("stage", "pending");
+        } else if ("running".equals(status)) {
+            markRunningCancelled(executionId);
+            result.put("cancelled", true);
+            result.put("stage", "running");
+        } else {
+            result.put("cancelled", false);
+            result.put("stage", "finished");
+        }
         return result;
     }
 
@@ -229,9 +263,26 @@ public class ExecutionService {
             log.warn("Failed to mark execution {} running", executionId, e);
         }
 
+        // 启动前已被取消：直接收尾，不开浏览器
+        if (isExecutionCancelled(executionId)) {
+            cancelled = true;
+            projectExecutionLimiter.release(testCase.getProjectId());
+            ExecutionRecord pending = executionRecordRepository.findById(executionId).orElse(null);
+            if (pending != null) {
+                pending.setStatus("cancelled");
+                pending.setEndTime(LocalDateTime.now());
+                pending.setSummary("已取消");
+                executionRecordRepository.save(pending);
+            }
+            updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
+            executionCancellations.remove(executionId);
+            return;
+        }
+
         try {
             // 1. 启动浏览器（Playwright 自动开始录屏）
             sessionId = playwrightSkill.browserLaunch(true, 1280, 800);
+            executionSessions.put(executionId, sessionId);
 
             // 2. 导航到目标页面
             if (targetUrl != null && !targetUrl.isBlank()) {
@@ -294,6 +345,7 @@ public class ExecutionService {
             // 关闭浏览器
             if (sessionId != null) {
                 try { playwrightSkill.closeSession(sessionId); } catch (Exception e) { log.warn("Failed to close session", e); }
+                executionSessions.remove(executionId);
             }
             projectExecutionLimiter.release(testCase.getProjectId());
         }
@@ -366,9 +418,26 @@ public class ExecutionService {
             log.warn("Failed to mark execution {} running", executionId, e);
         }
 
+        // 启动前已被取消：直接收尾，不开浏览器
+        if (isExecutionCancelled(executionId)) {
+            cancelled = true;
+            projectExecutionLimiter.release(testCase.getProjectId());
+            ExecutionRecord pending = executionRecordRepository.findById(executionId).orElse(null);
+            if (pending != null) {
+                pending.setStatus("cancelled");
+                pending.setEndTime(LocalDateTime.now());
+                pending.setSummary("已取消");
+                executionRecordRepository.save(pending);
+            }
+            updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
+            executionCancellations.remove(executionId);
+            return;
+        }
+
         try {
             // 1. 启动浏览器（Playwright 自动开始录屏）
             sessionId = playwrightSkill.browserLaunch(true, 1280, 800);
+            executionSessions.put(executionId, sessionId);
 
             // 2. 导航到目标页面
             if (targetUrl != null && !targetUrl.isBlank()) {
@@ -500,6 +569,7 @@ public class ExecutionService {
                 } catch (Exception e) {
                     log.warn("Failed to close browser session", e);
                 }
+                executionSessions.remove(executionId);
             }
             projectExecutionLimiter.release(testCase.getProjectId());
         }
@@ -587,5 +657,18 @@ public class ExecutionService {
     private boolean isExecutionCancelled(String executionId) {
         java.util.concurrent.atomic.AtomicBoolean flag = executionCancellations.get(executionId);
         return flag != null && flag.get();
+    }
+
+    // 标记运行中任务取消，并强制关闭其浏览器会话（让当前步骤尽快失败）
+    private void markRunningCancelled(String executionId) {
+        executionCancellations.put(executionId, new java.util.concurrent.atomic.AtomicBoolean(true));
+        String sessionId = executionSessions.remove(executionId);
+        if (sessionId != null) {
+            try {
+                playwrightSkill.closeSession(sessionId);
+            } catch (Exception e) {
+                log.warn("Failed to close session for cancelled execution {}", executionId, e);
+            }
+        }
     }
 }

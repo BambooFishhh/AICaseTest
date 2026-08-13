@@ -4,6 +4,11 @@ export function executeTestCase(projectId, caseId, targetUrl, mode = 'programmat
   return request.post(`/projects/${projectId}/testcases/${caseId}/execute${mode === 'agent' ? '?mode=agent' : ''}`, { targetUrl })
 }
 
+// 单条执行取消
+export function cancelExecution(eid) {
+  return request.post(`/executions/${eid}/cancel`)
+}
+
 export function getExecution(eid) {
   return request.get(`/executions/${eid}`)
 }
