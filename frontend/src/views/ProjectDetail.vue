@@ -571,7 +571,8 @@ onUnmounted(() => {
 
 .info-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  /* 名称/路径/时间三框等分占满一行，技术栈独占整行 */
+  grid-template-columns: repeat(3, 1fr);
   gap: var(--space-md);
 }
 
