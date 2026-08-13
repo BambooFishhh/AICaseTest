@@ -179,10 +179,17 @@ public class TestGeneratorAgent {
             - 枚举字段：填入合法值和非法枚举值
             - 必填字段：测试缺失该字段的情况
 
-            ## structuredSteps 要求
-            - 每步的 target 必须是具体操作目标（如 "POST /api/order/create"），不能为空
-            - 每步的 expected 必须是可验证的具体结果，不能为空
-            - api_call 类型步骤的 data 必须包含该步骤的输入参数
+            ## structuredSteps 要求（必须严格遵守）
+            - structuredSteps 必须是非空数组，按真实操作顺序 3-10 步展开：
+              进入页面 → 定位元素 → 输入/点击 → 断言结果，禁止把多个操作合并成一句
+            - ui_action 类型步骤（点击/输入/选择/滚动）必须携带 uiSelector：{type, value}
+              - type 取 id / ref / data-testid / aria-label / text / path
+              - value 从下方 frontendSelectors 中选取与操作最匹配的真实选择器；
+                找不到精确选择器时，target 写按钮/输入框的可见文案，uiSelector 用 {type:"text", value:"按钮文案"}
+            - 输入类操作必须携带 data：{字段名: 具体输入值}
+            - state_assert 类型步骤的 expected 必须写可验证断言（页面 URL / 元素文本 / 状态提示）
+            - api_call 类型步骤的 target 必须用真实接口路径，data 为该接口的入参
+            - 每步的 target、expected 都不能为空
 
             ## stateMachineRef 要求
             - transitions 数组必须包含本用例测试的状态转换
@@ -230,8 +237,15 @@ public class TestGeneratorAgent {
             - frontendPageFlows：生成页面跳转验证用例（from→to，验证导航需求）
             - frontendComponentStates：生成 UI 交互用例（弹窗打开/关闭、分步流程）
 
-            ## structuredSteps / testData / executionHints 要求
-            - 同 v1.4 质量标准（target 不能为空、expected 可验证、testData 含具体字段值）
+            ## structuredSteps / testData / executionHints 要求（必须严格遵守）
+            - structuredSteps 必须是非空数组，按真实操作顺序 3-10 步展开：进入页面→定位元素→输入/点击→断言
+            - 页面操作优先用 ui_action 类型步骤描述（点哪个按钮、输入什么），不要只写接口调用
+            - ui_action 步骤必须携带 uiSelector：{type, value}
+              - type 取 id / ref / data-testid / aria-label / text / path
+              - value 从 frontendSelectors 中选最匹配的真实选择器；无精确匹配时用 {type:"text", value:"可见文案"}
+            - 输入类步骤 data 必须含具体字段值（按 frontendForms 的字段名）
+            - state_assert 的 expected 写可验证断言；api_call 的 target 用真实接口路径
+            - target、expected 都不能为空；testData 含具体字段值
 
             # 输出格式（同 v1.4）
             返回 JSON 数组，字段：title/module/type/priority/preconditions/steps/expectedResults/
@@ -243,6 +257,26 @@ public class TestGeneratorAgent {
     private static final String FEW_SHOT_EXAMPLES = """
             # 示例（参考质量标准，不要原样复制）
             [
+              {
+                "title": "登录-正常流程（UI 操作）",
+                "module": "系统管理",
+                "type": "positive",
+                "priority": "P0",
+                "preconditions": ["已打开登录页"],
+                "steps": ["打开登录页", "输入用户名密码", "点击登录", "验证进入首页"],
+                "expectedResults": ["页面跳转首页", "显示欢迎语"],
+                "structuredSteps": [
+                  {"order":1,"action":"打开登录页","target":"/login","expected":"出现登录表单","data":{},"type":"ui_action","uiSelector":{"type":"path","value":"/login"}},
+                  {"order":2,"action":"输入用户名","target":"用户名输入框","expected":"输入成功","data":{"username":"admin"},"type":"ui_action","uiSelector":{"type":"id","value":"username"}},
+                  {"order":3,"action":"输入密码","target":"密码输入框","expected":"输入成功","data":{"password":"admin123"},"type":"ui_action","uiSelector":{"type":"id","value":"password"}},
+                  {"order":4,"action":"点击登录按钮","target":"登录按钮","expected":"提交登录","data":{},"type":"ui_action","uiSelector":{"type":"text","value":"登录"}},
+                  {"order":5,"action":"断言登录成功","target":"页面","expected":"URL 跳转首页且出现欢迎语","data":{},"type":"state_assert"}
+                ],
+                "apiEndpoints": [{"method":"POST","path":"/admin/auth/login","description":"登录"}],
+                "testData": {"username":"admin","password":"admin123"},
+                "executionHints": {"approach":"ui","notes":"UI 操作登录并断言跳转","prerequisites":["已打开登录页"]},
+                "stateMachineRef": {"states":[],"transitions":[],"forbiddenTransitions":[]}
+              },
               {
                 "title": "创建订单-正常流程",
                 "module": "订单管理",
@@ -407,6 +441,10 @@ public class TestGeneratorAgent {
 
         // v3.13: 聚焦类型过滤（focusTypes 非空时仅保留指定类型）
         result = filterByFocusTypes(params, result);
+        // 前端选择器补齐：为 ui_action 步骤匹配真实 uiSelector
+        for (TestCase tc : result) {
+            enrichStructuredSteps(frontendResult, tc);
+        }
 
         if (progressCallback != null) {
             progressCallback.update("正在质量评分与去重...");
@@ -455,6 +493,10 @@ public class TestGeneratorAgent {
 
         // v3.13: 聚焦类型过滤
         result = filterByFocusTypes(params, result);
+        // 前端选择器补齐：为 ui_action 步骤匹配真实 uiSelector
+        for (TestCase tc : result) {
+            enrichStructuredSteps(frontendResult, tc);
+        }
 
         if (progressCallback != null) {
             progressCallback.update("正在质量评分与去重...");
@@ -490,6 +532,99 @@ public class TestGeneratorAgent {
                 caseCb.onCase(tc);
             }
         };
+    }
+
+    /**
+     * 前端选择器补齐：LLM 未给 uiSelector 时，根据 action/target 文案从前端分析结果中
+     * 匹配最可能的 DOM 选择器/表单字段，补到 ui_action 步骤上，让执行更精确。
+     */
+    private void enrichStructuredSteps(FrontendResult frontendResult, TestCase tc) {
+        List<Map<String, Object>> steps = JsonHelper.parseListMap(tc.getStructuredSteps());
+        if (steps.isEmpty() || frontendResult == null) return;
+
+        // 汇总可选选择器池（DOM 选择器 + 表单字段）
+        List<Map<String, Object>> pool = new ArrayList<>();
+        if (frontendResult.getDomSelectors() != null) {
+            for (Map<String, Object> sel : frontendResult.getDomSelectors()) {
+                Object sels = sel.get("selectors");
+                if (sels instanceof List) {
+                    for (Object s : (List<?>) sels) {
+                        if (s instanceof Map) {
+                            Map<String, Object> m = new LinkedHashMap<>((Map<String, Object>) s);
+                            m.putIfAbsent("component", sel.get("component"));
+                            pool.add(m);
+                        }
+                    }
+                }
+            }
+        }
+        if (frontendResult.getForms() != null) {
+            for (Map<String, Object> form : frontendResult.getForms()) {
+                Object fields = form.get("fields");
+                if (fields instanceof List) {
+                    for (Object f : (List<?>) fields) {
+                        if (f instanceof Map) {
+                            Map<String, Object> m = new LinkedHashMap<>((Map<String, Object>) f);
+                            m.putIfAbsent("component", form.get("component"));
+                            pool.add(m);
+                        }
+                    }
+                }
+            }
+        }
+        if (pool.isEmpty()) return;
+
+        for (Map<String, Object> step : steps) {
+            if (!"ui_action".equals(step.get("type"))) continue;
+            Object selObj = step.get("uiSelector");
+            if (selObj instanceof Map
+                    && ((Map<?, ?>) selObj).get("value") != null
+                    && !String.valueOf(((Map<?, ?>) selObj).get("value")).isBlank()) {
+                continue; // 已有选择器
+            }
+            String action = step.get("action") == null ? "" : String.valueOf(step.get("action"));
+            String target = step.get("target") == null ? "" : String.valueOf(step.get("target"));
+            Map<String, Object> best = bestSelector(pool, action + " " + target);
+            if (best != null) {
+                Map<String, Object> uiSelector = new LinkedHashMap<>();
+                uiSelector.put("type", best.get("type"));
+                uiSelector.put("value", best.get("value"));
+                step.put("uiSelector", uiSelector);
+                // 表单字段：给 data 补一个字段占位，便于执行端知道输入目标
+                if (best.containsKey("name") && step.get("data") == null) {
+                    Map<String, Object> data = new LinkedHashMap<>();
+                    data.put(String.valueOf(best.get("name")), "");
+                    step.put("data", data);
+                }
+            }
+        }
+        tc.setStructuredSteps(toJson(steps));
+    }
+
+    // 按关键词包含匹配最合适的 DOM 选择器/表单字段
+    private Map<String, Object> bestSelector(List<Map<String, Object>> pool, String text) {
+        String lower = text.toLowerCase();
+        Map<String, Object> best = null;
+        int bestScore = 0;
+        for (Map<String, Object> s : pool) {
+            String value = s.get("value") == null ? "" : String.valueOf(s.get("value"));
+            String element = s.get("element") == null ? "" : String.valueOf(s.get("element"));
+            String component = s.get("component") == null ? "" : String.valueOf(s.get("component"));
+            String name = s.get("name") == null ? "" : String.valueOf(s.get("name"));
+            String label = s.get("label") == null ? "" : String.valueOf(s.get("label"));
+            String haystack = (value + " " + element + " " + component + " " + name + " " + label).toLowerCase();
+            int score = 0;
+            for (String token : lower.split("[^a-zA-Z0-9\\u4e00-\\u9fa5]+")) {
+                if (token.length() >= 2 && haystack.contains(token)) {
+                    score += token.length();
+                }
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                best = s;
+            }
+        }
+        return bestScore >= 2 ? best : null;
     }
 
     // v1.10: 原代码驱动生成逻辑（状态机/endpoint），从 generate 抽出供 PRD 失败时复用
