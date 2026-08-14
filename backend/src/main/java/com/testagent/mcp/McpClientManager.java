@@ -47,8 +47,16 @@ public class McpClientManager {
     @Value("${mcp.servers.playwright.script-path:playwright-mcp-server/index.js}")
     private String playwrightScriptPath;
 
+    // vT6: 测试环境可关闭 MCP 子进程启动
+    @Value("${app.mcp.enabled:true}")
+    private boolean mcpEnabled;
+
     @PostConstruct
     public void start() {
+        if (!mcpEnabled) {
+            log.info("MCP disabled (app.mcp.enabled=false), skip spawning MCP servers");
+            return;
+        }
         // 创建并启动 "llm" Server
         Map<String, String> llmEnv = new HashMap<>();
         llmEnv.put("OPENAI_API_KEY", llmApiKey);

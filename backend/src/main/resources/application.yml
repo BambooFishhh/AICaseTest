@@ -47,6 +47,9 @@ app:
     port: ${MILVUS_PORT:19530}
     dimension: ${MILVUS_DIMENSION:1536}
     duplicate-threshold: ${MILVUS_DUPLICATE_THRESHOLD:0.92}
+  # vT6: 测试环境可关闭 MCP 子进程
+  mcp:
+    enabled: ${APP_MCP_ENABLED:true}
   # v5.8: 数据保留策略（0=关闭）
   retention:
     execution-days: ${RETENTION_EXECUTION_DAYS:0}

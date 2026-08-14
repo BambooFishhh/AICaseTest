@@ -4,6 +4,33 @@
 
 ---
 
+## vT6 — 服务层与接口安全测试
+**日期**: 2026-08-14
+**基线**: vT5
+**主题**: MockMvc API 安全测试 + ProjectService 级联测试 + 401 响应 NPE 修复
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| security/SecurityConfig.java | 修复 401 响应 NPE | Map.of 不允许 null，改用 LinkedHashMap |
+| mcp/McpClientManager.java | app.mcp.enabled 开关 | 测试环境不拉起 MCP 子进程 |
+| resources/application.yml | mcp.enabled 配置 | 默认 true |
+| test/SecurityApiTest.java | 新增 5 个测试 | 健康公开/401/403/429 登录锁定 |
+| test/service/ProjectServiceTest.java | 新增 1 个测试 | 项目级联删除 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| 无 | - | 本版本无前端代码变更 |
+
+### 验证结果
+
+- 后端测试: Tests run 29, Failures 0（mvn test）
+
+---
+
 ## vT5 — 安全与全量回归收口
 **日期**: 2026-08-14
 **基线**: vT4
