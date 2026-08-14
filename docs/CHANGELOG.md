@@ -6,18 +6,20 @@
 
 ## 修复记录 — vT7 CI 集成测试
 **日期**: 2026-08-14
-**主题**: MySQL Flyway locations 缺失导致 Spring 上下文启动失败；容器启动超时
+**主题**: MySQL 测试未覆盖 driver-class-name，H2 驱动连接 MySQL 导致上下文启动失败；容器启动超时
 
 ### 修复内容
 
 | 文件 | 修复 | 说明 |
 |---|---|---|
-| test/MySqlFlywayIntegrationTest.java | 增加 spring.flyway.locations=classpath:db/migration/mysql + baseline-on-migrate | 修复 CI 上 Flyway 找不到迁移脚本导致上下文启动失败 |
+| test/MySqlFlywayIntegrationTest.java | 增加 spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver | 修复 CI 上 H2 驱动连接 MySQL URL 导致 Flyway 启动失败 |
+| test/MySqlFlywayIntegrationTest.java | 增加 spring.flyway.locations=classpath:db/migration/mysql + baseline-on-migrate | Flyway 指向真实 MySQL 迁移目录 |
 | test/MySqlFlywayIntegrationTest.java | MySQL 容器 withStartupTimeout(3m) | 避免 CI 拉镜像/初始化超时 |
 | test/runtime/RedisRuntimeStoreIntegrationTest.java | Redis 容器 withStartupTimeout(3m) | 同上 |
 
 ### 验证结果
 
+- 真实 MySQL 8.0.29 验证：Flyway 迁移 + JPA 读写 2/2 通过
 - 本地无 Docker 环境：集成测试自动跳过，`mvn verify` BUILD SUCCESS
 
 ---

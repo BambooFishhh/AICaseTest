@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.flyway.enabled=true",
         "spring.flyway.locations=classpath:db/migration/mysql",
         "spring.flyway.baseline-on-migrate=true",
+        "spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver",
         "spring.jpa.hibernate.ddl-auto=none"
 })
 class MySqlFlywayIntegrationTest {
