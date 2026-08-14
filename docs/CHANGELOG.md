@@ -4,6 +4,31 @@
 
 ---
 
+## vT7 — Testcontainers 集成测试
+**日期**: 2026-08-14
+**基线**: vT6
+**主题**: MySQL Flyway / Redis RuntimeStore 真实中间件集成测试
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| backend/pom.xml | testcontainers junit-jupiter/mysql | 集成测试依赖 |
+| test/MySqlFlywayIntegrationTest.java | 新增 2 个测试 | MySQL Flyway V1/V2 + JPA 读写 |
+| test/runtime/RedisRuntimeStoreIntegrationTest.java | 新增 3 个测试 | Redis 标志/登录计数/信号量 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| 无 | - | 本版本无前端代码变更 |
+
+### 验证结果
+
+- 后端测试: Tests run 34, Failures 0, Skipped 5（本地无 Docker 自动跳过，CI 有 Docker 时运行）
+
+---
+
 ## vT6 — 服务层与接口安全测试
 **日期**: 2026-08-14
 **基线**: vT5

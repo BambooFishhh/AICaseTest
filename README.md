@@ -120,7 +120,7 @@ npx playwright install chromium
 
 项目自 **vT1** 起建立独立工程基线版本线，测试与运维基线如下：
 
-- 后端单元/集成测试：29 个（内存运行态、任务队列、登录防爆破、JWT 安全、MockMvc 权限、JSON 工具、JPA、CSV、XMind）
+- 后端单元/集成测试：34 个（含 Testcontainers MySQL/Redis；本地无 Docker 自动跳过）
 - 前端单元测试：5 个（Vitest：状态文案、进度组件）
 - CI：后端 `mvn test` + 前端 `npm run build` + `docker compose config` 校验
 - 回归入口：`scripts/verify-v5-stack.ps1`（后端测试、前端构建、compose 配置、可选健康检查）
@@ -186,6 +186,7 @@ AICaseTest/
 | vT4 | 运维与可观测基线（Actuator/Prometheus/备份） | ✅ 完成 |
 | vT5 | 安全与全量回归收口（密钥扫描/回归入口/CI 兼容） | ✅ 完成 |
 | vT6 | 服务层与接口安全测试（MockMvc/401修复/级联测试） | ✅ 完成 |
+| vT7 | Testcontainers 集成测试（MySQL Flyway/Redis 运行态） | ✅ 完成 |
 
 详细版本历史见 [docs/迭代历程.md](docs/迭代历程.md)，逐版本变更记录见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
 
