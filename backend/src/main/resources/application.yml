@@ -87,3 +87,15 @@ logging:
   level:
     com.testagent: INFO
     org.hibernate.SQL: WARN
+
+# vT4: 运维可观测——健康/信息/指标/Prometheus
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+    prometheus:
+      enabled: true

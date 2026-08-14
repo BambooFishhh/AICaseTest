@@ -124,6 +124,8 @@ npx playwright install chromium
 - 前端单元测试：5 个（Vitest：状态文案、进度组件）
 - CI：后端 `mvn test` + 前端 `npm run build` + `docker compose config` 校验
 - 回归入口：`scripts/verify-v5-stack.ps1`（后端测试、前端构建、compose 配置、可选健康检查）
+- 可观测：`/actuator/health` 免认证健康检查，`/actuator/prometheus` 指标采集
+- 备份：`scripts/backup-v5.ps1`（data/outputs + 可选 MySQL dump）
 
 详见 [docs/vT1/PRD_vT1_测试与运维基线.md](docs/vT1/PRD_vT1_测试与运维基线.md)。
 
@@ -180,6 +182,7 @@ AICaseTest/
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |
+| vT4 | 运维与可观测基线（Actuator/Prometheus/备份） | ✅ 完成 |
 
 详细版本历史见 [docs/迭代历程.md](docs/迭代历程.md)，逐版本变更记录见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
 

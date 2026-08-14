@@ -4,6 +4,35 @@
 
 ---
 
+## vT4 — 运维与可观测基线
+**日期**: 2026-08-14
+**基线**: vT3
+**主题**: Actuator/Prometheus 指标 + 备份脚本
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| backend/pom.xml | actuator + micrometer-prometheus | 标准健康/指标端点 |
+| resources/application.yml | management 配置 | health/info/metrics/prometheus 暴露 |
+| security/SecurityConfig.java | /actuator/health permitAll | 健康检查免认证 |
+| scripts/backup-v5.ps1 | 新增 | data/outputs/MySQL 备份 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| 无 | - | 本版本无前端代码变更 |
+
+### 验证结果
+
+- 后端测试: Tests run 23, Failures 0（mvn test）
+- 前端构建: ✓ built（npm run build）
+- docker compose config: 校验通过
+- Actuator 冒烟: /actuator/health 免认证 UP；/actuator/prometheus 认证后返回指标
+
+---
+
 ## vT3 — 前端测试基线
 **日期**: 2026-08-14
 **基线**: vT2
