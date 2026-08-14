@@ -81,7 +81,8 @@ jobs:
       - name: npm audit (production deps)
         working-directory: frontend
         run: |
-          echo "installed nanoid: $(node -p \"require('./node_modules/nanoid/package.json').version\")"
+          NANOID_VERSION=$(node -p 'require("./node_modules/nanoid/package.json").version')
+          echo "installed nanoid: $NANOID_VERSION"
           npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
 
   docker:
