@@ -23,7 +23,7 @@ class RedisRuntimeStoreIntegrationTest {
     @Container
     static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine")
             .withExposedPorts(6379)
-            .withStartupTimeout(Duration.ofMinutes(3));
+            .withStartupTimeout(Duration.ofMinutes(5));
 
     private RedisRuntimeStore store;
 

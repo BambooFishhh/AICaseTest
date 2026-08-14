@@ -39,7 +39,7 @@ class MySqlFlywayIntegrationTest {
             .withDatabaseName("aicasetest")
             .withUsername("aicasetest")
             .withPassword("aicasetest123")
-            .withStartupTimeout(Duration.ofMinutes(3));
+            .withStartupTimeout(Duration.ofMinutes(5));
 
     @DynamicPropertySource
     static void datasource(DynamicPropertyRegistry registry) {
