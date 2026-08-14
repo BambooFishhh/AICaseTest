@@ -4,6 +4,34 @@
 
 ---
 
+## vT3 — 前端测试基线
+**日期**: 2026-08-14
+**基线**: vT2
+**主题**: Vitest + Vue Test Utils 前端测试
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| 无 | - | 本版本后端无代码变更 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| vitest.config.js | 新增 | jsdom + @ 别名 |
+| src/utils/stateLabel.test.js | 新增 3 个测试 | 状态文案翻译 |
+| src/components/ProgressTracker.test.js | 新增 2 个测试 | 组件状态渲染 |
+| package.json / package-lock.json | 新增 vitest/@vue/test-utils/jsdom | 测试依赖与 test script |
+| .github/workflows/ci.yml | frontend job 增加 npm test | CI 测试门禁 |
+
+### 验证结果
+
+- 前端测试: Tests 5 passed（npm test）
+- 前端构建: ✓ built（npm run build）
+
+---
+
 ## vT2 — 服务层与集成测试
 **日期**: 2026-08-14
 **基线**: vT1
