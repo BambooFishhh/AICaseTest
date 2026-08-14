@@ -63,6 +63,9 @@ public class AnalysisService {
     @Autowired
     private CacheManager cacheManager;
 
+    @Autowired
+    private SemanticService semanticService;
+
     // v5.3: 分析结果缓存（分析完成后失效）
     @Cacheable(value = "analysis", key = "#projectId")
     public CodeAnalysis getAnalysis(String projectId) {
@@ -148,6 +151,20 @@ public class AnalysisService {
             analysis.setStatus("completed");
             codeAnalysisRepository.save(analysis);
             evictAnalysisCaches(projectId);
+
+            // v5.4: 分析结果写入语义上下文（供生成前 RAG 检索）
+            try {
+                if (backendResult != null) {
+                    semanticService.indexContext(projectId, "backend",
+                            objectMapper.writeValueAsString(backendResult));
+                }
+                if (frontendResult != null) {
+                    semanticService.indexContext(projectId, "frontend",
+                            objectMapper.writeValueAsString(frontendResult));
+                }
+            } catch (Exception e) {
+                log.warn("Failed to index analysis contexts: {}", e.getMessage());
+            }
 
             if (scanResult.getTechStack() != null && !scanResult.getTechStack().isEmpty()) {
                 updateProjectTechStack(projectId, objectMapper.writeValueAsString(scanResult.getTechStack()));

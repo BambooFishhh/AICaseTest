@@ -27,6 +27,7 @@ import com.testagent.repository.TestCaseVersionRepository;
 import com.testagent.runtime.RuntimeFlag;
 import com.testagent.runtime.RuntimeStore;
 import com.testagent.service.TaskQueueService;
+import com.testagent.service.SemanticService;
 import com.testagent.service.ProjectAccessService;
 import com.testagent.service.XmindService;
 import com.testagent.security.SecurityUtils;
@@ -78,6 +79,9 @@ public class TestCaseService {
 
     @Autowired
     private TaskQueueService taskQueueService;
+
+    @Autowired
+    private SemanticService semanticService;
 
     @Autowired
     private TestCaseRepository testCaseRepository;
@@ -132,6 +136,10 @@ public class TestCaseService {
                 tc.setProjectId(projectId);
                 testCaseRepository.save(tc);
             }
+
+            // v5.4: 重新生成后重建语义索引
+            semanticService.clearProject(projectId);
+            semanticService.indexCases(projectId, testCases);
 
             // v1.6: 完成时清除进度
             projectRepository.updateProgress(projectId, null);
@@ -212,6 +220,10 @@ public class TestCaseService {
                 tc.setProjectId(projectId);
                 testCaseRepository.save(tc);
             }
+
+            // v5.4: 重新生成后重建语义索引
+            semanticService.clearProject(projectId);
+            semanticService.indexCases(projectId, testCases);
 
             projectRepository.updateProgress(projectId, null);
             updateProjectStatus(projectId, "completed");
@@ -325,6 +337,10 @@ public class TestCaseService {
                         }
                     }
                 }
+                // v5.4: 语义级去重（Milvus 相似度阈值）
+                if (!isDup && semanticService.isDuplicate(projectId, newTc)) {
+                    isDup = true;
+                }
                 if (!isDup) toAppend.add(newTc);
             }
 
@@ -336,6 +352,9 @@ public class TestCaseService {
                 tc.setCreatedAt(LocalDateTime.now());
                 testCaseRepository.save(tc);
             }
+
+            // v5.4: 追加用例写入语义索引
+            semanticService.indexCases(projectId, toAppend);
 
             projectRepository.updateProgress(projectId, null);
             updateProjectStatus(projectId, "completed");

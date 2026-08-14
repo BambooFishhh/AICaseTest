@@ -189,3 +189,8 @@ export function getTestCaseVersion(projectId, testcaseId, versionId) {
 export function rollbackTestCaseVersion(projectId, testcaseId, versionId) {
   return request.post(`/projects/${projectId}/testcases/${testcaseId}/versions/${versionId}/rollback`)
 }
+
+// v5.4: 语义搜索用例（Milvus 向量检索）
+export function semanticSearch(projectId, q) {
+  return request.get(`/projects/${projectId}/testcases/semantic-search`, { params: { q } })
+}

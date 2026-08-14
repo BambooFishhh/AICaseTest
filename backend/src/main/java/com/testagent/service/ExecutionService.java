@@ -15,6 +15,7 @@ import com.testagent.agent.ExecutionAgent;
 import com.testagent.skill.PlaywrightRecordSkill;
 import com.testagent.skill.EvidenceSkill;
 import com.testagent.security.SecurityUtils;
+import com.testagent.service.SemanticService;
 import com.testagent.service.TaskQueueService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,6 +68,9 @@ public class ExecutionService {
 
     @Autowired
     private TaskQueueService taskQueueService;
+
+    @Autowired
+    private SemanticService semanticService;
     private static final long HEARTBEAT_STALE_MS = 30_000L;
 
     /**
@@ -440,6 +444,15 @@ public class ExecutionService {
             executionRecordRepository.save(finalRecord);
         }
 
+        // v5.4: 失败步骤写入语义失败经验库
+        if ("failed".equals(status)) {
+            for (ExecutionStep step : steps) {
+                if ("failed".equals(step.getResult())) {
+                    semanticService.recordFailure(testCase.getProjectId(), executionId, step.getAction(), step.getError());
+                }
+            }
+        }
+
         // v3.11/v4.2: 执行结束回写用例执行状态（复制执行不回写；取消则恢复未执行）
         if (writeBack) {
             updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
@@ -677,6 +690,15 @@ public class ExecutionService {
             // v2.8: 保存录屏视频路径
             finalRecord.setRecordingVideoPath(videoPath);
             executionRecordRepository.save(finalRecord);
+        }
+
+        // v5.4: 失败步骤写入语义失败经验库
+        if ("failed".equals(status)) {
+            for (ExecutionStep step : steps) {
+                if ("failed".equals(step.getResult())) {
+                    semanticService.recordFailure(testCase.getProjectId(), executionId, step.getAction(), step.getError());
+                }
+            }
         }
 
         // v3.11/v4.2: 执行结束回写用例执行状态（复制执行不回写；取消则恢复未执行）

@@ -11,6 +11,7 @@ import com.testagent.entity.Project;
 import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
 import com.testagent.runtime.CancellationSignal;
+import com.testagent.service.SemanticService;
 import com.testagent.repository.CodeAnalysisRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
@@ -47,6 +48,9 @@ public class OrchestratorAgent {
 
     @Autowired
     private TestGeneratorAgent testGeneratorAgent;
+
+    @Autowired
+    private SemanticService semanticService;
 
     // v3.2: 生成上下文容器，供 generate 与 generateStreaming 共用
     // v3.4: 新增 params 字段（项目级生成参数）
@@ -95,6 +99,13 @@ public class OrchestratorAgent {
                 progressCallback.update("正在解析 PRD...");
             }
             prdResult = prdAgent.analyze(project.getPrdContent());
+            // v5.4: 生成前 RAG 上下文检索（Milvus 未启用时返回空，不影响原流程）
+            List<String> ragContexts = semanticService.retrieveContexts(
+                    projectId, project.getPrdContent(), 5);
+            prdResult.setRagContexts(ragContexts);
+            if (!ragContexts.isEmpty()) {
+                log.info("RAG retrieved {} contexts for project {}", ragContexts.size(), projectId);
+            }
             log.info("PRD analyzed for project {}: modules={}, requirements={}",
                     projectId,
                     prdResult.getModules() == null ? 0 : prdResult.getModules().size(),

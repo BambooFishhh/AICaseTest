@@ -35,6 +35,13 @@ app:
   # v5.2: Redis 运行态（取消标志/心跳/并发配额/防爆破），默认关闭走内存
   redis:
     enabled: ${APP_REDIS_ENABLED:false}
+  # v5.4: Milvus 语义检索
+  milvus:
+    enabled: ${APP_MILVUS_ENABLED:false}
+    host: ${MILVUS_HOST:localhost}
+    port: ${MILVUS_PORT:19530}
+    dimension: ${MILVUS_DIMENSION:1536}
+    duplicate-threshold: ${MILVUS_DUPLICATE_THRESHOLD:0.92}
   cors:
     allowed-origins: ${APP_CORS_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:8080}
   # v4.0: JWT 与默认管理员配置

@@ -762,6 +762,9 @@ public class TestGeneratorAgent {
 
         // PRD 为主上下文
         context.put("prd", objectMapper.convertValue(prdResult, Map.class));
+        // v5.4: RAG 语义检索上下文
+        context.put("ragContexts",
+                prdResult.getRagContexts() == null ? List.of() : prdResult.getRagContexts());
 
         // 代码侧为辅（精简，避免 token 超限）
         List<Map<String, Object>> smList = new ArrayList<>();

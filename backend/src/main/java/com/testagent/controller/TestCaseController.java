@@ -10,6 +10,7 @@ import com.testagent.dto.TestCaseVersionDTO;
 import com.testagent.dto.TestCaseListResponse;
 import com.testagent.dto.UpdateTestCaseRequest;
 import com.testagent.service.TestCaseService;
+import com.testagent.service.SemanticService;
 import com.testagent.service.XmindService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
@@ -46,6 +47,9 @@ public class TestCaseController {
     @Autowired
     private XmindService xmindService;
 
+    @Autowired
+    private SemanticService semanticService;
+
     @PostMapping
     public ApiResponse<TestCaseDTO> createTestCase(
             @PathVariable String projectId,
@@ -65,6 +69,14 @@ public class TestCaseController {
             @RequestParam(required = false) String executionStatus) {
         return ApiResponse.success(testCaseService.listTestCases(
                 projectId, page, pageSize, type, module, keyword, reviewStatus, executionStatus));
+    }
+
+    // v5.4: 语义搜索用例
+    @GetMapping("/semantic-search")
+    public ApiResponse<List<TestCaseDTO>> semanticSearch(
+            @PathVariable String projectId,
+            @RequestParam String q) {
+        return ApiResponse.success(semanticService.searchCases(projectId, q));
     }
 
     @GetMapping("/{testcaseId}")

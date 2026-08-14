@@ -15,6 +15,9 @@ public class PrdAnalysisResult {
     private List<Map<String, Object>> stateFlows;     // [{name, states[], transitions[]}]
     private List<String> entities;
 
+    // v5.4: RAG 检索到的相似上下文（代码分析/PRD 语义片段）
+    private List<String> ragContexts;
+
     public boolean isEmpty() {
         return (modules == null || modules.isEmpty())
                 && (requirements == null || requirements.isEmpty())

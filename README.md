@@ -639,6 +639,16 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v5.3](docs/v5.3/PRD_v5.3_缓存与任务队列.md)
 
+### v5.4 — Milvus 语义检索层
+
+接入 Milvus 向量检索：用例语义去重、生成前 RAG 上下文检索、自然语言语义搜索、失败经验知识库。
+
+- 后端: MCP 新增 `llm_embedding`；`SemanticService` 支撑 cases/contexts/failures 三集合；新增语义搜索 API
+- 前端: 用例列表新增"语义搜索"对话框
+- 部署: docker-compose 新增 etcd + minio + milvus standalone
+
+详见：[PRD v5.4](docs/v5.4/PRD_v5.4_Milvus语义检索.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -694,6 +704,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v5.1 | H2 → MySQL 全量迁移工具（备份/回滚/校验） | ✅ 完成 |
 | v5.2 | Redis 运行态（取消/心跳/配额/防爆破） | ✅ 完成 |
 | v5.3 | 缓存 + 任务队列（设置/参数/分析缓存 + 队列计数） | ✅ 完成 |
+| v5.4 | Milvus 语义检索（去重/RAG/语义搜索/失败经验） | ✅ 完成 |
 
 ## API 概览
 

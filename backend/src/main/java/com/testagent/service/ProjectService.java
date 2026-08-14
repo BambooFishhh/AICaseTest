@@ -21,6 +21,7 @@ import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.security.SecurityUtils;
 import com.testagent.security.AccessLevel;
+import com.testagent.service.SemanticService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -80,6 +81,9 @@ public class ProjectService {
     // v1.10: PRD 解析 Agent
     @Autowired
     private PrdAgent prdAgent;
+
+    @Autowired
+    private SemanticService semanticService;
 
     public List<ProjectDTO> listProjects() {
         List<Project> all = projectRepository.findAllByOrderByCreatedAtDesc();
@@ -212,6 +216,8 @@ public class ProjectService {
         p.setPrdSourceType("text");
         p.setPrdSourceRef(null);
         projectRepository.save(p);
+        // v5.4: PRD 写入语义上下文库
+        semanticService.indexContext(projectId, "prd", p.getPrdContent());
         return ProjectDTO.from(p);
     }
 
@@ -230,6 +236,7 @@ public class ProjectService {
         p.setPrdSourceType("pdf");
         p.setPrdSourceRef(file.getOriginalFilename());
         projectRepository.save(p);
+        semanticService.indexContext(projectId, "prd", p.getPrdContent());
         return ProjectDTO.from(p);
     }
 
@@ -254,6 +261,7 @@ public class ProjectService {
         p.setPrdSourceType("link");
         p.setPrdSourceRef(url);
         projectRepository.save(p);
+        semanticService.indexContext(projectId, "prd", p.getPrdContent());
         return ProjectDTO.from(p);
     }
 

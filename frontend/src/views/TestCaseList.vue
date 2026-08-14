@@ -303,6 +303,8 @@
             </div>
           </div>
         </el-popover>
+        <!-- v5.4: 语义搜索 -->
+        <el-button :icon="Search" @click="openSemanticDialog">语义搜索</el-button>
         <input
           ref="xmindFileInput"
           type="file"
@@ -836,6 +838,43 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- v5.4: 语义搜索对话框 -->
+    <el-dialog v-model="semanticDialogVisible" title="语义搜索用例" width="640px">
+      <div class="semantic-search-bar">
+        <el-input
+          v-model="semanticQuery"
+          placeholder="输入自然语言，检索相似用例"
+          clearable
+          @keyup.enter="runSemanticSearch"
+        />
+        <el-button type="primary" :icon="Search" :loading="semanticSearching" @click="runSemanticSearch">
+          搜索
+        </el-button>
+      </div>
+      <el-empty
+        v-if="!semanticSearching && semanticResults.length === 0"
+        description="暂无结果"
+        :image-size="80"
+      />
+      <el-table v-else :data="semanticResults" height="360">
+        <el-table-column prop="id" label="编号" width="90" />
+        <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="module" label="模块" width="120" show-overflow-tooltip />
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">
+            <el-tag :type="typeTagType(row.type)" size="small" effect="light">
+              {{ typeText(row.type) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80">
+          <template #default="{ row }">
+            <el-button type="primary" link @click="openSemanticResult(row)">查看</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
@@ -853,7 +892,7 @@ import {
   listTestCases, streamGenerate, streamGenerateAppend,
   cancelGenerate, createTestCase, deleteTestCase,
   batchDeleteTestCases, importXmind, reviewTestCases,
-  exportTestCases, importTestCases, copyToProject, updateTestCaseExecutionStatus
+  exportTestCases, importTestCases, copyToProject, updateTestCaseExecutionStatus, semanticSearch
 } from '@/api/testcase'
 import {
   getProject, getGenerationParams, updateGenerationParams, listProjects,
@@ -1781,6 +1820,41 @@ async function handleRegenerate() {
 const showAppendDialog = ref(false)
 const appendType = ref('')
 
+// v5.4: 语义搜索
+const semanticDialogVisible = ref(false)
+const semanticQuery = ref('')
+const semanticResults = ref([])
+const semanticSearching = ref(false)
+
+function openSemanticDialog() {
+  semanticDialogVisible.value = true
+  semanticQuery.value = ''
+  semanticResults.value = []
+}
+
+async function runSemanticSearch() {
+  const q = semanticQuery.value.trim()
+  if (!q) {
+    ElMessage.warning('请输入搜索内容')
+    return
+  }
+  semanticSearching.value = true
+  try {
+    const res = await semanticSearch(projectId, q)
+    semanticResults.value = res.data || []
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    semanticSearching.value = false
+  }
+}
+
+function openSemanticResult(row) {
+  semanticDialogVisible.value = false
+  currentTestCase.value = row
+  dialogVisible.value = true
+}
+
 function handleOpenAppendDialog() {
   if (streaming.value) {
     ElMessage.warning('正在生成中，请等待当前任务完成')
@@ -2431,6 +2505,17 @@ onUnmounted(() => {
     padding-top: 8px;
     font-size: 13px;
     color: var(--text-secondary);
+  }
+}
+
+/* ===== v5.4: 语义搜索 ===== */
+.semantic-search-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+
+  .el-input {
+    flex: 1;
   }
 }
 

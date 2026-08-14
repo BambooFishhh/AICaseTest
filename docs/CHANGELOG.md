@@ -4,6 +4,41 @@
 
 ---
 
+## v5.4 — Milvus 语义检索层
+**日期**: 2026-08-14
+**基线**: v5.3
+**主题**: embedding 管道 + 语义去重 + RAG 上下文检索 + 语义搜索 + 失败经验库
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| mcp-server/index.js | 新增 llm_embedding 工具 | OpenAI 兼容 embeddings |
+| service/EmbeddingService.java / MilvusService.java / SemanticService.java | 新增 | 向量化 + Milvus 集合 + 语义能力 |
+| dto/PrdAnalysisResult.java | 新增 ragContexts | RAG 上下文透传 |
+| agent/OrchestratorAgent.java / TestGeneratorAgent.java | RAG 注入 | 生成前 Top-K 上下文进 prompt |
+| service/TestCaseService.java | 语义去重/索引 | 追加生成相似度判重 + 重建索引 |
+| service/ProjectService.java / AnalysisService.java | 上下文入库 | PRD/后端/前端分析写入 contexts |
+| service/ExecutionService.java | 失败经验库 | 失败步骤写入 failures |
+| controller/TestCaseController.java | 语义搜索 API | GET /testcases/semantic-search |
+| application.yml / docker-compose.yml | Milvus 配置 | etcd + minio + milvus standalone |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| api/testcase.js | 新增 semanticSearch | 语义搜索 API |
+| views/TestCaseList.vue | 新增语义搜索对话框 | 自然语言检索并查看用例 |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS（136 源文件）
+- 后端测试: Tests run 2, Failures 0（mvn test）
+- 前端构建: ✓ built in 15.32s
+- MCP 语法: node --check 通过（llm + playwright）
+
+---
+
 ## v5.3 — 缓存与任务队列
 **日期**: 2026-08-14
 **基线**: v5.2

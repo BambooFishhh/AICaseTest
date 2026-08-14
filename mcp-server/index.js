@@ -24,6 +24,8 @@ import fs from 'fs';
 const apiKey = process.env.OPENAI_API_KEY || process.env.LLM_API_KEY || '';
 const baseUrl = process.env.OPENAI_BASE_URL || process.env.LLM_BASE_URL || 'https://api.xiaomimimo.com/v1';
 const model = process.env.OPENAI_MODEL || process.env.LLM_MODEL || 'gpt-4o';
+// v5.4: embedding 模型（默认复用对话模型，可通过环境变量单独指定）
+const embeddingModel = process.env.OPENAI_EMBEDDING_MODEL || process.env.LLM_EMBEDDING_MODEL || model;
 
 const client = new OpenAI({ apiKey, baseURL: baseUrl });
 
@@ -92,6 +94,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           element_desc: { type: 'string', description: '元素自然语言描述' },
         },
         required: ['image_path', 'element_desc'],
+      },
+    },
+    {
+      name: 'llm_embedding',
+      description: 'LLM embedding：文本 → 向量数组（v5.4 语义检索）',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          input: { type: 'string', description: '要编码的文本' },
+          model: { type: 'string', description: '可选 embedding 模型' },
+        },
+        required: ['input'],
       },
     },
   ],
@@ -186,6 +200,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: resultText }] };
       }
 
+      case 'llm_embedding': {
+        const { input, model: embedModel } = args;
+        const response = await client.embeddings.create({
+          model: embedModel || embeddingModel,
+          input,
+        });
+        const embedding = response.data?.[0]?.embedding || [];
+        return { content: [{ type: 'text', text: JSON.stringify(embedding) }] };
+      }
+
       default:
         throw new Error(`未知工具: ${name}`);
     }
@@ -201,4 +225,4 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
-console.error(`[MCP Server] 启动成功 v1.2 | model=${model} | baseUrl=${baseUrl} | tools=3 | streaming=true`);
+console.error(`[MCP Server] 启动成功 v1.3 | model=${model} | embeddingModel=${embeddingModel} | baseUrl=${baseUrl} | tools=4 | streaming=true`);
