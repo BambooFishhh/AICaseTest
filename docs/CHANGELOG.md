@@ -4,6 +4,24 @@
 
 ---
 
+## 修复记录 — CI npm audit（nanoid 高危）
+**日期**: 2026-08-14
+**主题**: 升级 nanoid 3.3.17 → 3.3.18，解除 npm audit high 门禁
+
+### 修复内容
+
+| 文件 | 修复 | 说明 |
+|---|---|---|
+| frontend/package-lock.json | nanoid 3.3.17 → 3.3.18 | 修复 GHSA-2v37-7h3g-55p8（custom generators loop） |
+
+### 验证结果
+
+- `npm audit --omit=dev --audit-level=high`：通过（仅剩 echarts moderate，不触发 high 门禁）
+- `npm ci`：干净安装通过（391 packages）
+- `npm test`：7/7 通过；`npm run build`：成功
+
+---
+
 ## 修复记录 — vT7 CI 集成测试
 **日期**: 2026-08-14
 **主题**: MySQL 测试未覆盖 driver-class-name，H2 驱动连接 MySQL 导致上下文启动失败；容器启动超时
