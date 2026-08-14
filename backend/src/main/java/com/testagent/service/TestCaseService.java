@@ -24,6 +24,8 @@ import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.TestCaseVersionRepository;
+import com.testagent.runtime.RuntimeFlag;
+import com.testagent.runtime.RuntimeStore;
 import com.testagent.service.ProjectAccessService;
 import com.testagent.service.XmindService;
 import com.testagent.security.SecurityUtils;
@@ -68,7 +70,10 @@ public class TestCaseService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     // v3.3: 取消标志注册表（projectId → cancelled flag），供 cancel 端点触发
-    private final ConcurrentHashMap<String, AtomicBoolean> cancellationFlags = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, RuntimeFlag> cancellationFlags = new ConcurrentHashMap<>();
+
+    @Autowired
+    private RuntimeStore runtimeStore;
 
     @Autowired
     private TestCaseRepository testCaseRepository;
@@ -146,21 +151,22 @@ public class TestCaseService {
     @Async("generationExecutor")
     public void runGenerateStream(String projectId, SseEmitter emitter) {
         AtomicBoolean clientGone = new AtomicBoolean(false);
-        AtomicBoolean cancelled = new AtomicBoolean(false);
+        // v5.2: 取消标志写入 RuntimeStore（Redis/内存），支持跨实例取消
+        RuntimeFlag cancelled = runtimeStore.newFlag("gen:cancel:" + projectId);
         // v3.3: 客户端断开同时置 cancelled（不只跳过 send，还要停止生成 + 跳过落库）
         emitter.onCompletion(() -> {
             clientGone.set(true);
-            cancelled.set(true);
+            cancelled.cancel();
             log.info("SSE client disconnected: {}", projectId);
         });
         emitter.onTimeout(() -> {
             clientGone.set(true);
-            cancelled.set(true);
+            cancelled.cancel();
             log.warn("SSE timeout: {}", projectId);
         });
         emitter.onError(t -> {
             clientGone.set(true);
-            cancelled.set(true);
+            cancelled.cancel();
             log.warn("SSE error: {}", projectId, t);
         });
         // v3.3: 注册取消标志（供 cancel 端点触发）
@@ -191,7 +197,7 @@ public class TestCaseService {
             List<TestCase> testCases = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled);
 
             // v3.3: 落库前最终检查（LLM 返回后可能已取消）
-            if (cancelled.get()) {
+            if (cancelled.isCancelled()) {
                 throw new GenerationCancelledException("用户取消生成");
             }
 
@@ -225,6 +231,7 @@ public class TestCaseService {
         } finally {
             // v3.3: 清理取消标志，避免内存泄漏
             cancellationFlags.remove(projectId);
+            cancelled.clear();
         }
     }
 
@@ -239,20 +246,20 @@ public class TestCaseService {
     @Async("generationExecutor")
     public void runGenerateStreamAppend(String projectId, String type, SseEmitter emitter) {
         AtomicBoolean clientGone = new AtomicBoolean(false);
-        AtomicBoolean cancelled = new AtomicBoolean(false);
+        RuntimeFlag cancelled = runtimeStore.newFlag("gen:cancel:" + projectId);
         emitter.onCompletion(() -> {
             clientGone.set(true);
-            cancelled.set(true);
+            cancelled.cancel();
             log.info("SSE client disconnected (append): {}", projectId);
         });
         emitter.onTimeout(() -> {
             clientGone.set(true);
-            cancelled.set(true);
+            cancelled.cancel();
             log.warn("SSE timeout (append): {}", projectId);
         });
         emitter.onError(t -> {
             clientGone.set(true);
-            cancelled.set(true);
+            cancelled.cancel();
             log.warn("SSE error (append): {}", projectId, t);
         });
         cancellationFlags.put(projectId, cancelled);
@@ -279,7 +286,7 @@ public class TestCaseService {
 
             List<TestCase> generated = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled);
 
-            if (cancelled.get()) {
+            if (cancelled.isCancelled()) {
                 throw new GenerationCancelledException("用户取消追加生成");
             }
 
@@ -353,6 +360,7 @@ public class TestCaseService {
             safeSseCompleteWithError(emitter, clientGone, e);
         } finally {
             cancellationFlags.remove(projectId);
+            cancelled.clear();
         }
     }
 
@@ -383,11 +391,13 @@ public class TestCaseService {
 
     // v3.3: 取消生成（供 Controller 调用）。返回是否成功取消（有进行中的生成任务）。
     public boolean cancelGeneration(String projectId) {
-        AtomicBoolean flag = cancellationFlags.get(projectId);
+        RuntimeFlag flag = cancellationFlags.get(projectId);
         if (flag != null) {
-            flag.set(true);
+            flag.cancel();
             return true;
         }
+        // v5.2: 任务尚未注册时也写入存储层，供后续检查
+        runtimeStore.setFlag("gen:cancel:" + projectId, true);
         return false;
     }
 

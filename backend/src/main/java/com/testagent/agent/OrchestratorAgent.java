@@ -10,6 +10,7 @@ import com.testagent.entity.CodeAnalysis;
 import com.testagent.entity.Project;
 import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
+import com.testagent.runtime.CancellationSignal;
 import com.testagent.repository.CodeAnalysisRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
@@ -20,7 +21,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * v1.10: 用例生成编排 Agent。
@@ -76,7 +76,7 @@ public class OrchestratorAgent {
     public List<TestCase> generateStreaming(String projectId,
                                             TestGeneratorAgent.ProgressCallback progressCallback,
                                             TestGeneratorAgent.CaseCallback caseCallback,
-                                            AtomicBoolean cancelled) {
+                                            CancellationSignal cancelled) {
         GenContext ctx = loadGenerationContext(projectId, progressCallback);
         return testGeneratorAgent.generateStreaming(ctx.prdResult(), ctx.stateMachines(), ctx.backendResult(),
                 ctx.frontendResult(), progressCallback, caseCallback, cancelled, ctx.params());

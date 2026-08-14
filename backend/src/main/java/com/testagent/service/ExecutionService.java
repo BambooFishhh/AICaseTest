@@ -9,6 +9,8 @@ import com.testagent.common.BusinessException;
 import com.testagent.repository.ExecutionRecordRepository;
 import com.testagent.repository.ExecutionStepRepository;
 import com.testagent.repository.TestCaseRepository;
+import com.testagent.runtime.RuntimeFlag;
+import com.testagent.runtime.RuntimeStore;
 import com.testagent.agent.ExecutionAgent;
 import com.testagent.skill.PlaywrightRecordSkill;
 import com.testagent.skill.EvidenceSkill;
@@ -55,17 +57,12 @@ public class ExecutionService {
     @Autowired
     private ProjectExecutionLimiter projectExecutionLimiter;
 
-    // v4.2: 执行取消标志（executionId → cancelled）
-    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicBoolean>
-            executionCancellations = new java.util.concurrent.ConcurrentHashMap<>();
-
-    // 执行中浏览器会话（executionId → sessionId），用于取消时强制关闭
-    private final java.util.concurrent.ConcurrentHashMap<String, String> executionSessions =
+    // v5.2: 执行取消标志（executionId → RuntimeFlag），底层 Redis/内存
+    private final java.util.concurrent.ConcurrentHashMap<String, RuntimeFlag> executionCancellations =
             new java.util.concurrent.ConcurrentHashMap<>();
 
-    // 执行心跳（executionId → 最近一次活跃时间），用于识别"worker 已死但记录仍 running"
-    private final java.util.concurrent.ConcurrentHashMap<String, Long> executionHeartbeats =
-            new java.util.concurrent.ConcurrentHashMap<>();
+    @Autowired
+    private RuntimeStore runtimeStore;
     private static final long HEARTBEAT_STALE_MS = 30_000L;
 
     /**
@@ -335,14 +332,15 @@ public class ExecutionService {
                 updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
             }
             executionCancellations.remove(executionId);
-            executionHeartbeats.remove(executionId);
+            runtimeStore.clearFlag("exec:cancel:" + executionId);
+            runtimeStore.removeHeartbeat(executionId);
             return;
         }
 
         try {
             // 1. 启动浏览器（Playwright 自动开始录屏）
             sessionId = playwrightSkill.browserLaunch(true, 1280, 800);
-            executionSessions.put(executionId, sessionId);
+            runtimeStore.putSession(executionId, sessionId);
 
             // 2. 导航到目标页面
             if (targetUrl != null && !targetUrl.isBlank()) {
@@ -406,7 +404,7 @@ public class ExecutionService {
             // 关闭浏览器
             if (sessionId != null) {
                 try { playwrightSkill.closeSession(sessionId); } catch (Exception e) { log.warn("Failed to close session", e); }
-                executionSessions.remove(executionId);
+                runtimeStore.removeSession(executionId);
             }
             projectExecutionLimiter.release(testCase.getProjectId());
         }
@@ -437,7 +435,8 @@ public class ExecutionService {
             updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
         }
         executionCancellations.remove(executionId);
-        executionHeartbeats.remove(executionId);
+        runtimeStore.clearFlag("exec:cancel:" + executionId);
+        runtimeStore.removeHeartbeat(executionId);
 
         // 保存证据
         try {
@@ -499,14 +498,15 @@ public class ExecutionService {
                 updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
             }
             executionCancellations.remove(executionId);
-            executionHeartbeats.remove(executionId);
+            runtimeStore.clearFlag("exec:cancel:" + executionId);
+            runtimeStore.removeHeartbeat(executionId);
             return;
         }
 
         try {
             // 1. 启动浏览器（Playwright 自动开始录屏）
             sessionId = playwrightSkill.browserLaunch(true, 1280, 800);
-            executionSessions.put(executionId, sessionId);
+            runtimeStore.putSession(executionId, sessionId);
 
             // 2. 导航到目标页面
             if (targetUrl != null && !targetUrl.isBlank()) {
@@ -639,7 +639,7 @@ public class ExecutionService {
                 } catch (Exception e) {
                     log.warn("Failed to close browser session", e);
                 }
-                executionSessions.remove(executionId);
+                runtimeStore.removeSession(executionId);
             }
             projectExecutionLimiter.release(testCase.getProjectId());
         }
@@ -671,7 +671,8 @@ public class ExecutionService {
             updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
         }
         executionCancellations.remove(executionId);
-        executionHeartbeats.remove(executionId);
+        runtimeStore.clearFlag("exec:cancel:" + executionId);
+        runtimeStore.removeHeartbeat(executionId);
 
         // 保存证据
         try {
@@ -728,31 +729,34 @@ public class ExecutionService {
 
     // v4.2: 执行取消标志检查
     private boolean isExecutionCancelled(String executionId) {
-        java.util.concurrent.atomic.AtomicBoolean flag = executionCancellations.get(executionId);
-        return flag != null && flag.get();
+        RuntimeFlag flag = executionCancellations.get(executionId);
+        return flag != null && flag.isCancelled();
     }
 
     // 标记运行中任务取消，并强制关闭其浏览器会话（让当前步骤尽快失败）
     private void markRunningCancelled(String executionId) {
-        executionCancellations.put(executionId, new java.util.concurrent.atomic.AtomicBoolean(true));
-        String sessionId = executionSessions.remove(executionId);
+        RuntimeFlag flag = executionCancellations.computeIfAbsent(
+                executionId, k -> runtimeStore.newFlag("exec:cancel:" + k));
+        flag.cancel();
+        String sessionId = runtimeStore.getSession(executionId);
         if (sessionId != null) {
             try {
                 playwrightSkill.closeSession(sessionId);
             } catch (Exception e) {
                 log.warn("Failed to close session for cancelled execution {}", executionId, e);
             }
+            runtimeStore.removeSession(executionId);
         }
     }
 
     // 心跳：worker 存活时定期更新
     private void touchHeartbeat(String executionId) {
-        executionHeartbeats.put(executionId, System.currentTimeMillis());
+        runtimeStore.putHeartbeat(executionId, System.currentTimeMillis());
     }
 
     private boolean isWorkerAlive(String executionId) {
-        Long last = executionHeartbeats.get(executionId);
-        return last != null && (System.currentTimeMillis() - last) < HEARTBEAT_STALE_MS;
+        long last = runtimeStore.getHeartbeat(executionId);
+        return last >= 0 && (System.currentTimeMillis() - last) < HEARTBEAT_STALE_MS;
     }
 
     // worker 已死：直接完结为已取消
@@ -765,7 +769,8 @@ public class ExecutionService {
             updateTestCaseExecutionStatus(record.getTestCaseId(), "not_executed");
         }
         executionCancellations.remove(record.getId());
-        executionHeartbeats.remove(record.getId());
-        executionSessions.remove(record.getId());
+        runtimeStore.clearFlag("exec:cancel:" + record.getId());
+        runtimeStore.removeHeartbeat(record.getId());
+        runtimeStore.removeSession(record.getId());
     }
 }

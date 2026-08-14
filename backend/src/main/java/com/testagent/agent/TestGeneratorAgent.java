@@ -11,6 +11,7 @@ import com.testagent.dto.JsonHelper;
 import com.testagent.dto.PrdAnalysisResult;
 import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
+import com.testagent.runtime.CancellationSignal;
 import com.testagent.service.LlmService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,7 +25,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.testagent.common.GenerationCancelledException;
 
@@ -151,8 +151,8 @@ public class TestGeneratorAgent {
     }
 
     // v3.3: 取消检查。cancelled 为 null（非流式调用）或 false 时跳过。
-    private void checkCancelled(AtomicBoolean cancelled) {
-        if (cancelled != null && cancelled.get()) {
+    private void checkCancelled(CancellationSignal cancelled) {
+        if (cancelled != null && cancelled.isCancelled()) {
             throw new GenerationCancelledException("用例生成已取消");
         }
     }
@@ -467,7 +467,7 @@ public class TestGeneratorAgent {
     public List<TestCase> generateStreaming(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                              BackendResult backendResult, FrontendResult frontendResult,
                                              ProgressCallback progressCallback, CaseCallback caseCb,
-                                             AtomicBoolean cancelled, GenerationParams params) {
+                                             CancellationSignal cancelled, GenerationParams params) {
         List<TestCase> result = new ArrayList<>();
         // v3.13: 包装回调，仅透传聚焦类型（SSE 推送与落库一致）
         CaseCallback effectiveCb = wrapFocusFilter(params, caseCb);
@@ -635,7 +635,7 @@ public class TestGeneratorAgent {
     private List<TestCase> generateCodeDrivenCases(List<StateMachine> stateMachines, BackendResult backendResult,
                                                     FrontendResult frontendResult,
                                                     ProgressCallback progressCallback, CaseCallback caseCb,
-                                                    AtomicBoolean cancelled, GenerationParams params) {
+                                                    CancellationSignal cancelled, GenerationParams params) {
         List<TestCase> result = new ArrayList<>();
 
         if (stateMachines != null && !stateMachines.isEmpty()) {
@@ -682,7 +682,7 @@ public class TestGeneratorAgent {
     // v3.4: 新增 params 参数，动态拼接 system prompt + 调整 temperature
     private List<TestCase> generateByLlmForStateMachine(StateMachine sm, BackendResult backendResult,
                                                          FrontendResult frontendResult, CaseCallback caseCb,
-                                                         AtomicBoolean cancelled, GenerationParams params) {
+                                                         CancellationSignal cancelled, GenerationParams params) {
         Map<String, Object> context = new LinkedHashMap<>();
 
         Map<String, Object> smMap = new LinkedHashMap<>();
@@ -756,7 +756,7 @@ public class TestGeneratorAgent {
     private List<TestCase> generateByLlmWithPrd(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                                  BackendResult backendResult,
                                                  FrontendResult frontendResult,
-                                                 CaseCallback caseCb, AtomicBoolean cancelled,
+                                                 CaseCallback caseCb, CancellationSignal cancelled,
                                                  GenerationParams params) throws Exception {
         Map<String, Object> context = new LinkedHashMap<>();
 

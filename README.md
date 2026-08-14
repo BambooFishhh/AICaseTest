@@ -621,6 +621,15 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v5.1](docs/v5.1/PRD_v5.1_H2到MySQL全量迁移.md)
 
+### v5.2 — Redis 运行态接入
+
+引入 RuntimeStore 运行态抽象：取消标志、执行心跳、浏览器会话、项目级并发配额、登录防爆破迁至 Redis，支持多实例；默认内存模式并在 Redis 不可用时自动降级。
+
+- 后端: 新增 runtime 包 + Redis Lua 配额信号量，`APP_REDIS_ENABLED=true` 开启
+- 部署: docker-compose 新增 `aicasetest-redis`
+
+详见：[PRD v5.2](docs/v5.2/PRD_v5.2_Redis运行态.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -674,6 +683,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v4.4 | 分析流式化（SSE 实时阶段进度） | ✅ 完成 |
 | v5.0 | 数据层准备（Flyway + MySQL profile + 数据库容器） | ✅ 完成 |
 | v5.1 | H2 → MySQL 全量迁移工具（备份/回滚/校验） | ✅ 完成 |
+| v5.2 | Redis 运行态（取消/心跳/配额/防爆破） | ✅ 完成 |
 
 ## API 概览
 

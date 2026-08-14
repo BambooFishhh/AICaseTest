@@ -4,6 +4,38 @@
 
 ---
 
+## v5.2 — Redis 运行态接入
+**日期**: 2026-08-14
+**基线**: v5.1
+**主题**: 取消标志/心跳/并发配额/登录防爆破迁至 Redis，保留内存降级
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| runtime/* | 新增 RuntimeStore / Memory / Redis / Flag / Config | 运行态存储抽象，Redis 不可用时降级内存 |
+| service/TestCaseService.java | 取消标志改 RuntimeFlag | 生成/追加取消支持多实例 |
+| service/ExecutionService.java | 取消/会话/心跳改 RuntimeStore | 执行取消与 worker 心跳 Redis 化 |
+| service/ProjectExecutionLimiter.java | 配额改 RuntimeStore | Redis Lua 计数信号量 |
+| service/LoginAttemptService.java | 防爆破改 RuntimeStore | 登录锁定跨实例生效 |
+| agent/TestGeneratorAgent.java / OrchestratorAgent.java | 取消参数改 CancellationSignal | 链路解耦 AtomicBoolean |
+| application.yml | 新增 spring.data.redis | 连接配置 |
+| docker-compose.yml | 新增 aicasetest-redis | Redis 7 容器 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| 无 | - | 本版本无前端代码变更 |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS（126 源文件）
+- 后端测试: Tests run 2, Failures 0（mvn test）
+- 前端构建: ✓ built in 13.70s
+
+---
+
 ## v5.1 — H2 → MySQL 全量迁移工具
 **日期**: 2026-08-14
 **基线**: v5.0
