@@ -4,6 +4,32 @@
 
 ---
 
+## vT2 — 服务层与集成测试
+**日期**: 2026-08-14
+**基线**: vT1
+**主题**: 安全（JWT）、工具类、JPA Repository 测试基线
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| test/security/JwtUtilTest.java | 新增 3 个测试 | 签发/解析/非法与过期 token |
+| test/security/JwtAuthFilterTest.java | 新增 3 个测试 | Bearer 认证、缺失/非法 token |
+| test/dto/JsonHelperTest.java | 新增 3 个测试 | Map/List 解析与容错 |
+| test/repository/TestCaseVersionRepositoryTest.java | 新增 1 个测试 | H2 JPA 保存/查询/删除 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| 无 | - | 本版本无前端代码变更 |
+
+### 验证结果
+
+- 后端测试: Tests run 23, Failures 0（mvn test）
+
+---
+
 ## vT1 — 测试与运维基线
 **日期**: 2026-08-14
 **基线**: v5.8 + v5 数据层复查修复
