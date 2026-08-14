@@ -4,6 +4,38 @@
 
 ---
 
+## v5.3 — 缓存与任务队列
+**日期**: 2026-08-14
+**基线**: v5.2
+**主题**: Spring Cache（设置/参数/分析结果）+ 生成/执行任务队列统计
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| config/CacheConfig.java | 新增 | Redis/内存 CacheManager 按开关选择 |
+| queue/* | 新增 TaskQueueStore 三件套 | 内存/Redis 任务队列计数 |
+| service/TaskQueueService.java | 新增 | 生成/执行队列封装与统计 |
+| controller/TaskController.java | 新增 | GET /api/tasks/stats |
+| service/SettingsService.java / ProjectService.java | 缓存注解 | 设置/参数读缓存、写失效 |
+| service/AnalysisService.java / controller/AnalysisController.java | 分析缓存 | 分析/状态机缓存 + 重新分析 evict |
+| controller/ProjectController.java / service/TestCaseService.java / ExecutionService.java | 队列接入 | 任务 enqueue/running/done |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| api/task.js | 新增 | 任务统计 API |
+| views/Dashboard.vue | 新增任务队列区块 | 展示生成/执行排队与运行计数 |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS（133 源文件）
+- 后端测试: Tests run 2, Failures 0（mvn test）
+- 前端构建: ✓ built in 14.12s
+
+---
+
 ## v5.2 — Redis 运行态接入
 **日期**: 2026-08-14
 **基线**: v5.1

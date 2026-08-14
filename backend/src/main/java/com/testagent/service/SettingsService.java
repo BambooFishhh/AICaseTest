@@ -9,6 +9,8 @@ import com.testagent.entity.SystemSetting;
 import com.testagent.repository.SystemSettingRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +28,7 @@ public class SettingsService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @Cacheable(value = "settings", key = "'llm'")
     public SettingsDTO getSettings() {
         return SettingsDTO.builder()
                 .llmProvider(getSetting("llm_provider", ""))
@@ -36,6 +39,7 @@ public class SettingsService {
     }
 
     @Transactional
+    @CacheEvict(value = "settings", allEntries = true)
     public void updateSettings(UpdateSettingsRequest req) {
         if (req.getLlmProvider() != null) {
             saveSetting("llm_provider", req.getLlmProvider());
@@ -56,6 +60,7 @@ public class SettingsService {
     }
 
     // v3.17: 系统级默认生成参数（新建项目时作为初始值）
+    @Cacheable(value = "settings", key = "'generationParams'")
     public GenerationParams getDefaultGenerationParams() {
         String json = getSetting("default_generation_params", "");
         if (json == null || json.isBlank()) {
@@ -73,6 +78,7 @@ public class SettingsService {
     }
 
     @Transactional
+    @CacheEvict(value = "settings", key = "'generationParams'")
     public GenerationParams updateDefaultGenerationParams(GenerationParams params) {
         if (params.getCaseDensity() == null) params.setCaseDensity("medium");
         if (params.getTemperature() == null) params.setTemperature(0.4);

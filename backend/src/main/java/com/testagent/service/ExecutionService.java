@@ -15,6 +15,7 @@ import com.testagent.agent.ExecutionAgent;
 import com.testagent.skill.PlaywrightRecordSkill;
 import com.testagent.skill.EvidenceSkill;
 import com.testagent.security.SecurityUtils;
+import com.testagent.service.TaskQueueService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -63,6 +64,9 @@ public class ExecutionService {
 
     @Autowired
     private RuntimeStore runtimeStore;
+
+    @Autowired
+    private TaskQueueService taskQueueService;
     private static final long HEARTBEAT_STALE_MS = 30_000L;
 
     /**
@@ -125,6 +129,9 @@ public class ExecutionService {
             log.warn("Failed to build test case snapshot for {}", testCaseId, e);
         }
         executionRecordRepository.save(record);
+
+        // v5.3: 执行任务进入队列统计
+        taskQueueService.enqueue(TaskQueueService.EXECUTION_QUEUE, executionId);
 
         // v3.11: 执行启动时回写用例执行状态（复制执行不回写）
         if (writeBack) {
@@ -313,6 +320,7 @@ public class ExecutionService {
                 executionRecordRepository.save(started);
             }
             touchHeartbeat(executionId);
+            taskQueueService.markRunning(TaskQueueService.EXECUTION_QUEUE, executionId);
         } catch (Exception e) {
             log.warn("Failed to mark execution {} running", executionId, e);
         }
@@ -334,6 +342,7 @@ public class ExecutionService {
             executionCancellations.remove(executionId);
             runtimeStore.clearFlag("exec:cancel:" + executionId);
             runtimeStore.removeHeartbeat(executionId);
+            taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, executionId);
             return;
         }
 
@@ -407,6 +416,7 @@ public class ExecutionService {
                 runtimeStore.removeSession(executionId);
             }
             projectExecutionLimiter.release(testCase.getProjectId());
+            taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, executionId);
         }
 
         // 更新执行记录
@@ -479,6 +489,7 @@ public class ExecutionService {
                 executionRecordRepository.save(started);
             }
             touchHeartbeat(executionId);
+            taskQueueService.markRunning(TaskQueueService.EXECUTION_QUEUE, executionId);
         } catch (Exception e) {
             log.warn("Failed to mark execution {} running", executionId, e);
         }
@@ -500,6 +511,7 @@ public class ExecutionService {
             executionCancellations.remove(executionId);
             runtimeStore.clearFlag("exec:cancel:" + executionId);
             runtimeStore.removeHeartbeat(executionId);
+            taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, executionId);
             return;
         }
 
@@ -642,6 +654,7 @@ public class ExecutionService {
                 runtimeStore.removeSession(executionId);
             }
             projectExecutionLimiter.release(testCase.getProjectId());
+            taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, executionId);
         }
 
         // 更新执行记录
@@ -772,5 +785,6 @@ public class ExecutionService {
         runtimeStore.clearFlag("exec:cancel:" + record.getId());
         runtimeStore.removeHeartbeat(record.getId());
         runtimeStore.removeSession(record.getId());
+        taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, record.getId());
     }
 }

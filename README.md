@@ -630,6 +630,15 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v5.2](docs/v5.2/PRD_v5.2_Redis运行态.md)
 
+### v5.3 — 缓存与任务队列
+
+接入 Spring Cache：系统设置、默认/项目生成参数、代码分析与状态机结果读写缓存，写路径自动失效；新增生成/执行任务队列统计层与 `/api/tasks/stats`，仪表盘展示排队与运行计数。
+
+- 后端: CacheConfig + queue 包 + TaskQueueService，Redis 开启时使用 Redis 缓存/队列
+- 前端: 仪表盘新增任务队列卡片
+
+详见：[PRD v5.3](docs/v5.3/PRD_v5.3_缓存与任务队列.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -684,6 +693,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v5.0 | 数据层准备（Flyway + MySQL profile + 数据库容器） | ✅ 完成 |
 | v5.1 | H2 → MySQL 全量迁移工具（备份/回滚/校验） | ✅ 完成 |
 | v5.2 | Redis 运行态（取消/心跳/配额/防爆破） | ✅ 完成 |
+| v5.3 | 缓存 + 任务队列（设置/参数/分析缓存 + 队列计数） | ✅ 完成 |
 
 ## API 概览
 

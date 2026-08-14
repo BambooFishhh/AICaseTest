@@ -26,6 +26,7 @@ import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.TestCaseVersionRepository;
 import com.testagent.runtime.RuntimeFlag;
 import com.testagent.runtime.RuntimeStore;
+import com.testagent.service.TaskQueueService;
 import com.testagent.service.ProjectAccessService;
 import com.testagent.service.XmindService;
 import com.testagent.security.SecurityUtils;
@@ -76,6 +77,9 @@ public class TestCaseService {
     private RuntimeStore runtimeStore;
 
     @Autowired
+    private TaskQueueService taskQueueService;
+
+    @Autowired
     private TestCaseRepository testCaseRepository;
 
     @Autowired
@@ -116,6 +120,7 @@ public class TestCaseService {
             }
 
             updateProjectStatus(projectId, "generating");
+            taskQueueService.markRunning(TaskQueueService.GENERATION_QUEUE, projectId);
             // v1.10: 改由 OrchestratorAgent 编排（PrdAgent + 代码侧 → TestGeneratorAgent）
             List<TestCase> testCases = orchestratorAgent.generate(projectId,
                     progress -> projectRepository.updateProgress(projectId, progress));
@@ -232,6 +237,7 @@ public class TestCaseService {
             // v3.3: 清理取消标志，避免内存泄漏
             cancellationFlags.remove(projectId);
             cancelled.clear();
+            taskQueueService.markDone(TaskQueueService.GENERATION_QUEUE, projectId);
         }
     }
 
@@ -276,6 +282,7 @@ public class TestCaseService {
             }
 
             updateProjectStatus(projectId, "generating");
+            taskQueueService.markRunning(TaskQueueService.GENERATION_QUEUE, projectId);
 
             TestGeneratorAgent.ProgressCallback progressCb = msg -> {
                 sendSseEvent(emitter, clientGone, "progress", Map.of("message", msg));
@@ -361,6 +368,7 @@ public class TestCaseService {
         } finally {
             cancellationFlags.remove(projectId);
             cancelled.clear();
+            taskQueueService.markDone(TaskQueueService.GENERATION_QUEUE, projectId);
         }
     }
 

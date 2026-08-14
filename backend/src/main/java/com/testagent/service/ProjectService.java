@@ -24,6 +24,8 @@ import com.testagent.security.AccessLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -258,6 +260,7 @@ public class ProjectService {
     // ==================== v3.4: 生成参数 ====================
 
     // v3.4: 获取生成参数（从 Project.settings JSON 解析，失败降级默认值）
+    @Cacheable(value = "projectParams", key = "#projectId")
     public GenerationParams getGenerationParams(String projectId) {
         projectAccessService.assertViewAccess(projectId);
         Project project = projectRepository.findById(projectId)
@@ -267,6 +270,7 @@ public class ProjectService {
 
     // v3.4: 更新生成参数（写入 Project.settings JSON 的 generationParams 字段）
     @Transactional
+    @CacheEvict(value = "projectParams", key = "#projectId")
     public GenerationParams updateGenerationParams(String projectId, GenerationParams params) {
         projectAccessService.assertOperateAccess(projectId);
         Project project = projectRepository.findById(projectId)
@@ -318,6 +322,7 @@ public class ProjectService {
 
     // v3.15: 更新多执行环境，激活环境 URL 同步到 defaultTargetUrl
     @Transactional
+    @CacheEvict(value = "projectParams", key = "#projectId")
     public Map<String, Object> updateExecutionEnvironments(String projectId, Map<String, Object> payload) {
         projectAccessService.assertOperateAccess(projectId);
         Project project = projectRepository.findById(projectId)

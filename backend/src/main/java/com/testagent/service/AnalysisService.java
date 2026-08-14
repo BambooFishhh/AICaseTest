@@ -17,6 +17,8 @@ import com.testagent.repository.StateMachineRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.http.MediaType;
@@ -57,6 +59,21 @@ public class AnalysisService {
 
     @Autowired
     private StateMachineAgent stateMachineAgent;
+
+    @Autowired
+    private CacheManager cacheManager;
+
+    // v5.3: 分析结果缓存（分析完成后失效）
+    @Cacheable(value = "analysis", key = "#projectId")
+    public CodeAnalysis getAnalysis(String projectId) {
+        return codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId).orElse(null);
+    }
+
+    // v5.3: 状态机结果缓存（重新分析后失效）
+    @Cacheable(value = "stateMachines", key = "#projectId")
+    public List<StateMachine> getStateMachines(String projectId) {
+        return stateMachineRepository.findByProjectId(projectId);
+    }
 
     @FunctionalInterface
     public interface ProgressCallback {
@@ -130,6 +147,7 @@ public class AnalysisService {
                     ? objectMapper.writeValueAsString(backendResult) : "{}");
             analysis.setStatus("completed");
             codeAnalysisRepository.save(analysis);
+            evictAnalysisCaches(projectId);
 
             if (scanResult.getTechStack() != null && !scanResult.getTechStack().isEmpty()) {
                 updateProjectTechStack(projectId, objectMapper.writeValueAsString(scanResult.getTechStack()));
@@ -154,7 +172,21 @@ public class AnalysisService {
             analysis.setStatus("failed");
             analysis.setErrorMessage(e.getMessage() != null ? e.getMessage() : "Unknown error");
             codeAnalysisRepository.save(analysis);
+            evictAnalysisCaches(projectId);
             updateProjectStatus(projectId, "failed");
+        }
+    }
+
+    private void evictAnalysisCaches(String projectId) {
+        try {
+            if (cacheManager.getCache("analysis") != null) {
+                cacheManager.getCache("analysis").evict(projectId);
+            }
+            if (cacheManager.getCache("stateMachines") != null) {
+                cacheManager.getCache("stateMachines").evict(projectId);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to evict analysis cache for {}: {}", projectId, e.getMessage());
         }
     }
 

@@ -9,6 +9,7 @@ import com.testagent.service.AnalysisService;
 import com.testagent.service.BackupService;
 import com.testagent.service.ProjectAccessService;
 import com.testagent.service.ProjectService;
+import com.testagent.service.TaskQueueService;
 import com.testagent.service.TestCaseService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +52,9 @@ public class ProjectController {
 
     @Autowired
     private ProjectAccessService projectAccessService;
+
+    @Autowired
+    private TaskQueueService taskQueueService;
 
     @GetMapping
     public ApiResponse<List<ProjectDTO>> listProjects() {
@@ -133,6 +137,8 @@ public class ProjectController {
             return err;
         }
         SseEmitter emitter = new SseEmitter(5L * 60 * 1000); // 5 分钟超时
+        // v5.3: 生成任务进入队列统计
+        taskQueueService.enqueue(TaskQueueService.GENERATION_QUEUE, projectId);
         testCaseService.runGenerateStream(projectId, emitter);
         return emitter;
     }
@@ -159,6 +165,7 @@ public class ProjectController {
             return err;
         }
         SseEmitter emitter = new SseEmitter(5L * 60 * 1000);
+        taskQueueService.enqueue(TaskQueueService.GENERATION_QUEUE, projectId);
         testCaseService.runGenerateStreamAppend(projectId, type, emitter);
         return emitter;
     }

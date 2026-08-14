@@ -5,8 +5,7 @@ import com.testagent.common.BusinessException;
 import com.testagent.dto.AnalysisResultDTO;
 import com.testagent.dto.StateMachineDTO;
 import com.testagent.entity.CodeAnalysis;
-import com.testagent.repository.CodeAnalysisRepository;
-import com.testagent.repository.StateMachineRepository;
+import com.testagent.service.AnalysisService;
 import com.testagent.service.ProjectAccessService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -24,10 +23,7 @@ import java.util.stream.Collectors;
 public class AnalysisController {
 
     @Autowired
-    private CodeAnalysisRepository codeAnalysisRepository;
-
-    @Autowired
-    private StateMachineRepository stateMachineRepository;
+    private AnalysisService analysisService;
 
     @Autowired
     private ProjectAccessService projectAccessService;
@@ -35,15 +31,17 @@ public class AnalysisController {
     @GetMapping("/analysis")
     public ApiResponse<AnalysisResultDTO> getAnalysis(@PathVariable String projectId) {
         projectAccessService.assertViewAccess(projectId);
-        CodeAnalysis analysis = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId)
-                .orElseThrow(() -> BusinessException.notFound("分析结果不存在"));
+        CodeAnalysis analysis = analysisService.getAnalysis(projectId);
+        if (analysis == null) {
+            throw BusinessException.notFound("分析结果不存在");
+        }
         return ApiResponse.success(AnalysisResultDTO.from(analysis));
     }
 
     @GetMapping("/state-machines")
     public ApiResponse<List<StateMachineDTO>> getStateMachines(@PathVariable String projectId) {
         projectAccessService.assertViewAccess(projectId);
-        List<StateMachineDTO> dtos = stateMachineRepository.findByProjectId(projectId).stream()
+        List<StateMachineDTO> dtos = analysisService.getStateMachines(projectId).stream()
                 .map(StateMachineDTO::from)
                 .collect(Collectors.toList());
         return ApiResponse.success(dtos);

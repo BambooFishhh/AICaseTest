@@ -76,6 +76,36 @@
           <div ref="covChartRef" class="chart-box"></div>
         </section>
       </div>
+
+      <!-- v5.3: 任务队列统计 -->
+      <section class="queue-section">
+        <div class="section-head">
+          <h2 class="section-title">任务队列</h2>
+          <p class="section-desc">生成与执行任务的排队 / 运行计数</p>
+        </div>
+        <div class="queue-grid">
+          <div class="queue-card">
+            <div class="queue-label">
+              <el-icon :size="16"><MagicStick /></el-icon>
+              <span>用例生成</span>
+            </div>
+            <div class="queue-nums">
+              <span class="queue-num">排队 {{ taskStats.generation?.queued ?? 0 }}</span>
+              <span class="queue-num">运行 {{ taskStats.generation?.running ?? 0 }}</span>
+            </div>
+          </div>
+          <div class="queue-card">
+            <div class="queue-label">
+              <el-icon :size="16"><VideoPlay /></el-icon>
+              <span>用例执行</span>
+            </div>
+            <div class="queue-nums">
+              <span class="queue-num">排队 {{ taskStats.execution?.queued ?? 0 }}</span>
+              <span class="queue-num">运行 {{ taskStats.execution?.running ?? 0 }}</span>
+            </div>
+          </div>
+        </div>
+      </section>
     </template>
   </div>
 </template>
@@ -85,12 +115,14 @@ import { ref, reactive, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import {
-  RefreshRight, Plus, FolderOpened, Files, VideoPlay, CircleCheck, TrendCharts
+  RefreshRight, Plus, FolderOpened, Files, VideoPlay, CircleCheck, TrendCharts, MagicStick
 } from '@element-plus/icons-vue'
 import { getStatsOverview } from '@/api/stats'
+import { getTaskStats } from '@/api/task'
 
 const router = useRouter()
 const loading = ref(false)
+const taskStats = ref({ generation: {}, execution: {} })
 const stats = reactive({
   projectCount: 0,
   testCaseCount: 0,
@@ -109,7 +141,7 @@ let covChart = null
 async function loadData() {
   loading.value = true
   try {
-    const res = await getStatsOverview()
+    const [res, taskRes] = await Promise.all([getStatsOverview(), getTaskStats()])
     const data = res.data || {}
     stats.projectCount = data.projectCount || 0
     stats.testCaseCount = data.testCaseCount || 0
@@ -118,6 +150,7 @@ async function loadData() {
     stats.avgStateRate = data.avgStateRate || 0
     stats.typeCounts = data.typeCounts || {}
     stats.projectCoverage = data.projectCoverage || []
+    taskStats.value = taskRes.data || { generation: {}, execution: {} }
     await nextTick()
     renderCharts()
   } catch {
@@ -328,6 +361,57 @@ onBeforeUnmount(() => {
 .chart-box {
   width: 100%;
   height: 300px;
+}
+
+/* ===== v5.3: 任务队列 ===== */
+.queue-section {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-xs);
+  margin-top: var(--space-lg);
+}
+
+.queue-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-md);
+}
+
+.queue-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--bg-base);
+  border: 1px solid var(--card-border-light);
+  border-radius: var(--radius-md);
+
+  .queue-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+
+    .el-icon {
+      color: var(--brand-primary);
+    }
+  }
+
+  .queue-nums {
+    display: flex;
+    gap: 16px;
+  }
+
+  .queue-num {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
 }
 
 @media (max-width: 1024px) {
