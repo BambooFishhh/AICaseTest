@@ -39,6 +39,16 @@ public class TaskQueueService {
         taskQueueStore.clearQueue(EXECUTION_QUEUE);
     }
 
+    public long queuedTotal() {
+        return taskQueueStore.queuedCount(GENERATION_QUEUE)
+                + taskQueueStore.queuedCount(EXECUTION_QUEUE);
+    }
+
+    public long runningTotal() {
+        return taskQueueStore.runningCount(GENERATION_QUEUE)
+                + taskQueueStore.runningCount(EXECUTION_QUEUE);
+    }
+
     public Map<String, Object> stats() {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("generation", queueStats(GENERATION_QUEUE));

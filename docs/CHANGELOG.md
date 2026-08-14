@@ -4,6 +4,39 @@
 
 ---
 
+## vP3 — 可观测与告警
+**日期**: 2026-08-14
+**基线**: vP2
+**主题**: Grafana 面板、告警规则、traceId/access log、SLO
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| observability/ObservabilityFilter.java | 新增 | traceId 生成/透传、access log、SLO 指标 |
+| observability/QueueMetrics.java | 新增 | 队列 queued/running Gauge |
+| service/TaskQueueService.java | 指标方法 | queuedTotal/runningTotal |
+| config/WebConfig.java | CORS | 暴露 X-Trace-Id |
+
+### 监控/部署变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| monitoring/prometheus/prometheus.yml | 新增 | 抓取后端指标 |
+| monitoring/prometheus/alerts.yml | 新增 | 宕机/5xx/P95/队列告警 |
+| monitoring/grafana/ | 新增 | 数据源/仪表盘 provisioning |
+| docker-compose.yml | 新增服务 | prometheus/grafana，仅本机端口 |
+
+### 验证结果
+
+- `mvn -Dtest=ObservabilityFilterTest test`：2/2 通过
+- `mvn compile` BUILD SUCCESS
+- `npm run build`：成功
+- `docker compose config`：通过
+- 仪表盘 JSON 解析校验：通过
+
+---
+
 ## vP2 — 高可用与容灾
 **日期**: 2026-08-14
 **基线**: vP1

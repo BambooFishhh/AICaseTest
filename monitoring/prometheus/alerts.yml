@@ -1,0 +1,42 @@
+groups:
+  - name: aicasetest-slo
+    rules:
+      - alert: AICaseTestBackendDown
+        expr: up{job="aicasetest-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AICaseTest backend down"
+          description: "Prometheus 已连续 2 分钟无法抓取后端指标。"
+
+      - alert: AICaseTestHighErrorRate
+        expr: |
+          sum(rate(aicasetest_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(aicasetest_http_requests_total[5m])), 1) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AICaseTest 5xx 错误率过高"
+          description: "5 分钟内 5xx 请求占比超过 5%。"
+
+      - alert: AICaseTestP95LatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(aicasetest_http_requests_duration_seconds_bucket[5m])) by (le)) > 3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AICaseTest P95 延迟过高"
+          description: "近 5 分钟 P95 请求耗时超过 3 秒。"
+
+      - alert: AICaseTestQueueBacklogHigh
+        expr: aicasetest_queue_queued > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AICaseTest 任务队列积压"
+          description: "生成/执行队列 queued 数量超过 20。"
