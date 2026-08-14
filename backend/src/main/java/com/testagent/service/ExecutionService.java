@@ -738,9 +738,48 @@ public class ExecutionService {
         return record;
     }
 
-    public List<ExecutionRecord> getExecutionsByProject(String projectId) {
+    // v5.7: 执行历史分页 + 全量统计/趋势
+    public Map<String, Object> getExecutionsByProject(String projectId, int page, int pageSize) {
         projectAccessService.assertViewAccess(projectId);
-        return executionRecordRepository.findByProjectIdOrderByStartTimeDesc(projectId);
+        List<ExecutionRecord> all = executionRecordRepository.findByProjectIdOrderByStartTimeDesc(projectId);
+        int safePage = Math.max(1, page);
+        int safeSize = Math.min(Math.max(1, pageSize), 200);
+        int from = (safePage - 1) * safeSize;
+        int to = Math.min(all.size(), from + safeSize);
+        List<ExecutionRecord> items = from >= all.size() ? List.of() : all.subList(from, to);
+
+        long passed = all.stream().filter(r -> "passed".equals(r.getStatus())).count();
+        long failed = all.stream().filter(r -> "failed".equals(r.getStatus())).count();
+        long running = all.stream().filter(r -> "running".equals(r.getStatus())).count();
+        Map<String, Long> stats = new LinkedHashMap<>();
+        stats.put("total", (long) all.size());
+        stats.put("passed", passed);
+        stats.put("failed", failed);
+        stats.put("running", running);
+
+        // 最近 20 次已结束执行的滚动通过率（旧→新）
+        List<ExecutionRecord> completed = all.stream()
+                .filter(r -> "passed".equals(r.getStatus()) || "failed".equals(r.getStatus()))
+                .limit(20)
+                .collect(java.util.stream.Collectors.toList());
+        Collections.reverse(completed);
+        List<Integer> trend = new ArrayList<>();
+        int passedCount = 0;
+        for (int i = 0; i < completed.size(); i++) {
+            if ("passed".equals(completed.get(i).getStatus())) {
+                passedCount++;
+            }
+            trend.add(Math.round(passedCount * 100.0f / (i + 1)));
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("items", items);
+        result.put("total", all.size());
+        result.put("page", safePage);
+        result.put("pageSize", safeSize);
+        result.put("stats", stats);
+        result.put("trend", trend);
+        return result;
     }
 
     public List<ExecutionStep> getExecutionSteps(String executionId) {

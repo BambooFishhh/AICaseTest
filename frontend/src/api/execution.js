@@ -33,8 +33,9 @@ export function cancelBatch(batchId) {
   return request.post(`/batches/${batchId}/cancel`)
 }
 
-export function getExecutions(projectId) {
-  return request.get(`/projects/${projectId}/executions`)
+// v5.7: 执行历史分页
+export function getExecutions(projectId, params = {}) {
+  return request.get(`/projects/${projectId}/executions`, { params })
 }
 
 export function getExecutionSteps(eid) {

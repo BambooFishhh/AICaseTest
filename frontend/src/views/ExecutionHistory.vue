@@ -54,11 +54,11 @@
     </div>
 
     <!-- v3.15: 通过率趋势 -->
-    <section v-if="records.length > 1" class="trend-section">
+    <section v-if="trendData.length > 0" class="trend-section">
       <div class="trend-head">
         <div>
           <h2 class="section-title">通过率趋势</h2>
-          <p class="section-desc">最近 {{ Math.min(20, records.length) }} 次执行的滚动通过率</p>
+          <p class="section-desc">最近 {{ trendData.length }} 次执行的滚动通过率</p>
         </div>
       </div>
       <div ref="trendChartRef" class="trend-chart"></div>
@@ -137,6 +137,17 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :total="total"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next"
+          @current-change="loadExecutions"
+          @size-change="handleSizeChange"
+        />
+      </div>
     </section>
   </div>
 </template>
@@ -166,37 +177,19 @@ const projectId = route.params.id
 
 const loading = ref(false)
 const records = ref([])
-// v3.15: 通过率趋势图
+const page = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
+// v3.15/v5.7: 统计与趋势由后端全量计算
+const stats = ref({ total: 0, passed: 0, failed: 0, running: 0 })
+const trendData = ref([])
 const trendChartRef = ref(null)
 let trendChart = null
-
-const stats = computed(() => {
-  const s = { total: 0, passed: 0, failed: 0, running: 0 }
-  records.value.forEach((r) => {
-    s.total++
-    if (r.status === 'passed') s.passed++
-    else if (r.status === 'failed') s.failed++
-    else if (r.status === 'running') s.running++
-  })
-  return s
-})
 
 const passRateText = computed(() => {
   const completed = stats.value.passed + stats.value.failed
   if (completed === 0) return '—'
   return `${Math.round((stats.value.passed / completed) * 100)}%`
-})
-
-// v3.15: 最近 20 次已结束执行的滚动通过率
-const trendData = computed(() => {
-  const completed = records.value.filter(
-    (r) => r.status === 'passed' || r.status === 'failed'
-  ).slice(-20)
-  let passed = 0
-  return completed.map((r, i) => {
-    if (r.status === 'passed') passed++
-    return Math.round((passed / (i + 1)) * 100)
-  })
 })
 
 function renderTrendChart() {
@@ -289,13 +282,22 @@ const formatTime = (time) => {
 async function loadExecutions() {
   loading.value = true
   try {
-    const res = await getExecutions(projectId)
-    records.value = res.data || []
+    const res = await getExecutions(projectId, { page: page.value, pageSize: pageSize.value })
+    const data = res.data || {}
+    records.value = data.items || []
+    total.value = data.total || 0
+    stats.value = data.stats || { total: 0, passed: 0, failed: 0, running: 0 }
+    trendData.value = data.trend || []
   } catch {
     // 错误已由响应拦截器统一提示
   } finally {
     loading.value = false
   }
+}
+
+function handleSizeChange() {
+  page.value = 1
+  loadExecutions()
 }
 
 watch(trendData, () => {
@@ -461,6 +463,13 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-lg);
   overflow: hidden;
   box-shadow: var(--shadow-xs);
+}
+
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  padding: 14px 16px;
+  border-top: 1px solid var(--card-border-light);
 }
 
 .case-title {

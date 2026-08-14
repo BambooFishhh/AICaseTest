@@ -4,15 +4,18 @@ import io.milvus.client.MilvusServiceClient;
 import io.milvus.grpc.DataType;
 import io.milvus.grpc.SearchResults;
 import io.milvus.param.ConnectParam;
+import io.milvus.param.IndexType;
 import io.milvus.param.MetricType;
 import io.milvus.param.R;
 import io.milvus.param.RpcStatus;
 import io.milvus.param.collection.CreateCollectionParam;
 import io.milvus.param.collection.FieldType;
 import io.milvus.param.collection.HasCollectionParam;
+import io.milvus.param.collection.LoadCollectionParam;
 import io.milvus.param.dml.DeleteParam;
 import io.milvus.param.dml.InsertParam;
 import io.milvus.param.dml.SearchParam;
+import io.milvus.param.index.CreateIndexParam;
 import io.milvus.response.SearchResultsWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -113,6 +116,20 @@ public class MilvusService {
                     .build();
             R<RpcStatus> resp = c.createCollection(param);
             log.info("Created Milvus collection {}: status={}", name, resp == null ? "null" : resp.getStatus());
+            // v5.7: 建 ANN 索引并加载，避免暴力扫描
+            try {
+                CreateIndexParam indexParam = CreateIndexParam.newBuilder()
+                        .withCollectionName(name)
+                        .withFieldName("embedding")
+                        .withIndexType(IndexType.IVF_FLAT)
+                        .withMetricType(MetricType.COSINE)
+                        .withExtraParam("{\"nlist\":128}")
+                        .build();
+                c.createIndex(indexParam);
+                c.loadCollection(LoadCollectionParam.newBuilder().withCollectionName(name).build());
+            } catch (Exception ie) {
+                log.warn("Failed to create/load Milvus index for {}: {}", name, ie.getMessage());
+            }
         } catch (Exception e) {
             log.warn("Failed to ensure Milvus collection {}: {}", name, e.getMessage());
         }

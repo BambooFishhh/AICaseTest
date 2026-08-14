@@ -4,6 +4,38 @@
 
 ---
 
+## v5.7 — 数据索引与查询性能
+**日期**: 2026-08-14
+**基线**: v5.6
+**主题**: Flyway 复合索引 + 执行历史分页 + 连接池调优 + Milvus ANN 索引
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| resources/db/migration/mysql/V2__add_performance_indexes.sql | 新增 | 6 组高频查询复合索引 |
+| service/ExecutionService.java | 分页 + stats/trend | 执行历史全量统计一次返回 |
+| controller/ExecutionController.java | page/pageSize 参数 | 分页接口 |
+| resources/application-mysql.yml | Hikari 参数化 | 连接池调优 |
+| service/MilvusService.java | createIndex(IVF_FLAT) + loadCollection | ANN 检索 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| api/execution.js | getExecutions 支持 params | 分页参数 |
+| views/ExecutionHistory.vue | 分页器 + 后端 stats/trend | 表格分页，统计保持全量口径 |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS（137 源文件）
+- 后端测试: Tests run 2, Failures 0（mvn test）
+- 前端构建: ✓ built in 14.26s
+- MySQL 冒烟: Flyway V2（add performance indexes）success=1
+- 分页接口冒烟: `{items,total,page,pageSize,stats,trend}` 结构正确
+
+---
+
 ## v5.6 — 数据一致性与生命周期
 **日期**: 2026-08-14
 **基线**: v5.5

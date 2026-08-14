@@ -668,6 +668,15 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v5.6](docs/v5.6/PRD_v5.6_数据一致性与生命周期.md)
 
+### v5.7 — 数据索引与查询性能
+
+补齐数据查询性能：Flyway V2 复合索引覆盖执行历史/批次/模块/版本高频查询；执行历史接口分页并一次返回全量统计与趋势；MySQL 连接池参数化；Milvus 建 IVF_FLAT ANN 索引并加载。
+
+- 后端: V2 索引迁移 + 分页接口 + Hikari + Milvus 索引
+- 前端: 执行历史页分页器，统计卡/趋势图保持全量口径
+
+详见：[PRD v5.7](docs/v5.7/PRD_v5.7_数据索引与查询性能.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -726,6 +735,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v5.4 | Milvus 语义检索（去重/RAG/语义搜索/失败经验） | ✅ 完成 |
 | v5.5 | 正式切换 MySQL+Redis+Milvus（H2 仅开发 profile） | ✅ 完成 |
 | v5.6 | 数据一致性与生命周期（事务落库/级联清理/向量同步） | ✅ 完成 |
+| v5.7 | 数据索引与查询性能（复合索引/分页/连接池/ANN） | ✅ 完成 |
 
 ## API 概览
 
