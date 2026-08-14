@@ -17,9 +17,15 @@ FROM nginx:1.25-alpine
 # 复制构建产物
 COPY --from=builder /build/dist /usr/share/nginx/html
 
+# vP1: 使用国内镜像安装 openssl，用于缺失证书时自动生成自签证书
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories \
+    && apk add --no-cache openssl
+
 # 复制 Nginx 配置
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-EXPOSE 80
+EXPOSE 80 443
 
-CMD ["nginx", "-g", "daemon off;"]
+ENTRYPOINT ["/entrypoint.sh"]

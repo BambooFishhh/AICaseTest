@@ -4,6 +4,44 @@
 
 ---
 
+## vP1 — 上线安全加固
+**日期**: 2026-08-14
+**基线**: vT9
+**主题**: TLS、密码/密钥强制、DB/Redis/Milvus 访问控制、文件上传与 URL 抓取加固
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| config/ProductionGuard.java | 新增 | prod 强制校验 JWT Secret/管理员密码，弱配置阻断启动，可降级告警 |
+| common/UploadGuard.java | 新增 | 上传大小二次校验（默认 20MB） |
+| agent/PrdAgent.java | URL 抓取加固 | 仅 http/https、禁私网/回环、超时/大小/重定向限制 |
+| service/MilvusService.java | Milvus 鉴权 | 支持 MILVUS_USERNAME/MILVUS_PASSWORD |
+| service/ProjectService.java | PDF 上传校验 | UploadGuard 接入 |
+| service/TestCaseService.java | JSON/XMind 上传校验 | UploadGuard 接入 |
+| resources/application.yml | multipart 限制 | max-file-size/max-request-size 20MB |
+| resources/application-prod.yml | prod 安全配置 | APP_ENFORCE_SECURITY 默认 true |
+
+### 前端/部署变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| frontend/nginx.conf | TLS | 443 ssl + 安全头 + 20MB 上传限制 |
+| frontend/entrypoint.sh | 新增 | 证书缺失时自动生成自签证书 |
+| frontend/Dockerfile | 构建 | 安装 openssl，暴露 80/443 |
+| docker-compose.yml | 访问控制 | MySQL/Redis/Milvus 绑定 127.0.0.1；Milvus 鉴权；443 挂载证书 |
+| scripts/generate-self-signed-cert.ps1 | 新增 | 本地自签证书生成 |
+| .env.example | 安全默认值 | 强密码/密钥占位 + 上传/安全开关 |
+
+### 验证结果
+
+- `mvn compile` BUILD SUCCESS
+- `mvn -Dtest=ProductionGuardTest,UploadGuardTest test`：4/4 通过
+- `npm run build`：成功
+- `docker compose config`：通过
+
+---
+
 ## 修复记录 — CI npm audit（nanoid 高危）
 **日期**: 2026-08-14
 **主题**: 升级 nanoid 3.3.17 → 3.3.18，解除 npm audit high 门禁

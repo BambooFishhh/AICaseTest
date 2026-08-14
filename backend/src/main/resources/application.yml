@@ -11,6 +11,11 @@ spring:
     driver-class-name: org.h2.Driver
     username: sa
     password:
+  # vP1: 上传大小全局限制（Nginx 之外的后端二次防线）
+  servlet:
+    multipart:
+      max-file-size: ${MAX_UPLOAD_SIZE:20MB}
+      max-request-size: ${MAX_UPLOAD_REQUEST_SIZE:20MB}
   # v5.0: H2 开发环境不启用 Flyway，schema 继续由 JPA 管理
   flyway:
     enabled: false
@@ -37,6 +42,12 @@ llm:
 app:
   output-dir: outputs
   projects-dir: projects
+  # vP1: 上传文件大小二次校验（字节，与 multipart 配置保持一致）
+  upload:
+    max-size: ${MAX_UPLOAD_SIZE_BYTES:20971520}
+  # vP1: 生产安全强制开关（prod 默认 true，本地开发默认 false）
+  security:
+    enforce: ${APP_ENFORCE_SECURITY:false}
   # v5.2: Redis 运行态（取消标志/心跳/并发配额/防爆破），默认关闭走内存
   redis:
     enabled: ${APP_REDIS_ENABLED:false}

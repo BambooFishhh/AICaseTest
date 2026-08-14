@@ -7,6 +7,7 @@ import com.testagent.agent.TestGeneratorAgent;
 import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.EndpointInfo;
 import com.testagent.common.BusinessException;
+import com.testagent.common.UploadGuard;
 import com.testagent.dto.CreateTestCaseRequest;
 import com.testagent.dto.GenerateRequest;
 import com.testagent.dto.JsonHelper;
@@ -112,6 +113,9 @@ public class TestCaseService {
 
     @Autowired
     private ProjectAccessService projectAccessService;
+
+    @Autowired
+    private UploadGuard uploadGuard;
 
     @Async("generationExecutor")
     public void runGenerate(String projectId, GenerateRequest req) {
@@ -596,9 +600,7 @@ public class TestCaseService {
         projectAccessService.assertOperateAccess(projectId);
         projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
-        if (file == null || file.isEmpty()) {
-            throw BusinessException.invalidParam("导入文件为空");
-        }
+        uploadGuard.assertSize(file, "JSON 导入文件");
 
         List<TestCase> parsed;
         try {
@@ -650,9 +652,7 @@ public class TestCaseService {
         projectAccessService.assertOperateAccess(projectId);
         projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
-        if (file == null || file.isEmpty()) {
-            throw BusinessException.invalidParam("导入文件为空");
-        }
+        uploadGuard.assertSize(file, "XMind 导入文件");
 
         List<TestCase> parsed;
         try {

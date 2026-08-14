@@ -2,6 +2,7 @@ package com.testagent.service;
 
 import com.testagent.agent.PrdAgent;
 import com.testagent.common.BusinessException;
+import com.testagent.common.UploadGuard;
 import com.testagent.dto.CreateProjectRequest;
 import com.testagent.dto.GenerateRequest;
 import com.testagent.dto.GenerationParams;
@@ -98,6 +99,9 @@ public class ProjectService {
     // v1.10: PRD 解析 Agent
     @Autowired
     private PrdAgent prdAgent;
+
+    @Autowired
+    private UploadGuard uploadGuard;
 
     @Autowired
     private SemanticService semanticService;
@@ -252,6 +256,7 @@ public class ProjectService {
     @Transactional
     public ProjectDTO uploadPrdPdf(String projectId, MultipartFile file) {
         projectAccessService.assertOperateAccess(projectId);
+        uploadGuard.assertSize(file, "PRD PDF");
         Project p = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
         String text;

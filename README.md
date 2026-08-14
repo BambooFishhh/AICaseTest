@@ -166,7 +166,7 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v5.8（数据治理与可观测）**，并已完成一次 v5 数据层复查修复（2026-08-14）。
+当前版本：**vP1（上线安全加固）**，功能基线为 v5.8（数据治理与可观测）+ vT9（安全扫描与部署加固）。
 
 | 版本线 | 主题 | 状态 |
 |---|---|---|
@@ -192,6 +192,7 @@ AICaseTest/
 | vT7 | Testcontainers 集成测试（MySQL Flyway/Redis 运行态） | ✅ 完成 |
 | vT8 | 前端测试扩充与覆盖率门禁（auth store/JaCoCo/Vitest coverage） | ✅ 完成 |
 | vT9 | 安全扫描与部署加固（.env.example/nginx/Redis AUTH/CI/运维手册） | ✅ 完成 |
+| vP1 | 上线安全加固（TLS/密码密钥强制/中间件访问控制/上传与 URL 加固） | ✅ 完成 |
 
 详细版本历史见 [docs/迭代历程.md](docs/迭代历程.md)，逐版本变更记录见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
 

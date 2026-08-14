@@ -55,6 +55,12 @@ public class MilvusService {
     @Value("${app.milvus.duplicate-threshold:0.92}")
     private double duplicateThreshold;
 
+    @Value("${app.milvus.username:}")
+    private String username;
+
+    @Value("${app.milvus.password:}")
+    private String password;
+
     private volatile MilvusServiceClient client;
 
     public boolean isEnabled() {
@@ -75,8 +81,13 @@ public class MilvusService {
                 c = client;
                 if (c == null) {
                     try {
-                        c = new MilvusServiceClient(
-                                ConnectParam.newBuilder().withHost(host).withPort(port).build());
+                        ConnectParam.Builder connectBuilder =
+                                ConnectParam.newBuilder().withHost(host).withPort(port);
+                        if (username != null && !username.isBlank()
+                                && password != null && !password.isBlank()) {
+                            connectBuilder.withAuthorization(username, password);
+                        }
+                        c = new MilvusServiceClient(connectBuilder.build());
                         ensureCollection(c, COLLECTION_CASES);
                         ensureCollection(c, COLLECTION_CONTEXTS);
                         ensureCollection(c, COLLECTION_FAILURES);

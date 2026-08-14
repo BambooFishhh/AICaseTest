@@ -5,6 +5,12 @@ app:
     enabled: ${APP_REDIS_ENABLED:true}
   milvus:
     enabled: ${APP_MILVUS_ENABLED:true}
+    # vP1: Milvus 启用鉴权时使用独立账号连接
+    username: ${MILVUS_USERNAME:root}
+    password: ${MILVUS_PASSWORD:}
+  # vP1: 生产强制校验自定义 JWT Secret / 管理员密码，失败直接阻断启动
+  security:
+    enforce: ${APP_ENFORCE_SECURITY:true}
 llm:
   provider: ${LLM_PROVIDER:mimo}
   model: ${LLM_MODEL:mimo-v2.5-pro}
