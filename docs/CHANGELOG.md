@@ -4,6 +4,34 @@
 
 ---
 
+## vT9 — 安全扫描与部署加固
+**日期**: 2026-08-14
+**基线**: vT8
+**主题**: .env.example + nginx 加固 + Redis AUTH + CI 安全/镜像 + 运维手册
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| .env.example | 新增 | 全量环境变量模板 |
+| docker-compose.yml | Redis AUTH + REDIS_PASSWORD | 运行态安全 |
+| .github/workflows/ci.yml | security/docker job | gitleaks + npm audit + 镜像构建 |
+| docs/运维手册.md | 新增 | 部署/升级/备份/监控/排障 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| frontend/nginx.conf | 安全头/登录限流/上传限制/gzip | Nginx 加固 |
+
+### 验证结果
+
+- docker compose config: 校验通过
+- 前端构建: ✓ built
+- 安全扫描: security check OK
+
+---
+
 ## vT8 — 前端测试扩充与覆盖率门禁
 **日期**: 2026-08-14
 **基线**: vT7

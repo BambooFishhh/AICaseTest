@@ -128,6 +128,8 @@ npx playwright install chromium
 - 可观测：`/actuator/health` 免认证健康检查，`/actuator/prometheus` 指标采集
 - 备份：`scripts/backup-v5.ps1`（data/outputs + 可选 MySQL dump）
 - 安全基线：`scripts/security-check.ps1`（校验 `.env` 未跟踪 + 扫描疑似密钥/私钥）
+- CI 安全：gitleaks 密钥扫描 + `npm audit` 生产依赖审计 + Docker 镜像构建校验
+- 运维手册：[docs/运维手册.md](docs/运维手册.md)（部署/升级/备份/恢复/监控/排障）
 
 详见 [docs/vT1/PRD_vT1_测试与运维基线.md](docs/vT1/PRD_vT1_测试与运维基线.md)。
 
@@ -189,6 +191,7 @@ AICaseTest/
 | vT6 | 服务层与接口安全测试（MockMvc/401修复/级联测试） | ✅ 完成 |
 | vT7 | Testcontainers 集成测试（MySQL Flyway/Redis 运行态） | ✅ 完成 |
 | vT8 | 前端测试扩充与覆盖率门禁（auth store/JaCoCo/Vitest coverage） | ✅ 完成 |
+| vT9 | 安全扫描与部署加固（.env.example/nginx/Redis AUTH/CI/运维手册） | ✅ 完成 |
 
 详细版本历史见 [docs/迭代历程.md](docs/迭代历程.md)，逐版本变更记录见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
 

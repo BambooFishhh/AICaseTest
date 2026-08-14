@@ -29,3 +29,4 @@ node_modules/
 
 # 运行时输出（截图/录屏/证据）
 backend/outputs/
+frontend/coverage/
