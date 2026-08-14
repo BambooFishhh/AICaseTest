@@ -45,6 +45,12 @@ public class AsyncConfig {
     @Value("${app.executor.execution.queue:200}")
     private int executionQueue;
 
+    @Value("${app.executor.keep-alive-seconds:60}")
+    private int keepAliveSeconds;
+
+    @Value("${app.executor.await-termination-seconds:30}")
+    private int awaitTerminationSeconds;
+
     @Bean(name = "analysisExecutor")
     public ThreadPoolTaskExecutor analysisExecutor() {
         return buildExecutor("analysis-", analysisCore, analysisMax, analysisQueue);
@@ -67,9 +73,10 @@ public class AsyncConfig {
         executor.setQueueCapacity(queue);
         executor.setThreadNamePrefix(prefix);
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-        // vP2: 优雅停机时等待已提交任务完成，最多 30s
+        executor.setKeepAliveSeconds(keepAliveSeconds);
+        // vP2/vP5: 优雅停机时等待已提交任务完成，超时可配置
         executor.setWaitForTasksToCompleteOnShutdown(true);
-        executor.setAwaitTerminationSeconds(30);
+        executor.setAwaitTerminationSeconds(awaitTerminationSeconds);
         executor.initialize();
         return executor;
     }

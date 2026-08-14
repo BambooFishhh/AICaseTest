@@ -4,6 +4,39 @@
 
 ---
 
+## vP5 — 压测与容量
+**日期**: 2026-08-14
+**基线**: vP4
+**主题**: k6 压测基线、线程池/队列参数调优、大数据量分页与索引验证
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| repository/TestCaseRepository.java | JpaSpecificationExecutor | 支持 Specification 分页 |
+| service/TestCaseService.java | SQL 分页 | 列表分页下推数据库，保持筛选语义 |
+| db/migration/mysql/V3__add_testcase_pagination_indexes.sql | 新增 | type/review/exec/title 复合索引 |
+| config/AsyncConfig.java | 参数化 | keep-alive/await 可配置 |
+| resources/application.yml | 线程池调优 | analysis/generation max=6 queue=50；execution max=12 queue=500 |
+
+### 压测/脚本变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| loadtest/k6/smoke.js | 新增 | 冒烟基线 |
+| loadtest/k6/load.js | 新增 | 20 VU 负载基线 |
+| loadtest/k6/README.md | 新增 | 运行与阈值说明 |
+| scripts/pagination-baseline.ps1 | 新增 | EXPLAIN 验证索引命中 |
+
+### 验证结果
+
+- `mvn test`：41 个测试，0 失败，5 个环境相关跳过；BUILD SUCCESS
+- `npm run build`：成功
+- `docker compose config`：通过
+- `pagination-baseline.ps1` 语法：通过
+
+---
+
 ## vP4 — 发布流水线
 **日期**: 2026-08-14
 **基线**: vP3

@@ -2,6 +2,7 @@ package com.testagent.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.criteria.Predicate;
 import com.testagent.agent.OrchestratorAgent;
 import com.testagent.agent.TestGeneratorAgent;
 import com.testagent.analyzer.result.BackendResult;
@@ -41,6 +42,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -461,62 +465,56 @@ public class TestCaseService {
                                                String type, String module, String keyword,
                                                String reviewStatus, String executionStatus) {
         projectAccessService.assertViewAccess(projectId);
-        List<TestCase> all = testCaseRepository.findByProjectId(projectId);
-
-        // v3.12: 执行状态筛选（not_executed/running/passed/failed，历史数据 null 视为 not_executed）
-        if (executionStatus != null && !executionStatus.isBlank()) {
-            all = all.stream()
-                    .filter(tc -> executionStatus.equals(
-                            tc.getExecutionStatus() == null ? "not_executed" : tc.getExecutionStatus()))
-                    .collect(Collectors.toList());
-        }
-
-        // v1.8: 评审状态筛选（历史数据 null 视为 draft）
-        if (reviewStatus != null && !reviewStatus.isBlank()) {
-            all = all.stream()
-                    .filter(tc -> reviewStatus.equals(
-                            tc.getReviewStatus() == null ? "draft" : tc.getReviewStatus()))
-                    .collect(Collectors.toList());
-        }
-
-        if (type != null && !type.isBlank()) {
-            all = all.stream()
-                    .filter(tc -> type.equals(tc.getType()))
-                    .collect(Collectors.toList());
-        }
-        if (module != null && !module.isBlank()) {
-            all = all.stream()
-                    .filter(tc -> module.equals(tc.getModule()))
-                    .collect(Collectors.toList());
-        }
-        if (keyword != null && !keyword.isBlank()) {
-            String kw = keyword.toLowerCase();
-            all = all.stream()
-                    .filter(tc -> (tc.getTitle() != null && tc.getTitle().toLowerCase().contains(kw))
-                            || (tc.getModule() != null && tc.getModule().toLowerCase().contains(kw)))
-                    .collect(Collectors.toList());
-        }
-
-        int total = all.size();
-        int fromIndex = Math.max(0, (page - 1) * pageSize);
-        int toIndex = Math.min(fromIndex + pageSize, total);
-        List<TestCase> paged = fromIndex < total
-                ? all.subList(fromIndex, toIndex)
-                : new ArrayList<>();
-
-        List<TestCaseDTO> items = paged.stream()
+        // vP5: 分页下推数据库，避免大项目全量载入内存；筛选使用 Specification 落到 SQL
+        Specification<TestCase> spec = buildTestCaseSpec(
+                projectId, type, module, keyword, reviewStatus, executionStatus);
+        Page<TestCase> pageResult = testCaseRepository.findAll(spec,
+                PageRequest.of(Math.max(0, page - 1), Math.max(1, pageSize)));
+        List<TestCaseDTO> items = pageResult.getContent().stream()
                 .map(TestCaseDTO::from)
                 .collect(Collectors.toList());
 
+        // 覆盖率是聚合视图，仍基于完整匹配集计算
+        List<TestCase> all = testCaseRepository.findAll(spec);
         Map<String, Object> coverage = calculateCoverage(projectId, all);
 
         return TestCaseListResponse.builder()
-                .total(total)
+                .total((int) pageResult.getTotalElements())
                 .page(page)
                 .pageSize(pageSize)
                 .testCases(items)
                 .coverage(coverage)
                 .build();
+    }
+
+    private Specification<TestCase> buildTestCaseSpec(String projectId, String type, String module,
+                                                      String keyword, String reviewStatus,
+                                                      String executionStatus) {
+        return (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            predicates.add(cb.equal(root.get("projectId"), projectId));
+            if (type != null && !type.isBlank()) {
+                predicates.add(cb.equal(root.get("type"), type));
+            }
+            if (module != null && !module.isBlank()) {
+                predicates.add(cb.equal(root.get("module"), module));
+            }
+            if (keyword != null && !keyword.isBlank()) {
+                String like = "%" + keyword.toLowerCase() + "%";
+                predicates.add(cb.or(
+                        cb.like(cb.lower(root.get("title")), like),
+                        cb.like(cb.lower(root.get("module")), like)));
+            }
+            if (executionStatus != null && !executionStatus.isBlank()) {
+                predicates.add(cb.equal(
+                        cb.coalesce(root.get("executionStatus"), "not_executed"), executionStatus));
+            }
+            if (reviewStatus != null && !reviewStatus.isBlank()) {
+                predicates.add(cb.equal(
+                        cb.coalesce(root.get("reviewStatus"), "draft"), reviewStatus));
+            }
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
     }
 
     public TestCaseDTO getTestCase(String projectId, String testcaseId) {
