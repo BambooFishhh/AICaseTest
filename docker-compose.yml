@@ -130,6 +130,9 @@ services:
 
   # ========== 后端 ==========
   backend:
+    # vP4: 支持本地构建与 GHCR 镜像部署（IMAGE_TAG 控制版本）
+    image: ${IMAGE_BACKEND:-aicasetest-backend}:${IMAGE_TAG:-local}
+    pull_policy: ${PULL_POLICY:-missing}
     build:
       # 需要仓库根作为上下文，以复制 mcp-server / playwright-mcp-server
       context: .
@@ -190,6 +193,9 @@ services:
 
   # ========== 前端 ==========
   frontend:
+    # vP4: 支持本地构建与 GHCR 镜像部署
+    image: ${IMAGE_FRONTEND:-aicasetest-frontend}:${IMAGE_TAG:-local}
+    pull_policy: ${PULL_POLICY:-missing}
     build:
       context: ./frontend
       dockerfile: Dockerfile

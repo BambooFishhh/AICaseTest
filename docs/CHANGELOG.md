@@ -4,6 +4,32 @@
 
 ---
 
+## vP4 — 发布流水线
+**日期**: 2026-08-14
+**基线**: vP3
+**主题**: GHCR 镜像推送、多环境部署、Flyway staging 演练、回滚
+
+### 变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| .github/workflows/publish.yml | 新增 | tag/手动触发构建并推送 GHCR |
+| docker-compose.yml | 镜像变量 | IMAGE_BACKEND/FRONTEND/TAG/PULL_POLICY |
+| scripts/deploy.ps1 | 新增 | dev/staging/prod 多环境部署 |
+| scripts/rollback.ps1 | 新增 | 应用镜像回滚 |
+| scripts/mysql-restore.ps1 | 新增 | 数据库备份恢复 |
+| scripts/flyway-staging-drill.ps1 | 新增 | 临时库 Flyway 迁移演练 |
+| deploy/README.md | 新增 | 部署/回滚/Flyway 演练说明 |
+
+### 验证结果
+
+- `mvn compile` BUILD SUCCESS
+- `npm run build`：成功
+- `docker compose config`（GHCR 模式）：通过
+- PowerShell 脚本语法解析：通过
+
+---
+
 ## vP3 — 可观测与告警
 **日期**: 2026-08-14
 **基线**: vP2
