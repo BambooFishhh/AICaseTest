@@ -1,6 +1,11 @@
 server:
   port: 8000
 spring:
+  # v5.0/v5.5: profile 组——prod/migrate 自动带入 mysql
+  profiles:
+    group:
+      prod: mysql
+      migrate: mysql
   datasource:
     url: jdbc:h2:file:./data/appdb;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE
     driver-class-name: org.h2.Driver
@@ -20,7 +25,7 @@ spring:
   # v5.2: Redis 连接配置
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
+      host: ${REDIS_HOST:127.0.0.1}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       timeout: 2s

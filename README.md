@@ -649,6 +649,16 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v5.4](docs/v5.4/PRD_v5.4_Milvus语义检索.md)
 
+### v5.5 — 正式切换 MySQL + Redis + Milvus
+
+生产 profile 正式切换为 MySQL + Redis + Milvus 全栈，H2 仅保留为本地开发 profile；新增组件级健康检查与全量回归脚本。
+
+- 后端: profile group 收口、prod 默认启用 Redis/Milvus，`/api/health` 返回数据源/Redis/Milvus 状态
+- 部署: docker-compose 后端依赖 mysql/redis/milvus 健康后才启动
+- 工程: 新增 `scripts/verify-v5-stack.ps1`，验证后端测试、前端构建、compose 配置
+
+详见：[PRD v5.5](docs/v5.5/PRD_v5.5_正式切换与全量回归.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -705,6 +715,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v5.2 | Redis 运行态（取消/心跳/配额/防爆破） | ✅ 完成 |
 | v5.3 | 缓存 + 任务队列（设置/参数/分析缓存 + 队列计数） | ✅ 完成 |
 | v5.4 | Milvus 语义检索（去重/RAG/语义搜索/失败经验） | ✅ 完成 |
+| v5.5 | 正式切换 MySQL+Redis+Milvus（H2 仅开发 profile） | ✅ 完成 |
 
 ## API 概览
 

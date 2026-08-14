@@ -51,7 +51,7 @@ services:
     command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
 
   minio:
-    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    image: minio/minio:latest
     container_name: aicasetest-minio
     restart: unless-stopped
     environment:
@@ -98,27 +98,37 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - SPRING_PROFILES_ACTIVE=prod
       - LLM_PROVIDER=${LLM_PROVIDER:-mimo}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_MODEL=${LLM_MODEL:-mimo-v2.5-pro}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://api.xiaomimimo.com/v1}
+      # v5.5: 正式切换 MySQL + Redis + Milvus
+      - MYSQL_URL=jdbc:mysql://aicasetest-mysql:3306/aicasetest?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+      - MYSQL_USERNAME=${MYSQL_USERNAME:-aicasetest}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-aicasetest123}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      - APP_REDIS_ENABLED=true
+      - APP_MILVUS_ENABLED=true
       - TZ=Asia/Shanghai
       - JAVA_OPTS=-Xms256m -Xmx2g -Dfile.encoding=UTF-8
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
     volumes:
-      # H2 数据库持久化
+      # 数据与输出持久化
       - ./data:/app/data
-      # XMind 输出文件
       - ./outputs:/app/outputs
       # 待分析项目代码（只读挂载 litemall）
       - E:/java_project/litemall:/app/projects/litemall:ro
     restart: unless-stopped
-
-volumes:
-  mysql-data:
-  redis-data:
-  etcd-data:
-  minio-data:
-  milvus-data:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 15s
@@ -138,3 +148,10 @@ volumes:
       backend:
         condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  mysql-data:
+  redis-data:
+  etcd-data:
+  minio-data:
+  milvus-data:

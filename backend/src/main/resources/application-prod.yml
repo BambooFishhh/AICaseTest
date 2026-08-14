@@ -1,7 +1,10 @@
-# v5.0: 生产 profile 复用 mysql profile（Flyway + MySQL 数据源）
-spring:
-  profiles:
-    include: mysql
+# v5.0/v5.5: 生产 profile 通过 spring.profiles.group 自动带入 mysql
+# 生产环境正式启用 Redis 运行态 + Milvus 语义检索
+app:
+  redis:
+    enabled: ${APP_REDIS_ENABLED:true}
+  milvus:
+    enabled: ${APP_MILVUS_ENABLED:true}
 llm:
   provider: ${LLM_PROVIDER:mimo}
   model: ${LLM_MODEL:mimo-v2.5-pro}

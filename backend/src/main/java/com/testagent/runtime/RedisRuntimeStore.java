@@ -128,6 +128,7 @@ public class RedisRuntimeStore implements RuntimeStore {
             redis.expire(key, TTL);
             return v == null ? 0 : v.intValue();
         } catch (Exception e) {
+            log.warn("Redis login increment failed for {}, fallback to memory: {}", username, e.getMessage());
             return memoryFallback.incrementLoginAttempts(username);
         }
     }
@@ -154,6 +155,7 @@ public class RedisRuntimeStore implements RuntimeStore {
             redis.opsForHash().put(key, "lock_until", String.valueOf(timestamp));
             redis.expire(key, TTL);
         } catch (Exception e) {
+            log.warn("Redis lock set failed for {}, fallback to memory: {}", username, e.getMessage());
             memoryFallback.setLockUntil(username, timestamp);
         }
     }

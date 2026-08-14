@@ -1,7 +1,4 @@
-# v5.1: 数据迁移 profile（复用 mysql profile 作为目标库）
-spring:
-  profiles:
-    include: mysql
+# v5.1: 数据迁移 profile（通过 spring.profiles.group 自动带入 mysql）
 app:
   migration:
     enabled: ${APP_MIGRATION_ENABLED:false}

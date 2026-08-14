@@ -14,4 +14,11 @@ public class HealthDTO {
     private LocalDateTime timestamp;
 
     private String version;
+
+    // v5.5: 组件健康状态
+    private String dataSource;
+
+    private String redis;
+
+    private String milvus;
 }

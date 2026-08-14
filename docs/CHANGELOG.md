@@ -4,6 +4,39 @@
 
 ---
 
+## v5.5 — 正式切换 MySQL + Redis + Milvus
+**日期**: 2026-08-14
+**基线**: v5.4
+**主题**: prod 默认全栈切换，H2 保留为开发 profile；全量回归 + 轻量压测
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| resources/application.yml | profile group prod/migrate → mysql；Redis 默认 host 127.0.0.1 | 修复 profile 专用文件 include 非法问题 |
+| resources/application-prod.yml | 默认启用 Redis/Milvus | 正式切换全栈 |
+| resources/application-migrate.yml | 移除非法 include | 迁移 profile 复用 group |
+| controller/HealthController.java / dto/HealthDTO.java | 组件健康状态 | dataSource / redis / milvus |
+| docker-compose.yml | 后端依赖 mysql/redis/milvus + 连接环境变量 | 全栈编排 |
+| scripts/verify-v5-stack.ps1 | 新增 | 全量回归脚本 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| 无 | - | 本版本无前端代码变更 |
+
+### 验证结果
+
+- 后端测试: Tests run 2, Failures 0（mvn test）
+- 前端构建: ✓ built in 14.91s
+- docker compose config 校验通过
+- prod + MySQL + Redis 冒烟：`/api/health` dataSource=UP / redis=redis / version=5.5.0
+- 登录防爆破实测：5 次失败后 Redis 出现 `rt:login:admin`，第 6 次返回 429
+- 轻量压测：50 次健康请求全部成功，耗时 369ms
+
+---
+
 ## v5.4 — Milvus 语义检索层
 **日期**: 2026-08-14
 **基线**: v5.3
