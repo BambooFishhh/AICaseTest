@@ -4,6 +4,24 @@
 
 ---
 
+## 修复记录 — vT7 CI 集成测试
+**日期**: 2026-08-14
+**主题**: MySQL Flyway locations 缺失导致 Spring 上下文启动失败；容器启动超时
+
+### 修复内容
+
+| 文件 | 修复 | 说明 |
+|---|---|---|
+| test/MySqlFlywayIntegrationTest.java | 增加 spring.flyway.locations=classpath:db/migration/mysql + baseline-on-migrate | 修复 CI 上 Flyway 找不到迁移脚本导致上下文启动失败 |
+| test/MySqlFlywayIntegrationTest.java | MySQL 容器 withStartupTimeout(3m) | 避免 CI 拉镜像/初始化超时 |
+| test/runtime/RedisRuntimeStoreIntegrationTest.java | Redis 容器 withStartupTimeout(3m) | 同上 |
+
+### 验证结果
+
+- 本地无 Docker 环境：集成测试自动跳过，`mvn verify` BUILD SUCCESS
+
+---
+
 ## vT9 — 安全扫描与部署加固
 **日期**: 2026-08-14
 **基线**: vT8

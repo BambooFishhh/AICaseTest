@@ -8,6 +8,8 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Duration;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -20,7 +22,8 @@ class RedisRuntimeStoreIntegrationTest {
 
     @Container
     static final GenericContainer<?> REDIS = new GenericContainer<>("redis:7-alpine")
-            .withExposedPorts(6379);
+            .withExposedPorts(6379)
+            .withStartupTimeout(Duration.ofMinutes(3));
 
     private RedisRuntimeStore store;
 

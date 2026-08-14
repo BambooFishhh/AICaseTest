@@ -12,6 +12,8 @@ import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.Duration;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -25,6 +27,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "app.milvus.enabled=false",
         "app.redis.enabled=false",
         "spring.flyway.enabled=true",
+        "spring.flyway.locations=classpath:db/migration/mysql",
+        "spring.flyway.baseline-on-migrate=true",
         "spring.jpa.hibernate.ddl-auto=none"
 })
 class MySqlFlywayIntegrationTest {
@@ -33,7 +37,8 @@ class MySqlFlywayIntegrationTest {
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.0.29")
             .withDatabaseName("aicasetest")
             .withUsername("aicasetest")
-            .withPassword("aicasetest123");
+            .withPassword("aicasetest123")
+            .withStartupTimeout(Duration.ofMinutes(3));
 
     @DynamicPropertySource
     static void datasource(DynamicPropertyRegistry registry) {
