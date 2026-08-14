@@ -47,6 +47,10 @@ app:
     port: ${MILVUS_PORT:19530}
     dimension: ${MILVUS_DIMENSION:1536}
     duplicate-threshold: ${MILVUS_DUPLICATE_THRESHOLD:0.92}
+  # v5.8: 数据保留策略（0=关闭）
+  retention:
+    execution-days: ${RETENTION_EXECUTION_DAYS:0}
+    cron: ${RETENTION_CRON:0 0 3 * * *}
   cors:
     allowed-origins: ${APP_CORS_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:8080}
   # v4.0: JWT 与默认管理员配置

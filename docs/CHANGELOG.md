@@ -4,6 +4,40 @@
 
 ---
 
+## v5.8 — 数据治理与可观测
+**日期**: 2026-08-14
+**基线**: v5.7
+**主题**: 执行数据保留策略 + 数据健康检查 API + 迁移 dry-run
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| service/DataRetentionService.java | 新增 | 定时清理过期终态执行/步骤/录屏/证据 |
+| service/DataHealthService.java | 新增 | 表计数 + 孤儿数据 + Milvus 行数 |
+| controller/DataHealthController.java | 新增 | GET /api/admin/data/health |
+| security/SecurityConfig.java | /api/admin/** 仅 ADMIN | 数据健康接口权限 |
+| config/AsyncConfig.java | @EnableScheduling | 定时任务开关 |
+| repository/ExecutionRecordRepository.java | findByEndTimeBeforeAndStatusIn | 保留策略查询 |
+| service/MilvusService.java | countCollection | 集合行数统计 |
+| migration/H2ToMysqlMigrator.java | dry-run 模式 | 只统计不写库 |
+| resources/application.yml | retention 配置 | execution-days / cron |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| 无 | - | 本版本无前端代码变更 |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS（140 源文件）
+- 后端测试: Tests run 2, Failures 0（mvn test）
+- 前端构建: ✓ built in 15.83s
+- 数据健康 API 冒烟: 表计数/孤儿/Milvus 结构正确；无 token 返回 401
+
+---
+
 ## v5.7 — 数据索引与查询性能
 **日期**: 2026-08-14
 **基线**: v5.6

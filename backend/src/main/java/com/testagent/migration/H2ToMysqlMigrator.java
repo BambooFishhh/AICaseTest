@@ -55,6 +55,9 @@ public class H2ToMysqlMigrator implements CommandLineRunner {
     @Value("${app.migration.rollback:false}")
     private boolean rollback;
 
+    @Value("${app.migration.dry-run:false}")
+    private boolean dryRun;
+
     @Value("${app.migration.backup-dir:backups}")
     private String backupDir;
 
@@ -80,6 +83,17 @@ public class H2ToMysqlMigrator implements CommandLineRunner {
             return;
         }
         backupH2Files();
+        if (dryRun) {
+            try (Connection src = DriverManager.getConnection(sourceUrl, sourceUser, sourcePassword)) {
+                for (String table : TABLES) {
+                    if (tableExists(src, table)) {
+                        log.info("[DRY-RUN] table {} rows={}", table, count(src, table));
+                    }
+                }
+            }
+            log.info("Dry-run completed, no data written");
+            return;
+        }
         try (Connection src = DriverManager.getConnection(sourceUrl, sourceUser, sourcePassword);
              Connection dst = targetDataSource.getConnection()) {
             List<String> migrated = new ArrayList<>();

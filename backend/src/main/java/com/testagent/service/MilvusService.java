@@ -2,6 +2,8 @@ package com.testagent.service;
 
 import io.milvus.client.MilvusServiceClient;
 import io.milvus.grpc.DataType;
+import io.milvus.grpc.GetCollectionStatisticsResponse;
+import io.milvus.grpc.KeyValuePair;
 import io.milvus.grpc.SearchResults;
 import io.milvus.param.ConnectParam;
 import io.milvus.param.IndexType;
@@ -12,6 +14,7 @@ import io.milvus.param.collection.CreateCollectionParam;
 import io.milvus.param.collection.FieldType;
 import io.milvus.param.collection.HasCollectionParam;
 import io.milvus.param.collection.LoadCollectionParam;
+import io.milvus.param.collection.GetCollectionStatisticsParam;
 import io.milvus.param.dml.DeleteParam;
 import io.milvus.param.dml.InsertParam;
 import io.milvus.param.dml.SearchParam;
@@ -244,6 +247,30 @@ public class MilvusService {
             c.delete(param);
         } catch (Exception e) {
             log.warn("Milvus deleteByModule failed: {}", e.getMessage());
+        }
+    }
+
+    // v5.8: 集合行数统计（失败返回 -1）
+    public long countCollection(String collection) {
+        MilvusServiceClient c = client();
+        if (c == null) {
+            return -1;
+        }
+        try {
+            R<GetCollectionStatisticsResponse> resp = c.getCollectionStatistics(
+                    GetCollectionStatisticsParam.newBuilder().withCollectionName(collection).build());
+            if (resp == null || resp.getData() == null) {
+                return -1;
+            }
+            for (KeyValuePair kv : resp.getData().getStatsList()) {
+                if ("row_count".equals(kv.getKey())) {
+                    return Long.parseLong(kv.getValue());
+                }
+            }
+            return -1;
+        } catch (Exception e) {
+            log.warn("Milvus count failed for {}: {}", collection, e.getMessage());
+            return -1;
         }
     }
 

@@ -677,6 +677,15 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v5.7](docs/v5.7/PRD_v5.7_数据索引与查询性能.md)
 
+### v5.8 — 数据治理与可观测
+
+补齐数据治理能力：执行记录/录屏/证据按保留策略定时清理；新增仅 ADMIN 的数据健康检查 API（表计数、孤儿数据、Milvus 行数）；迁移工具支持 dry-run 预览。
+
+- 后端: DataRetentionService + DataHealthService + /api/admin/data/health + 迁移 dry-run
+- 前端: 无变更
+
+详见：[PRD v5.8](docs/v5.8/PRD_v5.8_数据治理与可观测.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -736,6 +745,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v5.5 | 正式切换 MySQL+Redis+Milvus（H2 仅开发 profile） | ✅ 完成 |
 | v5.6 | 数据一致性与生命周期（事务落库/级联清理/向量同步） | ✅ 完成 |
 | v5.7 | 数据索引与查询性能（复合索引/分页/连接池/ANN） | ✅ 完成 |
+| v5.8 | 数据治理与可观测（保留策略/数据健康/迁移 dry-run） | ✅ 完成 |
 
 ## API 概览
 
