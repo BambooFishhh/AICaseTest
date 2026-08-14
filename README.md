@@ -612,6 +612,15 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v5.0](docs/v5.0/PRD_v5.0_数据层准备.md)
 
+### v5.1 — H2 → MySQL 全量迁移工具
+
+提供启动开关控制的 H2 → MySQL 全量迁移器：迁移前备份 H2 文件、逐表复制、行数校验、失败自动清理 MySQL 半成品，并支持备份回滚。
+
+- 后端: 新增 `H2ToMysqlMigrator` + `application-migrate.yml`，通过 `APP_MIGRATION_ENABLED=true` + `migrate` profile 触发
+- 前端: 无变更
+
+详见：[PRD v5.1](docs/v5.1/PRD_v5.1_H2到MySQL全量迁移.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -664,6 +673,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v4.3 | 项目组与权限（组共享/成员角色/复制执行隔离） | ✅ 完成 |
 | v4.4 | 分析流式化（SSE 实时阶段进度） | ✅ 完成 |
 | v5.0 | 数据层准备（Flyway + MySQL profile + 数据库容器） | ✅ 完成 |
+| v5.1 | H2 → MySQL 全量迁移工具（备份/回滚/校验） | ✅ 完成 |
 
 ## API 概览
 

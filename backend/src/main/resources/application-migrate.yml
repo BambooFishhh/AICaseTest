@@ -1,0 +1,12 @@
+# v5.1: 数据迁移 profile（复用 mysql profile 作为目标库）
+spring:
+  profiles:
+    include: mysql
+app:
+  migration:
+    enabled: ${APP_MIGRATION_ENABLED:false}
+    rollback: ${APP_MIGRATION_ROLLBACK:false}
+    backup-dir: ${MIGRATION_BACKUP_DIR:backups}
+    source-url: ${H2_MIGRATION_URL:jdbc:h2:file:./data/appdb;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE}
+    source-user: sa
+    source-password: ""

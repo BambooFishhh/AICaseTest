@@ -4,6 +4,32 @@
 
 ---
 
+## v5.1 — H2 → MySQL 全量迁移工具
+**日期**: 2026-08-14
+**基线**: v5.0
+**主题**: 全量数据迁移 + 备份/回滚 + 方言回归
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| migration/H2ToMysqlMigrator.java | 新增 | 通用 JDBC 迁移器：H2 备份 → 逐表复制 → 行数校验 → 失败清理 |
+| resources/application-migrate.yml | 新增 | migrate profile，复用 mysql profile 作为目标库 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| 无 | - | 本版本无前端代码变更 |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS（120 源文件）
+- 后端测试: Tests run 2, Failures 0（mvn test）
+- 前端构建: ✓ built in 15.27s
+
+---
+
 ## v5.0 — 数据层准备
 **日期**: 2026-08-14
 **基线**: v4.4
