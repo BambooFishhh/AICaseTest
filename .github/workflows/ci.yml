@@ -75,6 +75,9 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
       - name: npm audit (production deps)
         working-directory: frontend
         run: npm audit --omit=dev --audit-level=high
