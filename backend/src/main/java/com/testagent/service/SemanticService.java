@@ -57,7 +57,36 @@ public class SemanticService {
         if (!milvusService.isEnabled()) {
             return;
         }
+        // v5.6: 项目删除/重建时清理三集合
         milvusService.deleteByProject(MilvusService.COLLECTION_CASES, projectId);
+        milvusService.deleteByProject(MilvusService.COLLECTION_CONTEXTS, projectId);
+        milvusService.deleteByProject(MilvusService.COLLECTION_FAILURES, projectId);
+    }
+
+    // v5.6: 删除指定用例向量
+    public void removeCases(String projectId, List<String> ids) {
+        if (!milvusService.isEnabled() || ids == null || ids.isEmpty()) {
+            return;
+        }
+        milvusService.deleteByIds(MilvusService.COLLECTION_CASES, projectId, ids);
+    }
+
+    // v5.6: 编辑用例后重建向量（先删旧 id 再写入）
+    public void reindexCase(String projectId, TestCase tc) {
+        if (!isAvailable() || tc == null) {
+            return;
+        }
+        removeCases(projectId, List.of(tc.getId()));
+        indexCase(projectId, tc);
+    }
+
+    // v5.6: 上下文按模块替换（先删旧模块向量再写入）
+    public void replaceContext(String projectId, String module, String text) {
+        if (!milvusService.isEnabled()) {
+            return;
+        }
+        milvusService.deleteByModule(MilvusService.COLLECTION_CONTEXTS, projectId, module);
+        indexContext(projectId, module, text);
     }
 
     public boolean isDuplicate(String projectId, TestCase tc) {

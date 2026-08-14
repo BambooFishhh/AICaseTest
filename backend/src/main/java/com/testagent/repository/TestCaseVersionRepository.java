@@ -15,4 +15,9 @@ public interface TestCaseVersionRepository extends JpaRepository<TestCaseVersion
     long countByTestCaseId(String testCaseId);
 
     Optional<TestCaseVersion> findByIdAndTestCaseId(String id, String testCaseId);
+
+    // v5.6: 生命周期清理
+    void deleteByTestCaseId(String testCaseId);
+
+    void deleteByProjectId(String projectId);
 }

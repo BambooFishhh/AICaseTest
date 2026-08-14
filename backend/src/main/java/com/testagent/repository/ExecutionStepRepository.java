@@ -9,4 +9,7 @@ import java.util.List;
 @Repository
 public interface ExecutionStepRepository extends JpaRepository<ExecutionStep, String> {
     List<ExecutionStep> findByExecutionIdOrderByStepIndexAsc(String executionId);
+
+    // v5.6: 项目级联清理
+    List<ExecutionStep> findByExecutionIdIn(List<String> executionIds);
 }

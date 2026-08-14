@@ -659,6 +659,15 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v5.5](docs/v5.5/PRD_v5.5_正式切换与全量回归.md)
 
+### v5.6 — 数据一致性与生命周期
+
+补齐数据层一致性：重新生成用例事务化落库；删除项目级联清理执行记录/步骤/测试集/版本与 Milvus 向量；用例增删改、导入、复制同步语义索引；PRD 与代码分析上下文按模块替换。
+
+- 后端: TestCasePersistenceService + SemanticService/MilvusService 生命周期能力
+- 前端: 无变更
+
+详见：[PRD v5.6](docs/v5.6/PRD_v5.6_数据一致性与生命周期.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -716,6 +725,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v5.3 | 缓存 + 任务队列（设置/参数/分析缓存 + 队列计数） | ✅ 完成 |
 | v5.4 | Milvus 语义检索（去重/RAG/语义搜索/失败经验） | ✅ 完成 |
 | v5.5 | 正式切换 MySQL+Redis+Milvus（H2 仅开发 profile） | ✅ 完成 |
+| v5.6 | 数据一致性与生命周期（事务落库/级联清理/向量同步） | ✅ 完成 |
 
 ## API 概览
 

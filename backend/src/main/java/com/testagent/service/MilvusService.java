@@ -193,6 +193,43 @@ public class MilvusService {
         }
     }
 
+    // v5.6: 按 ID 列表删除（用于用例删除/编辑重建）
+    public void deleteByIds(String collection, String projectId, List<String> ids) {
+        MilvusServiceClient c = client();
+        if (c == null || ids == null || ids.isEmpty() || projectId == null || projectId.isBlank()) {
+            return;
+        }
+        try {
+            String idExpr = ids.stream()
+                    .map(id -> "\"" + id.replace("\"", "\\\"") + "\"")
+                    .collect(java.util.stream.Collectors.joining(",", "[", "]"));
+            DeleteParam param = DeleteParam.newBuilder()
+                    .withCollectionName(collection)
+                    .withExpr("project_id == \"" + projectId + "\" and id in " + idExpr)
+                    .build();
+            c.delete(param);
+        } catch (Exception e) {
+            log.warn("Milvus deleteByIds failed: {}", e.getMessage());
+        }
+    }
+
+    // v5.6: 按模块删除（PRD/分析上下文替换）
+    public void deleteByModule(String collection, String projectId, String module) {
+        MilvusServiceClient c = client();
+        if (c == null || projectId == null || projectId.isBlank() || module == null || module.isBlank()) {
+            return;
+        }
+        try {
+            DeleteParam param = DeleteParam.newBuilder()
+                    .withCollectionName(collection)
+                    .withExpr("project_id == \"" + projectId + "\" and module == \"" + module + "\"")
+                    .build();
+            c.delete(param);
+        } catch (Exception e) {
+            log.warn("Milvus deleteByModule failed: {}", e.getMessage());
+        }
+    }
+
     private String field(SearchResultsWrapper.IDScore score, String name) {
         try {
             Object v = score.get(name);

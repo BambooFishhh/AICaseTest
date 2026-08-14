@@ -84,6 +84,9 @@ public class TestCaseService {
     private SemanticService semanticService;
 
     @Autowired
+    private TestCasePersistenceService testCasePersistenceService;
+
+    @Autowired
     private TestCaseRepository testCaseRepository;
 
     @Autowired
@@ -130,14 +133,10 @@ public class TestCaseService {
                     progress -> projectRepository.updateProgress(projectId, progress));
 
             projectRepository.updateProgress(projectId, "正在保存用例...");
-            testCaseRepository.deleteAll(testCaseRepository.findByProjectId(projectId));
+            // v5.6: 事务化落库（先删旧用例+版本，再统一写入）
+            testCasePersistenceService.replaceAll(projectId, testCases);
 
-            for (TestCase tc : testCases) {
-                tc.setProjectId(projectId);
-                testCaseRepository.save(tc);
-            }
-
-            // v5.4: 重新生成后重建语义索引
+            // v5.4/v5.6: 重新生成后重建语义索引
             semanticService.clearProject(projectId);
             semanticService.indexCases(projectId, testCases);
 
@@ -215,13 +214,10 @@ public class TestCaseService {
             }
 
             progressCb.update("正在保存用例...");
-            testCaseRepository.deleteAll(testCaseRepository.findByProjectId(projectId));
-            for (TestCase tc : testCases) {
-                tc.setProjectId(projectId);
-                testCaseRepository.save(tc);
-            }
+            // v5.6: 事务化落库（先删旧用例+版本，再统一写入）
+            testCasePersistenceService.replaceAll(projectId, testCases);
 
-            // v5.4: 重新生成后重建语义索引
+            // v5.4/v5.6: 重新生成后重建语义索引
             semanticService.clearProject(projectId);
             semanticService.indexCases(projectId, testCases);
 
@@ -529,6 +525,9 @@ public class TestCaseService {
         projectAccessService.assertOperateAccess(projectId);
         TestCase tc = findTestCase(projectId, testcaseId);
         testCaseRepository.delete(tc);
+        // v5.6: 同步删除版本快照与语义向量
+        testCaseVersionRepository.deleteByTestCaseId(testcaseId);
+        semanticService.removeCases(projectId, List.of(testcaseId));
     }
 
     @Transactional
@@ -536,12 +535,17 @@ public class TestCaseService {
         projectAccessService.assertOperateAccess(projectId);
         List<TestCase> all = testCaseRepository.findByProjectId(projectId);
         int count = 0;
+        List<String> deletedIds = new ArrayList<>();
         for (TestCase tc : all) {
             if (ids.contains(tc.getId())) {
                 testCaseRepository.delete(tc);
+                testCaseVersionRepository.deleteByTestCaseId(tc.getId());
+                deletedIds.add(tc.getId());
                 count++;
             }
         }
+        // v5.6: 批量删除同步清理语义向量
+        semanticService.removeCases(projectId, deletedIds);
         return count;
     }
 
@@ -614,6 +618,7 @@ public class TestCaseService {
 
         int startNo = nextTestCaseNumber(projectId);
         int imported = 0;
+        List<TestCase> importedCases = new ArrayList<>();
         for (TestCase tc : parsed) {
             // 跳过无标题的无效用例
             if (tc.getTitle() == null || tc.getTitle().isBlank()) {
@@ -624,8 +629,11 @@ public class TestCaseService {
             tc.setSource("imported");
             tc.setCreatedAt(LocalDateTime.now());
             testCaseRepository.save(tc);
+            importedCases.add(tc);
             imported++;
         }
+        // v5.6: JSON 导入同步语义索引
+        semanticService.indexCases(projectId, importedCases);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("imported", imported);
@@ -655,6 +663,7 @@ public class TestCaseService {
 
         int startNo = nextTestCaseNumber(projectId);
         int imported = 0;
+        List<TestCase> importedCases = new ArrayList<>();
         // v3.16: 跳过明细（标题为空等原因）
         List<Map<String, String>> skippedDetails = new ArrayList<>();
         for (TestCase tc : parsed) {
@@ -669,8 +678,11 @@ public class TestCaseService {
             tc.setSource("xmind_import");
             tc.setCreatedAt(LocalDateTime.now());
             testCaseRepository.save(tc);
+            importedCases.add(tc);
             imported++;
         }
+        // v5.6: XMind 导入同步语义索引
+        semanticService.indexCases(projectId, importedCases);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("imported", imported);
@@ -699,6 +711,7 @@ public class TestCaseService {
 
         int startNo = nextTestCaseNumber(targetProjectId);
         int copied = 0;
+        List<TestCase> copiedCases = new ArrayList<>();
         for (TestCase tc : selected) {
             TestCase copy = cloneTestCase(tc);
             copy.setId(String.format("TC-%03d", startNo++));
@@ -706,8 +719,11 @@ public class TestCaseService {
             copy.setSource("copied");
             copy.setCreatedAt(LocalDateTime.now());
             testCaseRepository.save(copy);
+            copiedCases.add(copy);
             copied++;
         }
+        // v5.6: 复制到目标项目后同步语义索引
+        semanticService.indexCases(targetProjectId, copiedCases);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("copied", copied);
@@ -837,6 +853,8 @@ public class TestCaseService {
         tc.setId(String.format("TC-%03d", nextNum));
 
         testCaseRepository.save(tc);
+        // v5.6: 手工创建用例同步语义索引
+        semanticService.indexCase(projectId, tc);
         log.info("手动创建用例: projectId={}, id={}", projectId, tc.getId());
         return TestCaseDTO.from(tc);
     }
@@ -902,6 +920,8 @@ public class TestCaseService {
         }
 
         testCaseRepository.save(tc);
+        // v5.6: 编辑用例后重建向量（先删旧向量再写入）
+        semanticService.reindexCase(projectId, tc);
         return TestCaseDTO.from(tc);
     }
 

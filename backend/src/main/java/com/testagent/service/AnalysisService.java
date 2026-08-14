@@ -155,11 +155,11 @@ public class AnalysisService {
             // v5.4: 分析结果写入语义上下文（供生成前 RAG 检索）
             try {
                 if (backendResult != null) {
-                    semanticService.indexContext(projectId, "backend",
+                    semanticService.replaceContext(projectId, "backend",
                             objectMapper.writeValueAsString(backendResult));
                 }
                 if (frontendResult != null) {
-                    semanticService.indexContext(projectId, "frontend",
+                    semanticService.replaceContext(projectId, "frontend",
                             objectMapper.writeValueAsString(frontendResult));
                 }
             } catch (Exception e) {

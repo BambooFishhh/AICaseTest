@@ -6,6 +6,7 @@ import com.testagent.dto.CreateProjectRequest;
 import com.testagent.dto.GenerateRequest;
 import com.testagent.dto.GenerationParams;
 import com.testagent.dto.ProjectDTO;
+import com.testagent.entity.ExecutionRecord;
 import com.testagent.entity.Project;
 import com.testagent.entity.ProjectGroup;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -13,12 +14,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.http.HttpStatus;
 import com.testagent.repository.CodeAnalysisRepository;
+import com.testagent.repository.ExecutionRecordRepository;
+import com.testagent.repository.ExecutionStepRepository;
 import com.testagent.repository.GroupMemberRepository;
 import com.testagent.repository.MindMapRepository;
 import com.testagent.repository.ProjectGroupRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.TestCaseRepository;
+import com.testagent.repository.TestCaseVersionRepository;
+import com.testagent.repository.TestSuiteRepository;
 import com.testagent.security.SecurityUtils;
 import com.testagent.security.AccessLevel;
 import com.testagent.service.SemanticService;
@@ -77,6 +82,18 @@ public class ProjectService {
 
     @Autowired
     private TestCaseService testCaseService;
+
+    @Autowired
+    private ExecutionRecordRepository executionRecordRepository;
+
+    @Autowired
+    private ExecutionStepRepository executionStepRepository;
+
+    @Autowired
+    private TestSuiteRepository testSuiteRepository;
+
+    @Autowired
+    private TestCaseVersionRepository testCaseVersionRepository;
 
     // v1.10: PRD 解析 Agent
     @Autowired
@@ -160,7 +177,18 @@ public class ProjectService {
         codeAnalysisRepository.findAllByProjectId(id).forEach(codeAnalysisRepository::delete);
         stateMachineRepository.deleteByProjectId(id);
         testCaseRepository.deleteByProjectId(id);
+        // v5.6: 级联清理执行记录/步骤/测试集/用例版本
+        List<ExecutionRecord> executions = executionRecordRepository.findByProjectIdOrderByStartTimeDesc(id);
+        List<String> executionIds = executions.stream().map(ExecutionRecord::getId).collect(Collectors.toList());
+        if (!executionIds.isEmpty()) {
+            executionStepRepository.deleteAll(executionStepRepository.findByExecutionIdIn(executionIds));
+        }
+        executionRecordRepository.deleteAll(executions);
+        testSuiteRepository.deleteAll(testSuiteRepository.findByProjectIdOrderByCreatedAtDesc(id));
+        testCaseVersionRepository.deleteByProjectId(id);
         mindMapRepository.findAllByProjectId(id).forEach(mindMapRepository::delete);
+        // v5.6: 清理 Milvus 三集合
+        semanticService.clearProject(id);
         projectRepository.delete(project);
     }
 
@@ -217,7 +245,7 @@ public class ProjectService {
         p.setPrdSourceRef(null);
         projectRepository.save(p);
         // v5.4: PRD 写入语义上下文库
-        semanticService.indexContext(projectId, "prd", p.getPrdContent());
+        semanticService.replaceContext(projectId, "prd", p.getPrdContent());
         return ProjectDTO.from(p);
     }
 
@@ -236,7 +264,7 @@ public class ProjectService {
         p.setPrdSourceType("pdf");
         p.setPrdSourceRef(file.getOriginalFilename());
         projectRepository.save(p);
-        semanticService.indexContext(projectId, "prd", p.getPrdContent());
+        semanticService.replaceContext(projectId, "prd", p.getPrdContent());
         return ProjectDTO.from(p);
     }
 
@@ -261,7 +289,7 @@ public class ProjectService {
         p.setPrdSourceType("link");
         p.setPrdSourceRef(url);
         projectRepository.save(p);
-        semanticService.indexContext(projectId, "prd", p.getPrdContent());
+        semanticService.replaceContext(projectId, "prd", p.getPrdContent());
         return ProjectDTO.from(p);
     }
 

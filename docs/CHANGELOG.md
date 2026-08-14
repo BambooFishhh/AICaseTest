@@ -4,6 +4,37 @@
 
 ---
 
+## v5.6 — 数据一致性与生命周期
+**日期**: 2026-08-14
+**基线**: v5.5
+**主题**: 事务落库、项目级联清理、用例增删改/导入/复制同步语义索引、上下文按模块替换
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| service/TestCasePersistenceService.java | 新增 | 重新生成用例事务化落库 |
+| service/MilvusService.java | deleteByIds / deleteByModule | 向量按 ID/模块删除 |
+| service/SemanticService.java | removeCases / reindexCase / replaceContext / clearProject 三集合 | 语义生命周期同步 |
+| service/TestCaseService.java | 增删改/导入/复制同步索引；删除同步清版本 | 数据库与向量一致 |
+| service/ProjectService.java | 删除项目级联清理执行/步骤/测试集/版本/向量 | 消除孤儿数据 |
+| service/AnalysisService.java | 上下文 replace | 分析结果按模块替换 |
+| repository/* | deleteByProjectId / findByExecutionIdIn | 级联删除支撑 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| 无 | - | 本版本无前端代码变更 |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS（137 源文件）
+- 后端测试: Tests run 2, Failures 0（mvn test）
+- 前端构建: ✓ built in 14.15s
+
+---
+
 ## v5.5 — 正式切换 MySQL + Redis + Milvus
 **日期**: 2026-08-14
 **基线**: v5.4
