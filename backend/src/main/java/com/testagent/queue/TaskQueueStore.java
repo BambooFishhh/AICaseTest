@@ -14,4 +14,9 @@ public interface TaskQueueStore {
     long queuedCount(String queue);
 
     long runningCount(String queue);
+
+    /**
+     * vP2: 清空指定队列的 queued/running 状态，供服务重启后恢复使用。
+     */
+    void clearQueue(String queue);
 }

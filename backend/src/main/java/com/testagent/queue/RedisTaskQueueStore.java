@@ -3,6 +3,7 @@ package com.testagent.queue;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.time.Duration;
+import java.util.List;
 
 /**
  * v5.3: Redis 任务队列实现。queued/running 使用 Set 存储任务 ID，支持多实例计数。
@@ -70,6 +71,15 @@ public class RedisTaskQueueStore implements TaskQueueStore {
             return n == null ? 0 : n;
         } catch (Exception e) {
             return memoryFallback.runningCount(queue);
+        }
+    }
+
+    @Override
+    public void clearQueue(String queue) {
+        try {
+            redis.delete(List.of(PREFIX + queue + ":queued", PREFIX + queue + ":running"));
+        } catch (Exception e) {
+            memoryFallback.clearQueue(queue);
         }
     }
 }

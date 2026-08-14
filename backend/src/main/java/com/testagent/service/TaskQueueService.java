@@ -31,6 +31,14 @@ public class TaskQueueService {
         taskQueueStore.markDone(queue, taskId);
     }
 
+    /**
+     * vP2: 服务重启后清理残留队列状态，防止统计与配额被旧实例污染。
+     */
+    public void recoverStaleTasks() {
+        taskQueueStore.clearQueue(GENERATION_QUEUE);
+        taskQueueStore.clearQueue(EXECUTION_QUEUE);
+    }
+
     public Map<String, Object> stats() {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("generation", queueStats(GENERATION_QUEUE));

@@ -67,6 +67,9 @@ public class AsyncConfig {
         executor.setQueueCapacity(queue);
         executor.setThreadNamePrefix(prefix);
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        // vP2: 优雅停机时等待已提交任务完成，最多 30s
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(30);
         executor.initialize();
         return executor;
     }

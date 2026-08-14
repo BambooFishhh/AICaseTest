@@ -7,6 +7,7 @@ import com.testagent.repository.ExecutionRecordRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.UserRepository;
+import com.testagent.service.TaskQueueService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,6 +43,9 @@ public class DataInitializer implements CommandLineRunner {
     @Autowired
     private TestCaseRepository testCaseRepository;
 
+    @Autowired
+    private TaskQueueService taskQueueService;
+
     @Value("${app.admin.password:admin123}")
     private String adminPassword;
 
@@ -69,6 +73,23 @@ public class DataInitializer implements CommandLineRunner {
                 projectRepository.save(p);
             }
             log.info("v4.0: 已将 {} 个存量项目归属到默认管理员", orphanProjects.size());
+        }
+
+        // vP2: 启动恢复——清空残留任务队列，恢复卡死的分析/生成项目状态
+        taskQueueService.recoverStaleTasks();
+        List<Project> stuckProjects = projectRepository.findAll().stream()
+                .filter(p -> "analyzing".equals(p.getStatus()) || "generating".equals(p.getStatus()))
+                .toList();
+        for (Project p : stuckProjects) {
+            boolean hasCases = !testCaseRepository.findByProjectId(p.getId()).isEmpty();
+            if (hasCases) {
+                projectRepository.updateStatus(p.getId(), "completed");
+            } else {
+                projectRepository.updateStatusWithError(p.getId(), "failed", "服务重启导致任务中断，请重新执行");
+            }
+        }
+        if (!stuckProjects.isEmpty()) {
+            log.info("vP2: 启动恢复 {} 个卡死的项目任务状态", stuckProjects.size());
         }
 
         // 启动清扫：重启后仍在 running/pending 的执行记录已无存活 worker，标记中断/取消

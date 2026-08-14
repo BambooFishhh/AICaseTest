@@ -4,6 +4,13 @@ services:
     image: mysql:8.0
     container_name: aicasetest-mysql
     restart: unless-stopped
+    stop_grace_period: 30s
+    # vP2: 资源限制与优雅停机
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "2.0"
     environment:
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-aicasetest-root}
       - MYSQL_DATABASE=${MYSQL_DATABASE:-aicasetest}
@@ -28,6 +35,12 @@ services:
     image: redis:7-alpine
     container_name: aicasetest-redis
     restart: unless-stopped
+    stop_grace_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
     # vP1: 强制 AUTH + protected-mode，端口仅绑定本机
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-aicasetest-redis}", "--protected-mode", "yes"]
     environment:
@@ -47,6 +60,12 @@ services:
     image: quay.io/coreos/etcd:v3.5.5
     container_name: aicasetest-etcd
     restart: unless-stopped
+    stop_grace_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
@@ -60,6 +79,12 @@ services:
     image: minio/minio:latest
     container_name: aicasetest-minio
     restart: unless-stopped
+    stop_grace_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
     environment:
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin
@@ -76,6 +101,12 @@ services:
     image: milvusdb/milvus:v2.4.4
     container_name: aicasetest-milvus
     restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
     command: ["milvus", "run", "standalone"]
     environment:
       - ETCD_ENDPOINTS=etcd:2379
@@ -104,6 +135,12 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     container_name: test-agent-backend
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "2.0"
     ports:
       - "8000:8000"
     environment:
@@ -157,6 +194,12 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: test-agent-frontend
+    stop_grace_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.5"
     ports:
       - "80:80"
       - "443:443"

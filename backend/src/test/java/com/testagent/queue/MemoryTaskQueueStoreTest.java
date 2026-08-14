@@ -45,4 +45,14 @@ class MemoryTaskQueueStoreTest {
         assertEquals(0, store.queuedCount("execution"));
         assertEquals(0, store.runningCount("execution"));
     }
+
+    @Test
+    void clearQueueRemovesQueuedAndRunning() {
+        store.enqueue("generation", "p1");
+        store.markRunning("generation", "p2");
+        store.clearQueue("generation");
+
+        assertEquals(0, store.queuedCount("generation"));
+        assertEquals(0, store.runningCount("generation"));
+    }
 }

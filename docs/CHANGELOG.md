@@ -4,6 +4,41 @@
 
 ---
 
+## vP2 — 高可用与容灾
+**日期**: 2026-08-14
+**基线**: vP1
+**主题**: MySQL 备份调度 + 恢复演练、任务恢复、资源限制、优雅停机
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| queue/TaskQueueStore.java | 新增 clearQueue | 队列恢复接口 |
+| queue/MemoryTaskQueueStore.java | clearQueue 实现 | 清空内存 queued/running |
+| queue/RedisTaskQueueStore.java | clearQueue 实现 | 删除 Redis 队列键 |
+| service/TaskQueueService.java | recoverStaleTasks | 重启清理残留任务队列 |
+| config/DataInitializer.java | 启动恢复 | 恢复卡死项目状态 + 队列清理 |
+| config/AsyncConfig.java | 优雅停机 | 线程池等待任务完成 30s |
+| resources/application.yml | graceful shutdown | 停机等待 30s |
+
+### 部署/脚本变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| docker-compose.yml | 资源限制 + stop_grace_period | 所有服务 CPU/内存上限与停机宽限 |
+| scripts/mysql-backup.ps1 | 新增 | Docker 内 mysqldump + 保留轮转 |
+| scripts/schedule-backup.ps1 | 新增 | Windows 计划任务每日调度 |
+| scripts/restore-drill.ps1 | 新增 | 临时库恢复演练与校验 |
+
+### 验证结果
+
+- `mvn -Dtest=MemoryTaskQueueStoreTest test`：4/4 通过
+- `mvn compile` BUILD SUCCESS
+- `npm run build`：成功
+- `docker compose config`：通过
+
+---
+
 ## vP1 — 上线安全加固
 **日期**: 2026-08-14
 **基线**: vT9

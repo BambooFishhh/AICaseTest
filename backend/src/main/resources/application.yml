@@ -1,6 +1,11 @@
 server:
   port: 8000
+  # vP2: 优雅停机，等待进行中任务结束
+  shutdown: graceful
 spring:
+  # vP2: 优雅停机最长等待 30s
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   # v5.0/v5.5: profile 组——prod/migrate 自动带入 mysql
   profiles:
     group:

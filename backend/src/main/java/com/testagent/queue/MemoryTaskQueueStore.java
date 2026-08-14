@@ -43,4 +43,12 @@ public class MemoryTaskQueueStore implements TaskQueueStore {
         Set<String> r = running.get(queue);
         return r == null ? 0 : r.size();
     }
+
+    @Override
+    public void clearQueue(String queue) {
+        Set<String> q = queued.get(queue);
+        if (q != null) q.clear();
+        Set<String> r = running.get(queue);
+        if (r != null) r.clear();
+    }
 }
