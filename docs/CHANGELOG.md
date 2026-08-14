@@ -4,6 +4,35 @@
 
 ---
 
+## vT1 — 测试与运维基线
+**日期**: 2026-08-14
+**基线**: v5.8 + v5 数据层复查修复
+**主题**: 建立独立工程基线版本线（vT 系列），补齐测试与运维基线
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| test/runtime/MemoryRuntimeStoreTest.java | 新增 5 个测试 | 取消标志/会话/心跳/登录计数/并发配额 |
+| test/queue/MemoryTaskQueueStoreTest.java | 新增 3 个测试 | 队列计数、多队列独立、幂等 |
+| test/service/LoginAttemptServiceTest.java | 新增 3 个测试 | 5 次锁定、阈值内不锁、成功后清状态 |
+| .github/workflows/ci.yml | 新增 compose job | `docker compose config --quiet` 配置校验 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| 无 | - | 前端仅作 CI 构建回归 |
+
+### 验证结果
+
+- 后端测试: Tests run 13, Failures 0（mvn test）
+- 前端构建: ✓ built（npm run build）
+- docker compose config: 校验通过
+- MCP 语法: node --check 通过
+
+---
+
 ## 修复记录 — v5 数据层复查（v5.6~v5.8）
 **日期**: 2026-08-14
 **主题**: 重新生成误清语义上下文 / 取消标志残留 / Milvus 已有集合未建索引 / 迁移 dry-run 顺序

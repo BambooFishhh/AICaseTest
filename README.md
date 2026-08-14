@@ -116,6 +116,16 @@ npx playwright install chromium
 - 执行失败不会中断后续步骤，单步失败会记录错误与截图。
 - "复制执行"对选中用例做快照执行，不回写原用例执行状态。
 
+## 测试与运维基线
+
+项目自 **vT1** 起建立独立工程基线版本线，测试与运维基线如下：
+
+- 单元测试：13 个（内存运行态、任务队列、登录防爆破、CSV、XMind）
+- CI：后端 `mvn test` + 前端 `npm run build` + `docker compose config` 校验
+- 回归入口：`scripts/verify-v5-stack.ps1`（后端测试、前端构建、compose 配置、可选健康检查）
+
+详见 [docs/vT1/PRD_vT1_测试与运维基线.md](docs/vT1/PRD_vT1_测试与运维基线.md)。
+
 ## 项目结构
 
 ```
@@ -166,6 +176,7 @@ AICaseTest/
 | v5.6 | 数据一致性与生命周期 | ✅ 完成 |
 | v5.7 | 数据索引与查询性能 | ✅ 完成 |
 | v5.8 | 数据治理与可观测 | ✅ 完成 |
+| vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 
 详细版本历史见 [docs/迭代历程.md](docs/迭代历程.md)，逐版本变更记录见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
 
