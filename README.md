@@ -84,6 +84,38 @@ LLM_MODEL=your-model-name
 
 > ⚠️ `.env` 已被 `.gitignore` 排除，不会提交到仓库。
 
+## 用例执行
+
+系统支持对生成/导入的用例执行真实浏览器自动化（执行链路自 v2.x 起已内置），并输出步骤截图、WebM 录屏、HTML 报告与 Markdown 证据。
+
+### 前置条件
+
+- 后端启动时会自动拉起 `playwright-mcp-server` 子进程；首次运行需安装 Playwright Chromium：
+
+```bash
+cd playwright-mcp-server
+npx playwright install chromium
+```
+
+- Docker 镜像已内置 Chromium，`docker-compose up -d` 后即可执行。
+- Agent 模式建议配置 `LLM_API_KEY`；未配置时自动降级为"视觉定位 → DOM → 跳过"的默认策略。
+
+### 怎么执行
+
+1. 进入项目的"测试用例"页。
+2. 选择用例后点击"执行"（单条）或"批量执行"（多条）。
+3. 填入待测页面 URL（项目默认执行 URL 会自动带入）。
+4. 选择执行模式：
+   - **Agent 模式**：LLM 多模态识别 + DOM 兜底，推荐；
+   - **程序化模式**：按结构化步骤中的 `uiSelector` 直接操作 DOM，不依赖 LLM。
+5. 执行结束后在"执行历史 / 执行结果 / 批次结果"查看步骤、截图、WebM 录屏、HTML 报告与证据文件。
+
+### 说明
+
+- 用例需包含 `structuredSteps`；纯自然语言步骤在程序化模式下会跳过，Agent 模式下尝试多模态识别。
+- 执行失败不会中断后续步骤，单步失败会记录错误与截图。
+- "复制执行"对选中用例做快照执行，不回写原用例执行状态。
+
 ## 项目结构
 
 ```
