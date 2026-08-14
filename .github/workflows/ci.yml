@@ -22,7 +22,7 @@ jobs:
           java-version: '17'
           cache: maven
       - name: Run backend tests
-        run: mvn -B test
+        run: mvn -B verify
 
   frontend:
     name: Frontend build

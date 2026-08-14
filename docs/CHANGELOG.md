@@ -4,6 +4,35 @@
 
 ---
 
+## vT8 — 前端测试扩充与覆盖率门禁
+**日期**: 2026-08-14
+**基线**: vT7
+**主题**: auth store 测试 + Vitest/JaCoCo 覆盖率门禁
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| backend/pom.xml | JaCoCo 插件 | LINE/INSTRUCTION ≥ 5% 检查 |
+| .github/workflows/ci.yml | mvn -B verify | 触发 JaCoCo 检查 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| src/stores/auth.test.js | 新增 2 个测试 | 登录持久化/登出清理 |
+| vitest.config.js | v8 coverage + 阈值 | 覆盖率门禁 |
+| package.json / package-lock.json | @vitest/coverage-v8 + test:coverage | 覆盖率脚本 |
+
+### 验证结果
+
+- 前端测试: Tests 7 passed（npm test --coverage，阈值通过）
+- 前端构建: ✓ built
+- 后端 verify: BUILD SUCCESS，JaCoCo checks met
+- npm ci: 干净安装通过（391 packages）
+
+---
+
 ## vT7 — Testcontainers 集成测试
 **日期**: 2026-08-14
 **基线**: vT6
