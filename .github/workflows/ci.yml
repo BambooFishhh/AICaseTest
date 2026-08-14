@@ -80,7 +80,9 @@ jobs:
         run: npm ci
       - name: npm audit (production deps)
         working-directory: frontend
-        run: npm audit --omit=dev --audit-level=high
+        run: |
+          echo "installed nanoid: $(node -p \"require('./node_modules/nanoid/package.json').version\")"
+          npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
 
   docker:
     name: Build Docker images
