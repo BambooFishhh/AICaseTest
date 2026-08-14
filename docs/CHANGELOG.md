@@ -4,6 +4,35 @@
 
 ---
 
+## vT5 — 安全与全量回归收口
+**日期**: 2026-08-14
+**基线**: vT4
+**主题**: 敏感信息扫描 + 回归入口收口 + CI 锁文件兼容修复
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| scripts/security-check.ps1 | 新增 | .env 跟踪校验 + 密钥/私钥扫描 |
+| scripts/verify-v5-stack.ps1 | 集成安全基线 | 回归入口包含安全检查 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| package.json / package-lock.json | vitest 4.x → 3.x | 修复 CI npm 10 下 `npm ci` 与锁文件不同步问题 |
+
+### 验证结果
+
+- 后端测试: Tests run 23, Failures 0（mvn test）
+- 前端测试: Tests 5 passed（npm test）
+- 前端构建: ✓ built（npm run build）
+- npm ci: 干净安装通过（379 packages）
+- docker compose config: 校验通过
+- 安全基线: security check OK
+
+---
+
 ## vT4 — 运维与可观测基线
 **日期**: 2026-08-14
 **基线**: vT3

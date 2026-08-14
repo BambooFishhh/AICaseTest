@@ -126,6 +126,7 @@ npx playwright install chromium
 - 回归入口：`scripts/verify-v5-stack.ps1`（后端测试、前端构建、compose 配置、可选健康检查）
 - 可观测：`/actuator/health` 免认证健康检查，`/actuator/prometheus` 指标采集
 - 备份：`scripts/backup-v5.ps1`（data/outputs + 可选 MySQL dump）
+- 安全基线：`scripts/security-check.ps1`（校验 `.env` 未跟踪 + 扫描疑似密钥/私钥）
 
 详见 [docs/vT1/PRD_vT1_测试与运维基线.md](docs/vT1/PRD_vT1_测试与运维基线.md)。
 
@@ -183,6 +184,7 @@ AICaseTest/
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |
 | vT4 | 运维与可观测基线（Actuator/Prometheus/备份） | ✅ 完成 |
+| vT5 | 安全与全量回归收口（密钥扫描/回归入口/CI 兼容） | ✅ 完成 |
 
 详细版本历史见 [docs/迭代历程.md](docs/迭代历程.md)，逐版本变更记录见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
 

@@ -4,42 +4,62 @@ param(
     [string]$HealthUrl = ""
 )
 
-# v5.5: 全量回归脚本 —— 后端编译/测试 + 前端构建 + compose 配置校验 + 可选健康检查
-$ErrorActionPreference = "Stop"
+# vT5: full regression entry - backend tests + frontend build + compose config + security baseline
+$ErrorActionPreference = "Continue"
 Set-Location $ProjectRoot
 
 if (-not (Test-Path $JdkHome)) {
-    Write-Error "JDK 17 未找到: $JdkHome"
+    Write-Error "JDK 17 not found: $JdkHome"
 }
 $env:JAVA_HOME = $JdkHome
 $env:Path = "$env:JAVA_HOME\bin;$env:Path"
 
-Write-Host "==> 后端编译 + 测试"
+Write-Host "==> Backend tests"
 Push-Location "$ProjectRoot\backend"
 try {
-    mvn test -s ../maven-settings.xml 2>&1 | Select-Object -Last 8
+    $output = & mvn test -s ../maven-settings.xml 2>&1
+    $output | Select-Object -Last 8
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "backend tests failed"
+        exit 1
+    }
 } finally {
     Pop-Location
 }
 
-Write-Host "==> 前端构建"
+Write-Host "==> Frontend build"
 Push-Location "$ProjectRoot\frontend"
 try {
-    npm run build 2>&1 | Select-Object -Last 6
+    $output = & npm run build 2>&1
+    $output | Select-Object -Last 6
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "frontend build failed"
+        exit 1
+    }
 } finally {
     Pop-Location
 }
 
-Write-Host "==> docker compose 配置校验"
-docker compose config --quiet
+Write-Host "==> Docker compose config"
+$output = & docker compose config --quiet 2>&1
+$output
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "docker compose config 校验失败"
+    Write-Error "docker compose config validation failed"
+    exit 1
+}
+
+Write-Host "==> Security baseline"
+$output = & "$ProjectRoot\scripts\security-check.ps1" -ProjectRoot $ProjectRoot 2>&1
+$output
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "security baseline check failed"
+    exit 1
 }
 
 if ($HealthUrl) {
-    Write-Host "==> 健康检查: $HealthUrl"
+    Write-Host "==> Health check: $HealthUrl"
     $resp = Invoke-RestMethod -Uri $HealthUrl -TimeoutSec 10
     $resp | ConvertTo-Json -Depth 4
 }
 
-Write-Host "==> v5.5 全量回归完成"
+Write-Host "==> vT5 full regression completed"
