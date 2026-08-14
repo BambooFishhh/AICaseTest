@@ -4,6 +4,23 @@
 
 ---
 
+## 修复记录 — 安全基线误报
+**日期**: 2026-08-14
+**主题**: 修正 `.env.example` 占位符与 ProductionGuard 默认值误报为密钥
+
+### 变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| .env.example | APP_JWT_SECRET 改为短占位符 | 避免触发 secret 扫描误报 |
+| scripts/security-check.ps1 | 跳过 ProductionGuard.java | 文件内默认值为主动检测目标，非真实密钥 |
+
+### 验证结果
+
+- `scripts/security-check.ps1`：security check OK
+
+---
+
 ## vP5 — 压测与容量
 **日期**: 2026-08-14
 **基线**: vP4

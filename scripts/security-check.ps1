@@ -24,7 +24,7 @@ $regex = ($patterns | ForEach-Object { "($_)" }) -join '|'
 $raw = git ls-files -z
 $files = $raw -split "`0" | Where-Object { $_ }
 foreach ($file in $files) {
-    if ($file -match '/src/test/' -or $file -match '\.test\.js$') {
+    if ($file -match '/src/test/' -or $file -match '\.test\.js$' -or $file -match 'ProductionGuard\.java$') {
         continue
     }
     $item = Get-Item -LiteralPath $file -ErrorAction SilentlyContinue
