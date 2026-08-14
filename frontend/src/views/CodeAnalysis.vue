@@ -270,23 +270,21 @@
           <template #label>
             <span class="tab-label">
               <el-icon><Monitor /></el-icon>前端分析
-              <span v-if="hasFrontendData" class="tab-count dot-only"></span>
+              <span v-if="hasFrontendData" class="tab-count">{{ frontendTotal }}</span>
             </span>
           </template>
           <el-empty v-if="!hasFrontendData" description="无前端分析数据" />
 
-          <div v-else class="frontend-grid">
-            <el-collapse v-model="activeFrontend" class="frontend-collapse">
-            <!-- 表单字段 -->
-            <el-collapse-item v-if="frontendForms.length" name="forms" class="frontend-card">
-              <template #title>
-                <div class="frontend-head">
-                  <el-icon :size="18"><Document /></el-icon>
-                  <h3 class="frontend-title">表单字段与校验</h3>
-                  <span class="frontend-count">{{ frontendForms.length }}</span>
-                </div>
+          <el-tabs v-else v-model="frontendTab" class="frontend-sub-tabs">
+            <el-tab-pane name="forms">
+              <template #label>
+                <span class="tab-label">
+                  <el-icon><Document /></el-icon>表单字段
+                  <span class="tab-count">{{ frontendForms.length }}</span>
+                </span>
               </template>
-              <el-table :data="frontendForms" stripe size="small">
+              <el-empty v-if="!frontendForms.length" description="无表单字段数据" />
+              <el-table v-else :data="frontendForms" stripe size="small">
                 <el-table-column prop="component" label="组件" width="150" />
                 <el-table-column label="字段">
                   <template #default="{ row }">
@@ -308,18 +306,17 @@
                 </el-table-column>
                 <el-table-column prop="file" label="文件" width="180" show-overflow-tooltip />
               </el-table>
-            </el-collapse-item>
+            </el-tab-pane>
 
-            <!-- 组件交互状态 -->
-            <el-collapse-item v-if="componentStates.length" name="states" class="frontend-card">
-              <template #title>
-                <div class="frontend-head">
-                  <el-icon :size="18"><Switch /></el-icon>
-                  <h3 class="frontend-title">组件交互状态</h3>
-                  <span class="frontend-count">{{ componentStates.length }}</span>
-                </div>
+            <el-tab-pane name="states">
+              <template #label>
+                <span class="tab-label">
+                  <el-icon><Switch /></el-icon>组件状态
+                  <span class="tab-count">{{ componentStates.length }}</span>
+                </span>
               </template>
-              <el-table :data="componentStates" stripe size="small">
+              <el-empty v-if="!componentStates.length" description="无组件状态数据" />
+              <el-table v-else :data="componentStates" stripe size="small">
                 <el-table-column prop="component" label="组件" width="150" />
                 <el-table-column label="类型" width="100">
                   <template #default="{ row }">
@@ -330,18 +327,17 @@
                 <el-table-column prop="trigger" label="触发方式" min-width="180" show-overflow-tooltip />
                 <el-table-column prop="file" label="文件" width="180" show-overflow-tooltip />
               </el-table>
-            </el-collapse-item>
+            </el-tab-pane>
 
-            <!-- DOM 选择器 -->
-            <el-collapse-item v-if="domSelectors.length" name="selectors" class="frontend-card">
-              <template #title>
-                <div class="frontend-head">
-                  <el-icon :size="18"><Aim /></el-icon>
-                  <h3 class="frontend-title">DOM 选择器</h3>
-                  <span class="frontend-count">{{ domSelectors.length }}</span>
-                </div>
+            <el-tab-pane name="selectors">
+              <template #label>
+                <span class="tab-label">
+                  <el-icon><Aim /></el-icon>DOM 选择器
+                  <span class="tab-count">{{ domSelectors.length }}</span>
+                </span>
               </template>
-              <el-table :data="domSelectors" stripe size="small">
+              <el-empty v-if="!domSelectors.length" description="无 DOM 选择器数据" />
+              <el-table v-else :data="domSelectors" stripe size="small">
                 <el-table-column prop="component" label="组件" width="150" />
                 <el-table-column label="选择器">
                   <template #default="{ row }">
@@ -356,18 +352,17 @@
                 </el-table-column>
                 <el-table-column prop="file" label="文件" width="180" show-overflow-tooltip />
               </el-table>
-            </el-collapse-item>
+            </el-tab-pane>
 
-            <!-- 页面跳转关系 -->
-            <el-collapse-item v-if="pageFlows.length" name="flows" class="frontend-card">
-              <template #title>
-                <div class="frontend-head">
-                  <el-icon :size="18"><Connection /></el-icon>
-                  <h3 class="frontend-title">页面跳转关系</h3>
-                  <span class="frontend-count">{{ pageFlows.length }}</span>
-                </div>
+            <el-tab-pane name="flows">
+              <template #label>
+                <span class="tab-label">
+                  <el-icon><Connection /></el-icon>页面跳转
+                  <span class="tab-count">{{ pageFlows.length }}</span>
+                </span>
               </template>
-              <el-table :data="pageFlows" stripe size="small">
+              <el-empty v-if="!pageFlows.length" description="无页面跳转数据" />
+              <el-table v-else :data="pageFlows" stripe size="small">
                 <el-table-column prop="from" label="来源页面" width="150" />
                 <el-table-column label="" width="40" align="center">
                   <template #default>
@@ -378,9 +373,8 @@
                 <el-table-column prop="trigger" label="触发条件" min-width="200" show-overflow-tooltip />
                 <el-table-column prop="component" label="组件" width="150" />
               </el-table>
-            </el-collapse-item>
-            </el-collapse>
-          </div>
+            </el-tab-pane>
+          </el-tabs>
         </el-tab-pane>
       </el-tabs>
     </section>
@@ -414,8 +408,7 @@ const projectId = route.params.id
 
 const loading = ref(false)
 const activeTab = ref('stateMachines')
-// v4.5: 前端分析面板可折叠（默认折叠）
-const activeFrontend = ref([])
+const frontendTab = ref('forms')
 const analysis = ref(null)
 const stateMachines = ref([])
 const methodFilter = ref('')
@@ -435,6 +428,12 @@ const frontendForms = computed(() => frontendResult.value.forms || [])
 const componentStates = computed(() => frontendResult.value.componentStates || [])
 const domSelectors = computed(() => frontendResult.value.domSelectors || [])
 const pageFlows = computed(() => frontendResult.value.pageFlows || [])
+const frontendTotal = computed(() =>
+  frontendForms.value.length +
+  componentStates.value.length +
+  domSelectors.value.length +
+  pageFlows.value.length
+)
 const hasFrontendData = computed(() =>
   frontendForms.value.length > 0 ||
   componentStates.value.length > 0 ||
@@ -772,81 +771,14 @@ onMounted(loadData)
 }
 
 /* ===== 前端分析 ===== */
-.frontend-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--space-md);
-}
-
-.frontend-card {
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-lg);
-  background: var(--bg-surface);
-  overflow: hidden;
-  box-shadow: var(--shadow-xs);
-  transition: box-shadow var(--transition-normal);
-  border: none;
-  box-shadow: none;
-
-  &:hover {
-    box-shadow: var(--shadow-sm);
-  }
-}
-
-.frontend-collapse {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  border: none;
-
-  :deep(.el-collapse-item__header) {
-    height: auto;
-    line-height: normal;
-    background: var(--bg-surface);
-    border: 1px solid var(--card-border);
-    border-radius: var(--radius-lg);
-    padding: 0;
-    margin-bottom: 0;
+.frontend-sub-tabs {
+  :deep(.el-tabs__header) {
+    margin-bottom: var(--space-md);
   }
 
-  :deep(.el-collapse-item__wrap) {
-    border: none;
-    background: transparent;
+  :deep(.el-tabs__content) {
+    overflow: visible;
   }
-
-  :deep(.el-collapse-item__content) {
-    padding: 0;
-  }
-}
-
-.frontend-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 18px;
-  background: #f8fafc;
-  border-bottom: 1px solid var(--card-border-light);
-
-  .el-icon {
-    color: var(--brand-primary);
-  }
-}
-
-.frontend-title {
-  flex: 1;
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.frontend-count {
-  padding: 2px 10px;
-  border-radius: var(--radius-full);
-  background: var(--el-color-primary-light-9);
-  color: var(--brand-primary);
-  font-size: 12px;
-  font-weight: 600;
 }
 
 .field-list {

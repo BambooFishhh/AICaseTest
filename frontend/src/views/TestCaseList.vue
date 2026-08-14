@@ -7,7 +7,18 @@
         <h1 class="page-title">测试用例</h1>
       </div>
       <div class="page-actions">
-        <el-button v-if="canOperate" :icon="Setting" @click="handleOpenGenParams">生成参数</el-button>
+        <el-dropdown v-if="canOperate" trigger="click" @command="handleHeaderCommand">
+          <el-button :icon="MoreFilled">
+            更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="genParams" :icon="Setting">生成参数</el-dropdown-item>
+              <el-dropdown-item command="mindmap" :icon="Share" :disabled="generatingMap">生成脑图</el-dropdown-item>
+              <el-dropdown-item v-if="mindmapGenerated" command="viewMindmap" :icon="View">查看脑图</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button v-if="canOperate" type="warning" :icon="Plus" :disabled="streaming" @click="handleOpenAppendDialog">
           追加生成
         </el-button>
@@ -20,12 +31,6 @@
           @click="handleRegenerate"
         >
           重新生成
-        </el-button>
-        <el-button v-if="canOperate" :icon="Share" :loading="generatingMap" @click="handleGenerateMindmap">
-          生成脑图
-        </el-button>
-        <el-button v-if="canOperate && mindmapGenerated" type="success" :icon="View" @click="handleViewMindmap">
-          查看脑图
         </el-button>
         <!-- v3.11: 执行历史入口 -->
         <el-button :icon="Clock" @click="goExecutions">执行历史</el-button>
@@ -199,17 +204,14 @@
     <section v-if="selectedRows.length > 0" class="batch-toolbar">
       <span class="batch-count">已选 {{ selectedRows.length }} 条</span>
       <div class="batch-actions">
-        <el-button v-if="canOperate" type="danger" :icon="Delete" @click="handleBatchDelete">
+        <el-button v-if="canOperate" type="danger" size="small" :icon="Delete" @click="handleBatchDelete">
           批量删除
         </el-button>
-        <el-button v-if="canOperate" type="success" :icon="VideoPlay" @click="openBatchExecuteDialog">
+        <el-button v-if="canOperate" type="success" size="small" :icon="VideoPlay" @click="openBatchExecuteDialog">
           批量执行
         </el-button>
-        <el-button v-if="canOperate" :icon="Download" @click="handleExportSelected">
-          导出选中
-        </el-button>
         <el-dropdown v-if="canOperate" @command="handleReviewCommand">
-          <el-button :icon="Check">
+          <el-button size="small" :icon="Check">
             批量评审<el-icon class="el-icon--right"><ArrowDown /></el-icon>
           </el-button>
           <template #dropdown>
@@ -227,13 +229,23 @@
     <!-- 主操作工具栏 -->
     <section class="action-toolbar">
       <div class="action-left">
-        <el-button v-if="canOperate" :icon="Upload" @click="triggerImportXmind">导入 XMind</el-button>
-        <!-- v3.16: XMind 导入模板 -->
-        <el-button :icon="Download" @click="downloadXmindTemplate">模板</el-button>
-        <el-button v-if="canOperate" type="success" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
+        <el-button v-if="canOperate" type="success" size="small" :icon="Plus" @click="handleCreateTestCase">新增用例</el-button>
+        <el-dropdown v-if="canOperate" @command="handleImportCommand">
+          <el-button size="small" :icon="Upload">
+            导入<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="xmind" :icon="Files">XMind</el-dropdown-item>
+              <el-dropdown-item command="json" :icon="Document">JSON</el-dropdown-item>
+              <el-dropdown-item command="template" :icon="Download">导入模板</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <!-- v4.3: 复制执行（只读成员也可用） -->
         <el-button
           type="warning"
+          size="small"
           :icon="CopyDocument"
           :disabled="selectedRows.length === 0"
           @click="openCopyExecuteDialog"
@@ -241,31 +253,26 @@
           复制执行
         </el-button>
         <!-- v3.12: 快捷批量执行 -->
-        <el-button
-          v-if="canOperate"
-          type="danger"
-          plain
-          :icon="RefreshRight"
-          :disabled="failedCount === 0"
-          @click="handleRerunFailed"
-        >
-          重跑失败<span v-if="failedCount > 0">（{{ failedCount }}）</span>
-        </el-button>
-        <el-button
-          v-if="canOperate"
-          type="success"
-          plain
-          :icon="CircleCheck"
-          :disabled="approvedCount === 0"
-          @click="handleExecuteApproved"
-        >
-          执行已批准<span v-if="approvedCount > 0">（{{ approvedCount }}）</span>
-        </el-button>
+        <el-dropdown v-if="canOperate" @command="handleQuickCommand">
+          <el-button size="small" :icon="VideoPlay">
+            快捷执行<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="rerunFailed" :icon="RefreshRight" :disabled="failedCount === 0">
+                重跑失败{{ failedCount > 0 ? `（${failedCount}）` : '' }}
+              </el-dropdown-item>
+              <el-dropdown-item command="approved" :icon="CircleCheck" :disabled="approvedCount === 0">
+                执行已批准{{ approvedCount > 0 ? `（${approvedCount}）` : '' }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
       <div class="action-right">
         <!-- v3.13: 导出下拉（选中优先，未选中导出全部） -->
         <el-dropdown @command="handleExportCommand">
-          <el-button :icon="Download">
+          <el-button size="small" :icon="Download">
             导出<el-icon class="el-icon--right"><ArrowDown /></el-icon>
           </el-button>
           <template #dropdown>
@@ -275,23 +282,10 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <!-- v3.13: 导入 JSON -->
-        <el-button v-if="canOperate" :icon="Upload" @click="triggerImportJson">导入 JSON</el-button>
-        <!-- v3.13: 跨项目复制 -->
-        <el-button v-if="canOperate" :icon="CopyDocument" :disabled="selectedRows.length === 0" @click="openCopyDialog">
-          复制到
-        </el-button>
-        <!-- v3.15: 测试集/回归集 -->
-        <el-button v-if="canOperate" :icon="Files" :disabled="selectedRows.length === 0" @click="openSaveSuiteDialog">
-          保存为测试集
-        </el-button>
-        <el-button v-if="canOperate" :icon="Operation" @click="openSuiteDialog">测试集</el-button>
-        <!-- v3.15: 多执行环境 -->
-        <el-button v-if="canOperate" :icon="Connection" @click="openEnvDialog">执行环境</el-button>
         <!-- v3.18: 显示设置（列显隐 + 密度） -->
         <el-popover placement="bottom-end" :width="240" trigger="click">
           <template #reference>
-            <el-button :icon="Setting">显示设置</el-button>
+            <el-button size="small" :icon="Setting" aria-label="显示设置" />
           </template>
           <div class="view-settings">
             <div v-for="col in columnOptions" :key="col.key" class="vs-row">
@@ -303,8 +297,21 @@
             </div>
           </div>
         </el-popover>
-        <!-- v5.4: 语义搜索 -->
-        <el-button :icon="Search" @click="openSemanticDialog">语义搜索</el-button>
+        <!-- 低频资产操作收纳到“更多” -->
+        <el-dropdown v-if="canOperate" @command="handleMoreCommand">
+          <el-button size="small" :icon="MoreFilled">
+            更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="copy" :icon="CopyDocument" :disabled="selectedRows.length === 0">复制到</el-dropdown-item>
+              <el-dropdown-item command="saveSuite" :icon="Files" :disabled="selectedRows.length === 0">保存为测试集</el-dropdown-item>
+              <el-dropdown-item command="suites" :icon="Operation">测试集</el-dropdown-item>
+              <el-dropdown-item command="env" :icon="Connection">执行环境</el-dropdown-item>
+              <el-dropdown-item command="semantic" :icon="Search">语义搜索</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <input
           ref="xmindFileInput"
           type="file"
@@ -448,29 +455,26 @@
           </template>
         </el-table-column>
         <!-- 操作列：单条执行 + 手动标记状态 -->
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="110" fixed="right">
           <template #default="{ row }">
-            <template v-if="!row.isModule && canOperate">
-              <el-button
-                type="primary"
-                link
-                :icon="VideoPlay"
-                @click.stop="openRowExecute(row)"
-              >
-                执行
-              </el-button>
-              <el-dropdown trigger="click" @command="(s) => handleManualStatus(row, s)">
-                <el-button link :icon="EditPen" @click.stop>标记</el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item command="passed">通过</el-dropdown-item>
-                    <el-dropdown-item command="blocked">阻塞</el-dropdown-item>
-                    <el-dropdown-item command="failed">失败</el-dropdown-item>
-                    <el-dropdown-item command="not_executed" divided>未执行</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
-            </template>
+            <div v-if="!row.isModule && canOperate" class="row-actions">
+              <el-tooltip content="执行" placement="top">
+                <el-button type="primary" link :icon="VideoPlay" @click.stop="openRowExecute(row)" />
+              </el-tooltip>
+              <el-tooltip content="标记状态" placement="top">
+                <el-dropdown trigger="click" @command="(s) => handleManualStatus(row, s)">
+                  <el-button link :icon="EditPen" @click.stop />
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="passed">通过</el-dropdown-item>
+                      <el-dropdown-item command="blocked">阻塞</el-dropdown-item>
+                      <el-dropdown-item command="failed">失败</el-dropdown-item>
+                      <el-dropdown-item command="not_executed" divided>未执行</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -884,7 +888,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Delete, Download, Upload, Check, ArrowDown, VideoPlay,
-  Setting, Plus, View, RefreshRight, Share, Files, CircleCheck,
+  Setting, Plus, View, RefreshRight, Share, Files, Document, MoreFilled, CircleCheck,
   CircleClose, Aim, Coin, FolderOpened, ArrowLeft, Loading, DataAnalysis,
   Clock, Filter, CopyDocument, Operation, Connection, MagicStick, EditPen
 } from '@element-plus/icons-vue'
@@ -1039,6 +1043,35 @@ async function loadCoverageMatrix() {
 function handleSelectionChange(rows) {
   // v3.13: 过滤模块行，避免 module-xxx 进入批量操作
   selectedRows.value = rows.filter((r) => !r.isModule)
+}
+
+// 页头“更多”菜单
+function handleHeaderCommand(command) {
+  if (command === 'genParams') handleOpenGenParams()
+  else if (command === 'mindmap') handleGenerateMindmap()
+  else if (command === 'viewMindmap') handleViewMindmap()
+}
+
+// 工具栏“导入”菜单
+function handleImportCommand(command) {
+  if (command === 'xmind') triggerImportXmind()
+  else if (command === 'json') triggerImportJson()
+  else if (command === 'template') downloadXmindTemplate()
+}
+
+// 工具栏“快捷执行”菜单
+function handleQuickCommand(command) {
+  if (command === 'rerunFailed') handleRerunFailed()
+  else if (command === 'approved') handleExecuteApproved()
+}
+
+// 工具栏“更多”菜单
+function handleMoreCommand(command) {
+  if (command === 'copy') openCopyDialog()
+  else if (command === 'saveSuite') openSaveSuiteDialog()
+  else if (command === 'suites') openSuiteDialog()
+  else if (command === 'env') openEnvDialog()
+  else if (command === 'semantic') openSemanticDialog()
 }
 
 const moduleOptions = computed(() => {
@@ -2214,6 +2247,12 @@ onUnmounted(() => {
     gap: 8px;
     flex-wrap: wrap;
   }
+}
+
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 /* ===== v3.11: 覆盖率关联用例筛选横幅 ===== */

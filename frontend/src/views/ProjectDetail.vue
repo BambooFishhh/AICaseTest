@@ -137,6 +137,9 @@
             <div class="action-card-head">
               <el-icon :size="18"><View /></el-icon>
               <span class="action-card-title">查看</span>
+              <el-tooltip v-if="canOperate" content="导出备份" placement="top">
+                <el-button text :icon="Download" @click="exportProject" />
+              </el-tooltip>
             </div>
             <div class="action-buttons">
               <el-button :icon="DataAnalysis" :disabled="!canViewAnalysis" @click="goAnalysis">
@@ -148,8 +151,6 @@
               <el-button :icon="Share" :disabled="!canViewMindmap" @click="goMindmap">脑图预览</el-button>
               <!-- v3.11: 执行历史入口 -->
               <el-button :icon="Clock" :disabled="!canViewExecutions" @click="goExecutions">执行历史</el-button>
-              <!-- v3.16: 项目导出备份 -->
-              <el-button v-if="canOperate" :icon="Download" @click="exportProject">导出备份</el-button>
             </div>
           </div>
         </div>
@@ -667,11 +668,17 @@ onUnmounted(() => {
 .action-card-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
   margin-bottom: 12px;
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
+
+  .el-button {
+    height: 24px;
+    color: var(--text-tertiary);
+  }
 }
 
 .action-card-title {
@@ -679,9 +686,14 @@ onUnmounted(() => {
 }
 
 .action-buttons {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+
+  .el-button {
+    width: 100%;
+    margin: 0;
+  }
 }
 
 .optional-tag {
