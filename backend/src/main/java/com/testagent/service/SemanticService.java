@@ -53,12 +53,17 @@ public class SemanticService {
         }
     }
 
-    public void clearProject(String projectId) {
+    // v5.6: 重新生成/重建用例时只清 cases，保留 contexts/failures
+    public void clearCases(String projectId) {
         if (!milvusService.isEnabled()) {
             return;
         }
-        // v5.6: 项目删除/重建时清理三集合
         milvusService.deleteByProject(MilvusService.COLLECTION_CASES, projectId);
+    }
+
+    // v5.6: 项目删除时清理三集合
+    public void clearProject(String projectId) {
+        clearCases(projectId);
         milvusService.deleteByProject(MilvusService.COLLECTION_CONTEXTS, projectId);
         milvusService.deleteByProject(MilvusService.COLLECTION_FAILURES, projectId);
     }

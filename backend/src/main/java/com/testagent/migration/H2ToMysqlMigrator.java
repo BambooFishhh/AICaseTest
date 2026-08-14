@@ -82,7 +82,6 @@ public class H2ToMysqlMigrator implements CommandLineRunner {
             restoreBackup();
             return;
         }
-        backupH2Files();
         if (dryRun) {
             try (Connection src = DriverManager.getConnection(sourceUrl, sourceUser, sourcePassword)) {
                 for (String table : TABLES) {
@@ -94,6 +93,7 @@ public class H2ToMysqlMigrator implements CommandLineRunner {
             log.info("Dry-run completed, no data written");
             return;
         }
+        backupH2Files();
         try (Connection src = DriverManager.getConnection(sourceUrl, sourceUser, sourcePassword);
              Connection dst = targetDataSource.getConnection()) {
             List<String> migrated = new ArrayList<>();

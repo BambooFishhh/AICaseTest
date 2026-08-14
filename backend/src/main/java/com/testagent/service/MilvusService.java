@@ -97,44 +97,47 @@ public class MilvusService {
         try {
             R<Boolean> exists = c.hasCollection(
                     HasCollectionParam.newBuilder().withCollectionName(name).build());
-            if (exists != null && Boolean.TRUE.equals(exists.getData())) {
-                return;
-            }
-            CreateCollectionParam param = CreateCollectionParam.newBuilder()
-                    .withCollectionName(name)
-                    .withDescription(name + " semantic collection")
-                    .withShardsNum(1)
-                    .addFieldType(FieldType.newBuilder().withName("id")
-                            .withDataType(DataType.VarChar).withMaxLength(128).withPrimaryKey(true).build())
-                    .addFieldType(FieldType.newBuilder().withName("project_id")
-                            .withDataType(DataType.VarChar).withMaxLength(64).build())
-                    .addFieldType(FieldType.newBuilder().withName("title")
-                            .withDataType(DataType.VarChar).withMaxLength(512).build())
-                    .addFieldType(FieldType.newBuilder().withName("module")
-                            .withDataType(DataType.VarChar).withMaxLength(128).build())
-                    .addFieldType(FieldType.newBuilder().withName("text")
-                            .withDataType(DataType.VarChar).withMaxLength(8192).build())
-                    .addFieldType(FieldType.newBuilder().withName("embedding")
-                            .withDataType(DataType.FloatVector).withDimension(dimension).build())
-                    .build();
-            R<RpcStatus> resp = c.createCollection(param);
-            log.info("Created Milvus collection {}: status={}", name, resp == null ? "null" : resp.getStatus());
-            // v5.7: 建 ANN 索引并加载，避免暴力扫描
-            try {
-                CreateIndexParam indexParam = CreateIndexParam.newBuilder()
+            if (exists == null || !Boolean.TRUE.equals(exists.getData())) {
+                CreateCollectionParam param = CreateCollectionParam.newBuilder()
                         .withCollectionName(name)
-                        .withFieldName("embedding")
-                        .withIndexType(IndexType.IVF_FLAT)
-                        .withMetricType(MetricType.COSINE)
-                        .withExtraParam("{\"nlist\":128}")
+                        .withDescription(name + " semantic collection")
+                        .withShardsNum(1)
+                        .addFieldType(FieldType.newBuilder().withName("id")
+                                .withDataType(DataType.VarChar).withMaxLength(128).withPrimaryKey(true).build())
+                        .addFieldType(FieldType.newBuilder().withName("project_id")
+                                .withDataType(DataType.VarChar).withMaxLength(64).build())
+                        .addFieldType(FieldType.newBuilder().withName("title")
+                                .withDataType(DataType.VarChar).withMaxLength(512).build())
+                        .addFieldType(FieldType.newBuilder().withName("module")
+                                .withDataType(DataType.VarChar).withMaxLength(128).build())
+                        .addFieldType(FieldType.newBuilder().withName("text")
+                                .withDataType(DataType.VarChar).withMaxLength(8192).build())
+                        .addFieldType(FieldType.newBuilder().withName("embedding")
+                                .withDataType(DataType.FloatVector).withDimension(dimension).build())
                         .build();
-                c.createIndex(indexParam);
-                c.loadCollection(LoadCollectionParam.newBuilder().withCollectionName(name).build());
-            } catch (Exception ie) {
-                log.warn("Failed to create/load Milvus index for {}: {}", name, ie.getMessage());
+                R<RpcStatus> resp = c.createCollection(param);
+                log.info("Created Milvus collection {}: status={}", name, resp == null ? "null" : resp.getStatus());
             }
+            // v5.7fix: 已有集合也补建 ANN 索引并加载
+            createIndexAndLoad(c, name);
         } catch (Exception e) {
             log.warn("Failed to ensure Milvus collection {}: {}", name, e.getMessage());
+        }
+    }
+
+    private void createIndexAndLoad(MilvusServiceClient c, String name) {
+        try {
+            CreateIndexParam indexParam = CreateIndexParam.newBuilder()
+                    .withCollectionName(name)
+                    .withFieldName("embedding")
+                    .withIndexType(IndexType.IVF_FLAT)
+                    .withMetricType(MetricType.COSINE)
+                    .withExtraParam("{\"nlist\":128}")
+                    .build();
+            c.createIndex(indexParam);
+            c.loadCollection(LoadCollectionParam.newBuilder().withCollectionName(name).build());
+        } catch (Exception ie) {
+            log.warn("Failed to create/load Milvus index for {}: {}", name, ie.getMessage());
         }
     }
 

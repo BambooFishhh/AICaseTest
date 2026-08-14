@@ -137,7 +137,7 @@ public class TestCaseService {
             testCasePersistenceService.replaceAll(projectId, testCases);
 
             // v5.4/v5.6: 重新生成后重建语义索引
-            semanticService.clearProject(projectId);
+            semanticService.clearCases(projectId);
             semanticService.indexCases(projectId, testCases);
 
             // v1.6: 完成时清除进度
@@ -163,6 +163,8 @@ public class TestCaseService {
     @Async("generationExecutor")
     public void runGenerateStream(String projectId, SseEmitter emitter) {
         AtomicBoolean clientGone = new AtomicBoolean(false);
+        // v5.8fix: 清除上次可能残留的取消标志，避免新任务被误取消
+        runtimeStore.clearFlag("gen:cancel:" + projectId);
         // v5.2: 取消标志写入 RuntimeStore（Redis/内存），支持跨实例取消
         RuntimeFlag cancelled = runtimeStore.newFlag("gen:cancel:" + projectId);
         // v3.3: 客户端断开同时置 cancelled（不只跳过 send，还要停止生成 + 跳过落库）
@@ -218,7 +220,7 @@ public class TestCaseService {
             testCasePersistenceService.replaceAll(projectId, testCases);
 
             // v5.4/v5.6: 重新生成后重建语义索引
-            semanticService.clearProject(projectId);
+            semanticService.clearCases(projectId);
             semanticService.indexCases(projectId, testCases);
 
             projectRepository.updateProgress(projectId, null);
@@ -260,6 +262,7 @@ public class TestCaseService {
     @Async("generationExecutor")
     public void runGenerateStreamAppend(String projectId, String type, SseEmitter emitter) {
         AtomicBoolean clientGone = new AtomicBoolean(false);
+        runtimeStore.clearFlag("gen:cancel:" + projectId);
         RuntimeFlag cancelled = runtimeStore.newFlag("gen:cancel:" + projectId);
         emitter.onCompletion(() -> {
             clientGone.set(true);
@@ -419,8 +422,6 @@ public class TestCaseService {
             flag.cancel();
             return true;
         }
-        // v5.2: 任务尚未注册时也写入存储层，供后续检查
-        runtimeStore.setFlag("gen:cancel:" + projectId, true);
         return false;
     }
 

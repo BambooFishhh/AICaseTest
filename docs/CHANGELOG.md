@@ -4,6 +4,27 @@
 
 ---
 
+## 修复记录 — v5 数据层复查（v5.6~v5.8）
+**日期**: 2026-08-14
+**主题**: 重新生成误清语义上下文 / 取消标志残留 / Milvus 已有集合未建索引 / 迁移 dry-run 顺序
+
+### 修复内容
+
+| 文件 | 修复 | 说明 |
+|---|---|---|
+| service/SemanticService.java | 新增 clearCases，clearProject 仅用于项目删除 | 重新生成不再误删 contexts/failures |
+| service/TestCaseService.java | 重新生成改用 clearCases；取消无任务时不再写残留标志；生成前清残留取消标志 | 修复取消标志导致下一次生成被误取消 |
+| service/MilvusService.java | 已有集合也补建 ANN 索引并加载 | 修复存量集合仍走暴力扫描 |
+| migration/H2ToMysqlMigrator.java | dry-run 提前到备份之前 | dry-run 只统计不产生备份文件 |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS（140 源文件）
+- 后端测试: Tests run 2, Failures 0（mvn test）
+- 前端构建: ✓ built in 16.40s
+
+---
+
 ## v5.8 — 数据治理与可观测
 **日期**: 2026-08-14
 **基线**: v5.7
