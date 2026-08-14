@@ -6,6 +6,9 @@ spring:
     driver-class-name: org.h2.Driver
     username: sa
     password:
+  # v5.0: H2 开发环境不启用 Flyway，schema 继续由 JPA 管理
+  flyway:
+    enabled: false
   jpa:
     hibernate:
       ddl-auto: update

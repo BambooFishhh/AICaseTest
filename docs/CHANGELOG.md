@@ -4,6 +4,34 @@
 
 ---
 
+## v5.0 — 数据层准备
+**日期**: 2026-08-14
+**基线**: v4.4
+**主题**: Flyway schema 版本管理 + 双数据源 profile（dev=H2 / prod=MySQL）+ MySQL 容器基建
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| pom.xml | 新增 flyway-core + flyway-mysql + mysql-connector-j | MySQL 驱动与 schema 版本管理 |
+| resources/application.yml | 新增 `spring.flyway.enabled=false` | H2 开发环境不启用 Flyway |
+| resources/application-mysql.yml | 新增 | MySQL profile：Flyway 开启、JPA ddl-auto=none |
+| resources/application-prod.yml | 改为 include mysql | 生产走 MySQL |
+| resources/db/migration/mysql/V1__init_schema.sql | 新增 | 13 张业务表 MySQL 基线 schema + 索引 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| 无 | - | 本版本无前端代码变更 |
+
+### 验证结果
+
+- 后端编译: BUILD SUCCESS（mvn compile，119 源文件）
+- 前端构建: ✓ built in 27.58s
+
+---
+
 ## v4.4 — 分析流式化
 
 **日期**: 2026-08-13

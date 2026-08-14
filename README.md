@@ -6,7 +6,7 @@
 
 | 层 | 技术 |
 |----|------|
-| 后端 | Java 17、Spring Boot 3.2、Spring Data JPA、H2 |
+| 后端 | Java 17、Spring Boot 3.2、Spring Data JPA、H2 / MySQL（Flyway） |
 | 前端 | Vue 3、Vite、Element Plus、Pinia |
 | LLM | OpenAI 兼容协议（OkHttp） |
 | 部署 | Docker、docker-compose |
@@ -603,6 +603,15 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 
 详见：[PRD v4.4](docs/v4.4/PRD_v4.4_分析流式化.md)
 
+### v5.0 — 数据层准备
+
+引入 Flyway schema 版本管理，建立 H2（开发）/ MySQL（生产）双数据源 profile，并在 docker-compose 增加独立 MySQL 容器。
+
+- 后端: 新增 Flyway + MySQL 驱动；`application-mysql.yml` 开启 Flyway、关闭 JPA 自动建表；MySQL 基线 schema 覆盖全部业务表
+- 部署: docker-compose 新增 `aicasetest-mysql`（3308），独立数据卷与健康检查
+
+详见：[PRD v5.0](docs/v5.0/PRD_v5.0_数据层准备.md)
+
 ### 路线规划
 
 | 版本 | 主题 | 状态 |
@@ -654,6 +663,7 @@ MCP Client 从单 Server 重构为多 Server 架构，为接入 Playwright MCP �
 | v4.2 | 多线程高并发（线程池治理/并发配额/批量排队取消/幂等） | ✅ 完成 |
 | v4.3 | 项目组与权限（组共享/成员角色/复制执行隔离） | ✅ 完成 |
 | v4.4 | 分析流式化（SSE 实时阶段进度） | ✅ 完成 |
+| v5.0 | 数据层准备（Flyway + MySQL profile + 数据库容器） | ✅ 完成 |
 
 ## API 概览
 

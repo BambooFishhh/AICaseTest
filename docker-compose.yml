@@ -1,4 +1,26 @@
 services:
+  # ========== v5.0: MySQL 数据库（3308 避开本机 3306/3307） ==========
+  mysql:
+    image: mysql:8.0
+    container_name: aicasetest-mysql
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-aicasetest-root}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-aicasetest}
+      - MYSQL_USER=${MYSQL_USERNAME:-aicasetest}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-aicasetest123}
+      - TZ=Asia/Shanghai
+    ports:
+      - "${MYSQL_PORT:-3308}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-aicasetest-root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
   # ========== 后端 ==========
   backend:
     build:
@@ -23,6 +45,9 @@ services:
       # 待分析项目代码（只读挂载 litemall）
       - E:/java_project/litemall:/app/projects/litemall:ro
     restart: unless-stopped
+
+volumes:
+  mysql-data:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 15s
