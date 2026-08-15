@@ -1053,6 +1053,9 @@ public class TestCaseService {
 
         Set<String> coveredTransitions = new HashSet<>();
         for (TestCase tc : allTestCases) {
+            if (!isExecuted(tc)) {
+                continue;
+            }
             Map<String, Object> smRef = JsonHelper.parseMap(tc.getStateMachineRef());
             Object transitionsObj = smRef.get("transitions");
             if (transitionsObj instanceof List) {
@@ -1102,6 +1105,9 @@ public class TestCaseService {
 
         Set<String> coveredEndpoints = new HashSet<>();
         for (TestCase tc : allTestCases) {
+            if (!isExecuted(tc)) {
+                continue;
+            }
             List<Map<String, Object>> eps = JsonHelper.parseListMap(tc.getApiEndpoints());
             for (Map<String, Object> ep : eps) {
                 String method = String.valueOf(ep.getOrDefault("method", ""));
@@ -1138,6 +1144,11 @@ public class TestCaseService {
         coverage.put("typeDistribution", typeDist);
 
         return coverage;
+    }
+
+    private boolean isExecuted(TestCase tc) {
+        String status = tc.getExecutionStatus();
+        return "passed".equals(status) || "failed".equals(status);
     }
 
     private String toJson(Object obj) {

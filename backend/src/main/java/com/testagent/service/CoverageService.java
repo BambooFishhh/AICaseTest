@@ -60,6 +60,9 @@ public class CoverageService {
 
                 List<String> coveringIds = new ArrayList<>();
                 for (TestCase tc : testCases) {
+                    if (!isExecuted(tc)) {
+                        continue;
+                    }
                     if (tc.getStateMachineRef() != null) {
                         try {
                             Map<String, Object> ref = objectMapper.readValue(
@@ -101,5 +104,10 @@ public class CoverageService {
         result.put("stateMachines", smList);
         result.put("summary", summary);
         return result;
+    }
+
+    private boolean isExecuted(TestCase tc) {
+        String status = tc.getExecutionStatus();
+        return "passed".equals(status) || "failed".equals(status);
     }
 }
