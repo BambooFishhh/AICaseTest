@@ -130,6 +130,39 @@
             </el-button>
             <el-button size="large" @click="handleReset">重置</el-button>
             <el-button size="large" text @click="goBack">取消</el-button>
+            <el-popover v-model:visible="preconfigVisible" placement="bottom-end" :width="560" trigger="click">
+              <template #reference>
+                <el-button size="large" :icon="MoreFilled">更多</el-button>
+              </template>
+              <div class="preconfig-popover">
+                <div class="preconfig-title">Cookie 配置</div>
+                <div class="preconfig-tip">name 是 Cookie 名称，value 是对应的值；domain 填目标站点域名</div>
+                <div v-for="(cookie, idx) in cookies" :key="idx" class="cookie-card">
+                  <div class="cookie-fields">
+                    <div class="cookie-field">
+                      <span class="cookie-label">名称</span>
+                      <el-input v-model="cookie.name" placeholder="如 JSESSIONID" />
+                    </div>
+                    <div class="cookie-field">
+                      <span class="cookie-label">值</span>
+                      <el-input v-model="cookie.value" placeholder="Cookie 值" />
+                    </div>
+                    <div class="cookie-field">
+                      <span class="cookie-label">域名/URL</span>
+                      <el-input v-model="cookie.domain" placeholder="host.docker.internal" />
+                    </div>
+                  </div>
+                  <el-button :icon="Delete" text type="danger" @click="removeCookie(idx)">删除</el-button>
+                </div>
+                <div class="preconfig-actions">
+                  <el-button size="small" :icon="Plus" @click="addCookie">添加 Cookie</el-button>
+                  <el-button size="small" @click="applyExampleCookie">示例</el-button>
+                  <div style="flex: 1"></div>
+                  <el-button size="small" type="primary" @click="saveCookieConfig">保存</el-button>
+                </div>
+                <div class="preconfig-tip">预留：未来其他前置配置会加在这里</div>
+              </div>
+            </el-popover>
           </div>
         </el-form-item>
       </el-form>
@@ -143,7 +176,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   ArrowLeft, InfoFilled, MagicStick,
-  FolderOpened, Link, CircleCheckFilled
+  FolderOpened, Link, CircleCheckFilled, MoreFilled, Delete, Plus
 } from '@element-plus/icons-vue'
 import { createProject } from '@/api/project'
 import { listGroups } from '@/api/group'
@@ -153,6 +186,8 @@ import { onMounted } from 'vue'
 const router = useRouter()
 const formRef = ref()
 const submitting = ref(false)
+const preconfigVisible = ref(false)
+const cookies = ref([])
 
 const form = reactive({
   name: '',
@@ -220,13 +255,34 @@ async function handleSubmit() {
   if (!formRef.value) return
   await formRef.value.validate(async (valid) => {
     if (!valid) return
+    let executionCookies = []
+    if (cookies.value.length > 0) {
+      const missing = cookies.value.find(
+        (c) => !c.name || !c.name.trim() || !c.value || !c.value.trim() || !c.domain || !c.domain.trim()
+      )
+      if (missing) {
+        ElMessage.error('Cookie 存在未填写的字段')
+        return
+      }
+      executionCookies = cookies.value.map((c) => {
+        const base = { name: c.name.trim(), value: c.value.trim() }
+        const domain = c.domain.trim()
+        if (domain.startsWith('http://') || domain.startsWith('https://')) {
+          base.url = domain
+        } else {
+          base.domain = domain
+        }
+        return base
+      })
+    }
     submitting.value = true
     try {
       const res = await createProject({
         name: form.name,
         groupId: form.groupId || undefined,
         sourceType: form.sourceType,
-        sourcePath: form.sourcePath
+        sourcePath: form.sourcePath,
+        executionCookies
       })
       ElMessage.success('项目创建成功')
       router.push(`/projects/${res.data.id}`)
@@ -234,6 +290,36 @@ async function handleSubmit() {
       submitting.value = false
     }
   })
+}
+
+function applyExampleCookie() {
+  cookies.value = [
+    { name: 'JSESSIONID', value: 'your-session-value', domain: 'host.docker.internal' }
+  ]
+}
+
+function addCookie() {
+  cookies.value.push({ name: '', value: '', domain: '' })
+}
+
+function removeCookie(idx) {
+  cookies.value.splice(idx, 1)
+}
+
+function saveCookieConfig() {
+  if (cookies.value.length === 0) {
+    preconfigVisible.value = false
+    return
+  }
+  const missing = cookies.value.find(
+    (c) => !c.name || !c.name.trim() || !c.value || !c.value.trim() || !c.domain || !c.domain.trim()
+  )
+  if (missing) {
+    ElMessage.error('请填写完整的 Cookie 名称、值和域名')
+    return
+  }
+  preconfigVisible.value = false
+  ElMessage.success(`已保存 ${cookies.value.length} 条 Cookie`)
 }
 
 async function loadGroups() {
@@ -424,6 +510,57 @@ function goBack() {
   display: flex;
   gap: var(--space-sm);
   padding-top: var(--space-md);
+}
+
+.preconfig-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.preconfig-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.preconfig-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cookie-card {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--card-border-light);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.cookie-fields {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1fr;
+  gap: 8px;
+  flex: 1;
+}
+
+.cookie-field {
+  min-width: 0;
+}
+
+.cookie-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+
+.preconfig-tip {
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 /* ===== 响应式 ===== */

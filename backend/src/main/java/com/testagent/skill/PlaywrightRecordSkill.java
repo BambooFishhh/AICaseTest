@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import javax.imageio.ImageIO;
 
@@ -52,7 +53,7 @@ public class PlaywrightRecordSkill {
      * @return 会话 ID（固定值，Playwright 单浏览器模型）
      */
     public String browserLaunch(boolean headless, int width, int height) {
-        String videoDir = Paths.get(outputDir, "recordings").toString();
+        String videoDir = resolveOutputPath("recordings");
         try {
             mcpClientManager.callTool("playwright", "browser_launch", Map.of(
                     "headless", headless,
@@ -86,8 +87,8 @@ public class PlaywrightRecordSkill {
      * @return 截图文件路径
      */
     public String takeScreenshot(String sessionId) {
-        String screenshotPath = Paths.get(outputDir, "screenshots",
-                System.currentTimeMillis() + ".png").toString();
+        String screenshotPath = resolveOutputPath(
+                "screenshots/" + System.currentTimeMillis() + ".png");
         try {
             mcpClientManager.callTool("playwright", "browser_take_screenshot",
                     Map.of("path", screenshotPath));
@@ -148,6 +149,31 @@ public class PlaywrightRecordSkill {
         }
     }
 
+    /** 输入框填充 */
+    public void fillInput(String sessionId, String selectorType, String selectorValue, String value) {
+        String cssSelector = buildCssSelector(selectorType, selectorValue);
+        try {
+            mcpClientManager.callTool("playwright", "browser_fill",
+                    Map.of("selector", cssSelector, "value", value == null ? "" : value));
+            log.info("输入完成: {}={}", selectorType, selectorValue);
+        } catch (Exception e) {
+            log.error("输入失败: {}={}, error={}", selectorType, selectorValue, e.getMessage());
+            throw new RuntimeException("输入失败", e);
+        }
+    }
+
+    /** 注入登录 Cookie，跳过登录界面 */
+    public void addCookies(String sessionId, List<Map<String, Object>> cookies) {
+        try {
+            mcpClientManager.callTool("playwright", "browser_add_cookies",
+                    Map.of("cookies", cookies == null ? List.of() : cookies));
+            log.info("注入 Cookie 数量: {}", cookies == null ? 0 : cookies.size());
+        } catch (Exception e) {
+            log.error("注入 Cookie 失败: {}", e.getMessage());
+            throw new RuntimeException("注入 Cookie 失败", e);
+        }
+    }
+
     /**
      * 获取当前页面状态信息。
      * @return 包含 url、title、textSnippet 的 Map
@@ -179,14 +205,28 @@ public class PlaywrightRecordSkill {
      */
     public String stopRecording(String filename) {
         try {
+            String savePath = resolveOutputPath(filename);
             String videoPath = mcpClientManager.callTool("playwright", "browser_video_save",
-                    Map.of("filename", filename));
-            log.info("录屏视频已保存: path={}", videoPath);
+                    Map.of("filename", savePath));
+            log.info("录屏视频已保存: path={}", savePath);
             return videoPath;
         } catch (Exception e) {
             log.error("保存录屏失败: {}", e.getMessage());
             throw new RuntimeException("保存录屏失败", e);
         }
+    }
+
+    private String resolveOutputPath(String relativePath) {
+        Path baseDir = Paths.get(outputDir).toAbsolutePath().normalize();
+        String normalized = relativePath.replace('\\', '/');
+        String prefix = Paths.get(outputDir).toString().replace('\\', '/');
+        if (!prefix.endsWith("/")) {
+            prefix += "/";
+        }
+        if (normalized.startsWith(prefix)) {
+            normalized = normalized.substring(prefix.length());
+        }
+        return baseDir.resolve(normalized).normalize().toString();
     }
 
     /**

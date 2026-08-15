@@ -87,11 +87,28 @@ const getColorByType = (type) => {
 
 // 构建节点数据
 const buildNodes = () => {
-  if (!props.states || props.states.length === 0) return []
-  return props.states.map((state) => {
+  const nodeMap = new Map()
+  const addNode = (raw, index) => {
+    if (raw == null) return
+    const state = typeof raw === 'string'
+      ? { name: raw, code: raw, type: 'normal' }
+      : (raw || {})
+    const id = state.code || state.name || (index != null ? String(index) : '')
+    if (!id || nodeMap.has(id)) return
+    nodeMap.set(id, state)
+  }
+  ;(props.states || []).forEach(addNode)
+  ;(props.transitions || []).forEach((tran) => {
+    addNode(tran.from)
+    addNode(tran.to)
+  })
+  ;(props.forbiddenTransitions || []).forEach((tran) => {
+    addNode(tran.from)
+    addNode(tran.to)
+  })
+  return [...nodeMap.entries()].map(([nodeId, state]) => {
     const color = getColorByType(state.type)
-    const nodeId = state.code || state.name
-    const labelText = state.name || state.code || ''
+    const labelText = state.name || state.code || nodeId
     const typeLabel =
       state.type === 'initial'
         ? '【初始】'

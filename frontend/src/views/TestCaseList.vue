@@ -742,6 +742,17 @@
           <el-input v-model="env.name" placeholder="环境名，如 dev/staging/prod" style="width: 150px" />
           <el-input v-model="env.url" placeholder="http://localhost:5173" style="flex: 1" />
           <el-button :icon="Delete" text type="danger" @click="removeEnv(idx)" />
+          <div class="env-pre-steps">
+            <el-input
+              v-model="env.preStepsText"
+              type="textarea"
+              :rows="3"
+              placeholder='前置步骤 JSON 数组，例如 [{"action":"输入用户名","type":"input","inputValue":"admin123",...}]'
+            />
+            <el-button size="small" text type="primary" @click="applyAdminLoginPreSteps(env)">
+              填入管理后台登录
+            </el-button>
+          </div>
         </div>
         <el-empty v-if="envForm.environments.length === 0" description="尚未配置环境" :image-size="60" />
       </div>
@@ -1596,7 +1607,11 @@ const savingEnvs = ref(false)
 async function openEnvDialog() {
   try {
     const res = await getExecutionEnvironments(projectId)
-    envForm.environments = res.data?.environments || []
+    envForm.environments = (res.data?.environments || []).map((e) => ({
+      name: e.name || '',
+      url: e.url || '',
+      preStepsText: JSON.stringify(e.preSteps || [], null, 2)
+    }))
     envForm.active = res.data?.active || ''
   } catch {
     // 错误已由响应拦截器统一提示
@@ -1605,7 +1620,7 @@ async function openEnvDialog() {
 }
 
 function addEnv() {
-  envForm.environments.push({ name: '', url: '' })
+  envForm.environments.push({ name: '', url: '', preStepsText: '' })
 }
 
 function removeEnv(idx) {
@@ -1613,9 +1628,21 @@ function removeEnv(idx) {
 }
 
 async function saveEnvs() {
-  const cleaned = envForm.environments.filter(
-    (e) => e.name && e.name.trim() && e.url && e.url.trim()
-  )
+  const cleaned = []
+  for (const e of envForm.environments) {
+    if (!e.name || !e.name.trim() || !e.url || !e.url.trim()) continue
+    let preSteps = []
+    if (e.preStepsText && e.preStepsText.trim()) {
+      try {
+        const parsed = JSON.parse(e.preStepsText)
+        preSteps = Array.isArray(parsed) ? parsed : []
+      } catch {
+        ElMessage.error(`环境「${e.name}」的前置步骤 JSON 格式不正确`)
+        return
+      }
+    }
+    cleaned.push({ name: e.name.trim(), url: e.url.trim(), preSteps })
+  }
   if (cleaned.length === 0) {
     ElMessage.warning('请至少配置一个环境')
     return
@@ -1639,6 +1666,36 @@ async function saveEnvs() {
   } finally {
     savingEnvs.value = false
   }
+}
+
+function applyAdminLoginPreSteps(env) {
+  env.preStepsText = JSON.stringify([
+    {
+      action: '输入用户名',
+      target: '用户名输入框',
+      type: 'input',
+      inputValue: 'admin123',
+      uiSelector: { type: 'css', value: 'input[placeholder*="用户名"]' }
+    },
+    {
+      action: '输入密码',
+      target: '密码输入框',
+      type: 'input',
+      inputValue: 'admin123',
+      uiSelector: { type: 'css', value: 'input[placeholder*="密码"]' }
+    },
+    {
+      action: '点击登录',
+      target: '登录按钮',
+      type: 'ui_action',
+      uiSelector: { type: 'css', value: '.el-button--primary' }
+    },
+    {
+      action: '断言登录成功',
+      target: '后台首页',
+      type: 'state_assert'
+    }
+  ], null, 2)
 }
 
 function handleFilterByIds(ids) {
@@ -2219,11 +2276,12 @@ onUnmounted(() => {
     flex-wrap: wrap;
 
     .el-button {
-      background: rgba(255, 255, 255, 0.95);
       border-color: transparent;
+      color: var(--text-primary);
 
-      &:hover {
-        background: #fff;
+      &.el-button--danger,
+      &.el-button--success {
+        color: #fff;
       }
     }
   }
@@ -2513,6 +2571,19 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+}
+
+.env-pre-steps {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.env-pre-steps .el-textarea {
+  flex: 1;
 }
 
 .env-actions {

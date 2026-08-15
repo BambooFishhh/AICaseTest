@@ -44,5 +44,17 @@ export function getExecutionSteps(eid) {
 
 // v2.9: 执行录屏视频 URL（WebM，文件流直接用作 <video :src>）
 export function getExecutionVideoUrl(eid) {
-  return `/api/executions/${eid}/video`
+  const token = localStorage.getItem('aicase-token') || ''
+  const qs = new URLSearchParams()
+  if (token) qs.set('token', token)
+  const query = qs.toString()
+  return query ? `/api/executions/${eid}/video?${query}` : `/api/executions/${eid}/video`
+}
+
+// v6.0: 执行证据文件预览（截图/录屏帧）
+export function getExecutionFileUrl(eid, path) {
+  const token = localStorage.getItem('aicase-token') || ''
+  const qs = new URLSearchParams({ path })
+  if (token) qs.set('token', token)
+  return `/api/executions/${eid}/file?${qs.toString()}`
 }

@@ -57,6 +57,34 @@
             <div class="stat-label">枚举常量</div>
           </div>
         </div>
+        <div class="stat-card stat-info">
+          <div class="stat-icon"><el-icon :size="20"><Document /></el-icon></div>
+          <div class="stat-body">
+            <div class="stat-value">{{ frontendForms.length }}</div>
+            <div class="stat-label">表单字段</div>
+          </div>
+        </div>
+        <div class="stat-card stat-info">
+          <div class="stat-icon"><el-icon :size="20"><Switch /></el-icon></div>
+          <div class="stat-body">
+            <div class="stat-value">{{ componentStates.length }}</div>
+            <div class="stat-label">组件状态</div>
+          </div>
+        </div>
+        <div class="stat-card stat-info">
+          <div class="stat-icon"><el-icon :size="20"><Aim /></el-icon></div>
+          <div class="stat-body">
+            <div class="stat-value">{{ domSelectors.length }}</div>
+            <div class="stat-label">DOM 选择器</div>
+          </div>
+        </div>
+        <div class="stat-card stat-info">
+          <div class="stat-icon"><el-icon :size="20"><Connection /></el-icon></div>
+          <div class="stat-body">
+            <div class="stat-value">{{ pageFlows.length }}</div>
+            <div class="stat-label">页面跳转</div>
+          </div>
+        </div>
       </div>
 
       <!-- 选项卡 -->
@@ -265,116 +293,113 @@
           </el-table>
         </el-tab-pane>
 
-        <!-- 前端分析 -->
-        <el-tab-pane name="frontend">
+        <!-- 前端分析：表单字段 -->
+        <el-tab-pane name="frontendForms">
           <template #label>
             <span class="tab-label">
-              <el-icon><Monitor /></el-icon>前端分析
-              <span v-if="hasFrontendData" class="tab-count">{{ frontendTotal }}</span>
+              <el-icon><Document /></el-icon>表单字段
+              <span v-if="frontendForms.length" class="tab-count">{{ frontendForms.length }}</span>
             </span>
           </template>
-          <el-empty v-if="!hasFrontendData" description="无前端分析数据" />
-
-          <el-tabs v-else v-model="frontendTab" class="frontend-sub-tabs">
-            <el-tab-pane name="forms">
-              <template #label>
-                <span class="tab-label">
-                  <el-icon><Document /></el-icon>表单字段
-                  <span class="tab-count">{{ frontendForms.length }}</span>
-                </span>
+          <el-empty v-if="!frontendForms.length" description="无表单字段数据" />
+          <el-table v-else :data="frontendForms" stripe size="small">
+            <el-table-column prop="component" label="组件" width="150" />
+            <el-table-column label="字段">
+              <template #default="{ row }">
+                <div class="field-list">
+                  <div v-for="f in (row.fields || [])" :key="f.name" class="field-row">
+                    <el-tag :type="f.required ? 'danger' : 'info'" size="small">{{ f.name }}</el-tag>
+                    <span class="field-type">{{ f.type }}</span>
+                    <span v-if="f.label" class="field-label">{{ f.label }}</span>
+                    <el-tag
+                      v-for="r in (f.rules || [])"
+                      :key="r"
+                      type="warning"
+                      size="small"
+                      effect="plain"
+                    >{{ r }}</el-tag>
+                  </div>
+                </div>
               </template>
-              <el-empty v-if="!frontendForms.length" description="无表单字段数据" />
-              <el-table v-else :data="frontendForms" stripe size="small">
-                <el-table-column prop="component" label="组件" width="150" />
-                <el-table-column label="字段">
-                  <template #default="{ row }">
-                    <div class="field-list">
-                      <div v-for="f in (row.fields || [])" :key="f.name" class="field-row">
-                        <el-tag :type="f.required ? 'danger' : 'info'" size="small">{{ f.name }}</el-tag>
-                        <span class="field-type">{{ f.type }}</span>
-                        <span v-if="f.label" class="field-label">{{ f.label }}</span>
-                        <el-tag
-                          v-for="r in (f.rules || [])"
-                          :key="r"
-                          type="warning"
-                          size="small"
-                          effect="plain"
-                        >{{ r }}</el-tag>
-                      </div>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="file" label="文件" width="180" show-overflow-tooltip />
-              </el-table>
-            </el-tab-pane>
+            </el-table-column>
+            <el-table-column prop="file" label="文件" width="180" show-overflow-tooltip />
+          </el-table>
+        </el-tab-pane>
 
-            <el-tab-pane name="states">
-              <template #label>
-                <span class="tab-label">
-                  <el-icon><Switch /></el-icon>组件状态
-                  <span class="tab-count">{{ componentStates.length }}</span>
-                </span>
+        <!-- 前端分析：组件状态 -->
+        <el-tab-pane name="frontendStates">
+          <template #label>
+            <span class="tab-label">
+              <el-icon><Switch /></el-icon>组件状态
+              <span v-if="componentStates.length" class="tab-count">{{ componentStates.length }}</span>
+            </span>
+          </template>
+          <el-empty v-if="!componentStates.length" description="无组件状态数据" />
+          <el-table v-else :data="componentStates" stripe size="small">
+            <el-table-column prop="component" label="组件" width="150" />
+            <el-table-column label="类型" width="100">
+              <template #default="{ row }">
+                <el-tag :type="stateTagType(row.type)" size="small">{{ row.type }}</el-tag>
               </template>
-              <el-empty v-if="!componentStates.length" description="无组件状态数据" />
-              <el-table v-else :data="componentStates" stripe size="small">
-                <el-table-column prop="component" label="组件" width="150" />
-                <el-table-column label="类型" width="100">
-                  <template #default="{ row }">
-                    <el-tag :type="stateTagType(row.type)" size="small">{{ row.type }}</el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="stateVar" label="状态变量" width="150" />
-                <el-table-column prop="trigger" label="触发方式" min-width="180" show-overflow-tooltip />
-                <el-table-column prop="file" label="文件" width="180" show-overflow-tooltip />
-              </el-table>
-            </el-tab-pane>
+            </el-table-column>
+            <el-table-column label="状态变量" width="150">
+              <template #default="{ row }">{{ stateVarDisplay(row) }}</template>
+            </el-table-column>
+            <el-table-column label="触发方式" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">{{ triggerDisplay(row) }}</template>
+            </el-table-column>
+            <el-table-column prop="file" label="文件" width="180" show-overflow-tooltip />
+          </el-table>
+        </el-tab-pane>
 
-            <el-tab-pane name="selectors">
-              <template #label>
-                <span class="tab-label">
-                  <el-icon><Aim /></el-icon>DOM 选择器
-                  <span class="tab-count">{{ domSelectors.length }}</span>
-                </span>
+        <!-- 前端分析：DOM 选择器 -->
+        <el-tab-pane name="frontendSelectors">
+          <template #label>
+            <span class="tab-label">
+              <el-icon><Aim /></el-icon>DOM 选择器
+              <span v-if="domSelectors.length" class="tab-count">{{ domSelectors.length }}</span>
+            </span>
+          </template>
+          <el-empty v-if="!domSelectors.length" description="无 DOM 选择器数据" />
+          <el-table v-else :data="domSelectors" stripe size="small">
+            <el-table-column prop="component" label="组件" width="150" />
+            <el-table-column label="选择器">
+              <template #default="{ row }">
+                <div class="selector-list">
+                  <div v-for="s in (row.selectors || [])" :key="s.value" class="selector-row">
+                    <el-tag :type="selectorTagType(s.type)" size="small">{{ s.type }}</el-tag>
+                    <code class="selector-value">{{ s.value }}</code>
+                    <span class="selector-element">{{ s.element }}</span>
+                  </div>
+                </div>
               </template>
-              <el-empty v-if="!domSelectors.length" description="无 DOM 选择器数据" />
-              <el-table v-else :data="domSelectors" stripe size="small">
-                <el-table-column prop="component" label="组件" width="150" />
-                <el-table-column label="选择器">
-                  <template #default="{ row }">
-                    <div class="selector-list">
-                      <div v-for="s in (row.selectors || [])" :key="s.value" class="selector-row">
-                        <el-tag :type="selectorTagType(s.type)" size="small">{{ s.type }}</el-tag>
-                        <code class="selector-value">{{ s.value }}</code>
-                        <span class="selector-element">{{ s.element }}</span>
-                      </div>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="file" label="文件" width="180" show-overflow-tooltip />
-              </el-table>
-            </el-tab-pane>
+            </el-table-column>
+            <el-table-column prop="file" label="文件" width="180" show-overflow-tooltip />
+          </el-table>
+        </el-tab-pane>
 
-            <el-tab-pane name="flows">
-              <template #label>
-                <span class="tab-label">
-                  <el-icon><Connection /></el-icon>页面跳转
-                  <span class="tab-count">{{ pageFlows.length }}</span>
-                </span>
+        <!-- 前端分析：页面跳转 -->
+        <el-tab-pane name="frontendFlows">
+          <template #label>
+            <span class="tab-label">
+              <el-icon><Connection /></el-icon>页面跳转
+              <span v-if="pageFlows.length" class="tab-count">{{ pageFlows.length }}</span>
+            </span>
+          </template>
+          <el-empty v-if="!pageFlows.length" description="无页面跳转数据" />
+          <el-table v-else :data="pageFlows" stripe size="small">
+            <el-table-column label="来源页面" width="150">
+              <template #default="{ row }">{{ fromDisplay(row) }}</template>
+            </el-table-column>
+            <el-table-column label="" width="40" align="center">
+              <template #default>
+                <el-icon class="flow-arrow"><Right /></el-icon>
               </template>
-              <el-empty v-if="!pageFlows.length" description="无页面跳转数据" />
-              <el-table v-else :data="pageFlows" stripe size="small">
-                <el-table-column prop="from" label="来源页面" width="150" />
-                <el-table-column label="" width="40" align="center">
-                  <template #default>
-                    <el-icon class="flow-arrow"><Right /></el-icon>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="to" label="目标页面" width="150" />
-                <el-table-column prop="trigger" label="触发条件" min-width="200" show-overflow-tooltip />
-                <el-table-column prop="component" label="组件" width="150" />
-              </el-table>
-            </el-tab-pane>
-          </el-tabs>
+            </el-table-column>
+            <el-table-column prop="to" label="目标页面" width="150" />
+            <el-table-column prop="trigger" label="触发条件" min-width="200" show-overflow-tooltip />
+            <el-table-column prop="component" label="组件" width="150" />
+          </el-table>
         </el-tab-pane>
       </el-tabs>
     </section>
@@ -396,7 +421,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft, Share, Connection, Collection, Files, List,
-  Document, Switch, Right, Monitor, Aim, DataAnalysis
+  Document, Switch, Right, Aim, DataAnalysis
 } from '@element-plus/icons-vue'
 import { getAnalysis, getStateMachines } from '@/api/analysis'
 import StateMachineViewer from '@/components/StateMachineViewer.vue'
@@ -408,7 +433,6 @@ const projectId = route.params.id
 
 const loading = ref(false)
 const activeTab = ref('stateMachines')
-const frontendTab = ref('forms')
 const analysis = ref(null)
 const stateMachines = ref([])
 const methodFilter = ref('')
@@ -428,18 +452,6 @@ const frontendForms = computed(() => frontendResult.value.forms || [])
 const componentStates = computed(() => frontendResult.value.componentStates || [])
 const domSelectors = computed(() => frontendResult.value.domSelectors || [])
 const pageFlows = computed(() => frontendResult.value.pageFlows || [])
-const frontendTotal = computed(() =>
-  frontendForms.value.length +
-  componentStates.value.length +
-  domSelectors.value.length +
-  pageFlows.value.length
-)
-const hasFrontendData = computed(() =>
-  frontendForms.value.length > 0 ||
-  componentStates.value.length > 0 ||
-  domSelectors.value.length > 0 ||
-  pageFlows.value.length > 0
-)
 
 // 按方法筛选的端点列表
 const filteredEndpoints = computed(() => {
@@ -458,6 +470,23 @@ function methodTagType(method) {
   if (m === 'PUT') return ''
   if (m === 'PATCH') return 'info'
   return 'info'
+}
+
+function defaultStateVar(type) {
+  const map = { dialog: 'visible', drawer: 'visible', tabs: 'activeTab', steps: 'activeStep' }
+  return map[type] || 'visible'
+}
+
+function stateVarDisplay(row) {
+  return row.stateVar || defaultStateVar(row.type)
+}
+
+function triggerDisplay(row) {
+  return row.trigger || (row.type === 'tabs' ? '切换' : '打开')
+}
+
+function fromDisplay(row) {
+  return row.from || '入口/未识别'
 }
 
 // 置信度颜色梯度
@@ -771,14 +800,27 @@ onMounted(loadData)
 }
 
 /* ===== 前端分析 ===== */
-.frontend-sub-tabs {
-  :deep(.el-tabs__header) {
-    margin-bottom: var(--space-md);
-  }
+.frontend-panels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
 
-  :deep(.el-tabs__content) {
-    overflow: visible;
-  }
+.analysis-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 12px 0;
 }
 
 .field-list {

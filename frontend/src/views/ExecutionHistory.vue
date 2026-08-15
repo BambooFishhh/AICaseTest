@@ -134,6 +134,15 @@
             >
               报告
             </el-button>
+            <el-button
+              v-if="row.status === 'running'"
+              type="danger"
+              link
+              :icon="CircleClose"
+              @click.stop="handleCancelExecution(row)"
+            >
+              取消
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -168,7 +177,8 @@ import {
   View,
   Download
 } from '@element-plus/icons-vue'
-import { getExecutions } from '@/api/execution'
+import { getExecutions, cancelExecution } from '@/api/execution'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { openAuthPreview } from '@/utils/download'
 
 const route = useRoute()
@@ -283,15 +293,43 @@ async function loadExecutions() {
   loading.value = true
   try {
     const res = await getExecutions(projectId, { page: page.value, pageSize: pageSize.value })
-    const data = res.data || {}
-    records.value = data.items || []
-    total.value = data.total || 0
-    stats.value = data.stats || { total: 0, passed: 0, failed: 0, running: 0 }
-    trendData.value = data.trend || []
+    const data = res.data
+    // 兼容新旧后端：v5.7 返回 {items,total,stats,trend}，旧后端直接返回执行记录数组
+    const list = Array.isArray(data) ? data : (data?.items || data?.executions || data?.records || [])
+    records.value = list
+    total.value = Array.isArray(data) ? list.length : (data?.total || list.length)
+    stats.value = data?.stats || {
+      total: list.length,
+      passed: list.filter((r) => r.status === 'passed').length,
+      failed: list.filter((r) => r.status === 'failed').length,
+      running: list.filter((r) => r.status === 'running').length
+    }
+    trendData.value = data?.trend || []
   } catch {
     // 错误已由响应拦截器统一提示
   } finally {
     loading.value = false
+  }
+}
+
+// v5.7: 运行中的执行可直接在历史页取消
+async function handleCancelExecution(row) {
+  if (!row?.id) return
+  try {
+    await ElMessageBox.confirm(
+      `确定取消「${row.testCaseTitle || row.id}」的执行吗？运行中的步骤会在下一个检查点停止。`,
+      '确认取消执行',
+      { confirmButtonText: '确定取消', cancelButtonText: '继续执行', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await cancelExecution(row.id)
+    ElMessage.success('取消请求已发出，正在停止...')
+    await loadExecutions()
+  } catch {
+    // 错误已由响应拦截器统一提示
   }
 }
 

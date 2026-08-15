@@ -6,13 +6,18 @@ import com.testagent.entity.ExecutionStep;
 import com.testagent.service.ExecutionService;
 import com.testagent.service.ReportService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.FileSystemResource;
 
 import java.io.File;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.Locale;
 import java.util.List;
 import java.util.Map;
 
@@ -29,6 +34,9 @@ public class ExecutionController {
 
     @Autowired
     private ReportService reportService;
+
+    @Value("${app.output-dir:outputs}")
+    private String outputDir;
 
     /**
      * 触发执行
@@ -153,7 +161,69 @@ public class ExecutionController {
         Resource resource = new FileSystemResource(videoFile);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_TYPE, "video/webm")
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"recording.webm\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + videoFile.getName() + "\"")
                 .body(resource);
+    }
+
+    /** v6.0: 执行证据文件预览（截图/录屏帧，受执行记录访问权限保护） */
+    @GetMapping("/executions/{executionId}/file")
+    public ResponseEntity<Resource> getEvidenceFile(
+            @PathVariable String executionId,
+            @RequestParam String path) {
+        executionService.getExecution(executionId);
+        File file = resolveEvidenceFile(path);
+        if (file == null || !file.isFile()) {
+            return ResponseEntity.notFound().build();
+        }
+        Resource resource = new FileSystemResource(file);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, mediaTypeFor(file).toString())
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + file.getName() + "\"")
+                .header(HttpHeaders.CACHE_CONTROL, "private, max-age=3600")
+                .body(resource);
+    }
+
+    private File resolveEvidenceFile(String rawPath) {
+        if (rawPath == null || rawPath.isBlank()) {
+            return null;
+        }
+        String normalized = rawPath.replace('\\', '/');
+        if (normalized.startsWith("./")) {
+            normalized = normalized.substring(2);
+        }
+        Path baseDir = Paths.get(outputDir).toAbsolutePath().normalize();
+        String basePrefix = Paths.get(outputDir).toString().replace('\\', '/');
+        if (!basePrefix.endsWith("/")) {
+            basePrefix += "/";
+        }
+        String relative = normalized;
+        if (normalized.startsWith(basePrefix)) {
+            relative = normalized.substring(basePrefix.length());
+        }
+        Path resolved = baseDir.resolve(relative).normalize();
+        if (!resolved.startsWith(baseDir)) {
+            return null;
+        }
+        return resolved.toFile();
+    }
+
+    private MediaType mediaTypeFor(File file) {
+        String name = file.getName().toLowerCase(Locale.ROOT);
+        if (name.endsWith(".png")) {
+            return MediaType.IMAGE_PNG;
+        }
+        if (name.endsWith(".jpg") || name.endsWith(".jpeg")) {
+            return MediaType.IMAGE_JPEG;
+        }
+        if (name.endsWith(".gif")) {
+            return MediaType.IMAGE_GIF;
+        }
+        if (name.endsWith(".webm")) {
+            return new MediaType("video", "webm");
+        }
+        if (name.endsWith(".mp4")) {
+            return new MediaType("video", "mp4");
+        }
+        return MediaType.APPLICATION_OCTET_STREAM;
     }
 }

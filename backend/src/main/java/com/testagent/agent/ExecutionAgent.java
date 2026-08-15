@@ -61,6 +61,30 @@ public class ExecutionAgent {
         int clickX = 0, clickY = 0;  // v2.5: 记录视觉点击坐标用于截图标注
 
         try {
+            if ("input".equals(step.path("type").asText())) {
+                JsonNode selector = step.path("uiSelector");
+                String inputValue = step.path("inputValue").asText(step.path("value").asText(""));
+                String selType = selector.path("type").asText("css");
+                String selValue = selector.path("value").asText("");
+                if (selValue.isBlank() || inputValue.isBlank()) {
+                    throw new RuntimeException("输入步骤缺少 uiSelector.value 或 inputValue");
+                }
+                playwrightSkill.fillInput(sessionId, selType, selValue, inputValue);
+                strategy = "dom";
+                result = "passed";
+                screenshotAfter = playwrightSkill.takeScreenshotWithMarker(sessionId, 0, 0);
+                return ExecutionStep.builder()
+                        .id(UUID.randomUUID().toString().substring(0, 8))
+                        .executionId(executionId)
+                        .stepIndex(stepIndex)
+                        .action(action)
+                        .target(target)
+                        .strategy(strategy)
+                        .result(result)
+                        .screenshotAfter(screenshotAfter)
+                        .error(error)
+                        .build();
+            }
             // 步骤 1: LLM 生成元素查找描述
             String elementDesc = askLlmForElementDescription(action, testCaseContext);
 

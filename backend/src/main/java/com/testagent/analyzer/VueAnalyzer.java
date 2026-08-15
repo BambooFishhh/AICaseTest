@@ -214,7 +214,8 @@ public class VueAnalyzer {
         }
         for (File child : children) {
             if (child.isDirectory()) {
-                if (child.getName().equals("node_modules")) {
+                String name = child.getName();
+                if (name.equals("node_modules") || name.equals("dist") || name.equals(".git")) {
                     continue;
                 }
                 collectScriptFiles(child, result);

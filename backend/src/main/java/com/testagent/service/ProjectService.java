@@ -155,6 +155,9 @@ public class ProjectService {
             GenerationParams defaults = settingsService.getDefaultGenerationParams();
             ObjectNode settings = (ObjectNode) objectMapper.readTree("{}");
             settings.set("generationParams", objectMapper.valueToTree(defaults));
+            if (req.getExecutionCookies() != null && !req.getExecutionCookies().isEmpty()) {
+                settings.set("executionCookies", objectMapper.valueToTree(req.getExecutionCookies()));
+            }
             project.setSettings(objectMapper.writeValueAsString(settings));
         } catch (Exception ignored) {
             // 初始化失败保持空 settings
@@ -350,6 +353,8 @@ public class ProjectService {
                     Map<String, Object> env = new LinkedHashMap<>();
                     env.put("name", item.path("name").asText(""));
                     env.put("url", item.path("url").asText(""));
+                    JsonNode preSteps = item.path("preSteps");
+                    env.put("preSteps", preSteps.isArray() ? objectMapper.convertValue(preSteps, List.class) : List.of());
                     envs.add(env);
                 }
             }

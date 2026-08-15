@@ -2,12 +2,15 @@ package com.testagent.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.testagent.entity.ExecutionRecord;
 import com.testagent.entity.ExecutionStep;
+import com.testagent.entity.Project;
 import com.testagent.entity.TestCase;
 import com.testagent.common.BusinessException;
 import com.testagent.repository.ExecutionRecordRepository;
 import com.testagent.repository.ExecutionStepRepository;
+import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.runtime.RuntimeFlag;
 import com.testagent.runtime.RuntimeStore;
@@ -20,7 +23,7 @@ import com.testagent.service.TaskQueueService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -47,6 +50,8 @@ public class ExecutionService {
     @Autowired
     private TestCaseRepository testCaseRepository;
     @Autowired
+    private ProjectRepository projectRepository;
+    @Autowired
     private PlaywrightRecordSkill playwrightSkill;
     @Autowired
     private EvidenceSkill evidenceSkill;
@@ -68,6 +73,10 @@ public class ExecutionService {
 
     @Autowired
     private TaskQueueService taskQueueService;
+
+    @Autowired
+    @Qualifier("executionExecutor")
+    private java.util.concurrent.Executor executionExecutor;
 
     @Autowired
     private SemanticService semanticService;
@@ -149,9 +158,9 @@ public class ExecutionService {
 
         // 异步执行
         if ("agent".equals(mode)) {
-            runAgentAsync(executionId, testCase, targetUrl, writeBack);
+            executionExecutor.execute(() -> runAgentAsync(executionId, testCase, targetUrl, writeBack));
         } else {
-            runAsync(executionId, testCase, targetUrl, writeBack);
+            executionExecutor.execute(() -> runAsync(executionId, testCase, targetUrl, writeBack));
         }
         return executionId;
     }
@@ -305,7 +314,6 @@ public class ExecutionService {
     /**
      * v2.8: Agent 模式异步执行（PlaywrightRecordSkill）。
      */
-    @Async("executionExecutor")
     void runAgentAsync(String executionId, TestCase testCase, String targetUrl, boolean writeBack) {
         List<ExecutionStep> steps = new ArrayList<>();
         int passed = 0, failed = 0, skipped = 0;
@@ -354,15 +362,16 @@ public class ExecutionService {
             // 1. 启动浏览器（Playwright 自动开始录屏）
             sessionId = playwrightSkill.browserLaunch(true, 1280, 800);
             runtimeStore.putSession(executionId, sessionId);
+            // 注入项目级登录 Cookie，跳过登录界面
+            injectCookies(testCase.getProjectId(), sessionId);
 
             // 2. 导航到目标页面
             if (targetUrl != null && !targetUrl.isBlank()) {
                 playwrightSkill.browserNavigate(sessionId, targetUrl);
             }
 
-            // 3. 解析 structuredSteps
-            JsonNode stepNodes = objectMapper.readTree(
-                    testCase.getStructuredSteps() != null ? testCase.getStructuredSteps() : "[]");
+            // 3. 解析 structuredSteps（自动合并项目执行环境配置的前置步骤）
+            JsonNode stepNodes = buildStepNodes(testCase);
 
             if (!stepNodes.isArray() || stepNodes.isEmpty()) {
                 skipped++;
@@ -483,7 +492,6 @@ public class ExecutionService {
     /**
      * v2.8: 程序化模式异步执行（PlaywrightRecordSkill）。
      */
-    @Async("executionExecutor")
     void runAsync(String executionId, TestCase testCase, String targetUrl, boolean writeBack) {
         List<ExecutionStep> steps = new ArrayList<>();
         int passed = 0, failed = 0, skipped = 0;
@@ -532,6 +540,8 @@ public class ExecutionService {
             // 1. 启动浏览器（Playwright 自动开始录屏）
             sessionId = playwrightSkill.browserLaunch(true, 1280, 800);
             runtimeStore.putSession(executionId, sessionId);
+            // 注入项目级登录 Cookie，跳过登录界面
+            injectCookies(testCase.getProjectId(), sessionId);
 
             // 2. 导航到目标页面
             if (targetUrl != null && !targetUrl.isBlank()) {
@@ -539,8 +549,7 @@ public class ExecutionService {
             }
 
             // 3. 解析 structuredSteps
-            JsonNode stepNodes = objectMapper.readTree(
-                    testCase.getStructuredSteps() != null ? testCase.getStructuredSteps() : "[]");
+            JsonNode stepNodes = buildStepNodes(testCase);
 
             if (!stepNodes.isArray() || stepNodes.isEmpty()) {
                 // 无结构化步骤，按自然语言 steps 执行
@@ -601,6 +610,26 @@ public class ExecutionService {
                                     stepBuilder.strategy("skipped")
                                             .result("skipped")
                                             .error("无 DOM 选择器，Agent 模式支持多模态定位");
+                                    skipped++;
+                                }
+                                break;
+
+                            case "input":
+                                JsonNode inputSelector = node.path("uiSelector");
+                                String inputValue = node.path("inputValue").asText(node.path("value").asText(""));
+                                if (inputSelector.has("type") && inputSelector.has("value") && !inputValue.isBlank()) {
+                                    playwrightSkill.fillInput(
+                                            sessionId,
+                                            inputSelector.path("type").asText(),
+                                            inputSelector.path("value").asText(),
+                                            inputValue);
+                                    stepBuilder.strategy("dom");
+                                    stepBuilder.result("passed");
+                                    passed++;
+                                } else {
+                                    stepBuilder.strategy("skipped")
+                                            .result("skipped")
+                                            .error("输入步骤缺少 uiSelector/value 或 inputValue");
                                     skipped++;
                                 }
                                 break;
@@ -801,6 +830,70 @@ public class ExecutionService {
         }
     }
 
+    private void injectCookies(String projectId, String sessionId) {
+        try {
+            Project project = projectRepository.findById(projectId).orElse(null);
+            if (project == null || project.getSettings() == null || project.getSettings().isBlank()) {
+                return;
+            }
+            JsonNode settings = objectMapper.readTree(project.getSettings());
+            JsonNode cookies = settings.path("executionCookies");
+            if (cookies.isArray() && !cookies.isEmpty()) {
+                List<Map<String, Object>> cookieList = objectMapper.convertValue(
+                        cookies,
+                        new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+                playwrightSkill.addCookies(sessionId, cookieList);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to inject cookies for project {}", projectId, e);
+        }
+    }
+
+    private JsonNode buildStepNodes(TestCase testCase) {
+        ArrayNode all = objectMapper.createArrayNode();
+        boolean hasCookies = false;
+        try {
+            Project project = projectRepository.findById(testCase.getProjectId()).orElse(null);
+            if (project != null && project.getSettings() != null && !project.getSettings().isBlank()) {
+                JsonNode settings = objectMapper.readTree(project.getSettings());
+                JsonNode cookies = settings.path("executionCookies");
+                hasCookies = cookies.isArray() && !cookies.isEmpty();
+                if (!hasCookies) {
+                    JsonNode envNode = settings.path("executionEnvironments");
+                    String active = envNode.path("active").asText("");
+                    JsonNode envs = envNode.path("environments");
+                    if (envs.isArray()) {
+                        for (JsonNode env : envs) {
+                            if (active.equals(env.path("name").asText(""))) {
+                                JsonNode pre = env.path("preSteps");
+                                if (pre.isArray()) {
+                                    for (JsonNode p : pre) {
+                                        all.add(p);
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to load execution preSteps for project {}", testCase.getProjectId(), e);
+        }
+        try {
+            JsonNode steps = objectMapper.readTree(
+                    testCase.getStructuredSteps() != null ? testCase.getStructuredSteps() : "[]");
+            if (steps.isArray()) {
+                for (JsonNode step : steps) {
+                    all.add(step);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse structuredSteps for case {}", testCase.getId(), e);
+        }
+        return all;
+    }
+
     // v4.2: 执行取消标志检查
     private boolean isExecutionCancelled(String executionId) {
         RuntimeFlag flag = executionCancellations.get(executionId);
@@ -812,6 +905,12 @@ public class ExecutionService {
         RuntimeFlag flag = executionCancellations.computeIfAbsent(
                 executionId, k -> runtimeStore.newFlag("exec:cancel:" + k));
         flag.cancel();
+        // v6.0: 取消时先保存录像，避免浏览器提前关闭导致 WebM 丢失
+        try {
+            playwrightSkill.stopRecording("outputs/recordings/" + executionId + "/video.webm");
+        } catch (Exception e) {
+            log.warn("Failed to save recording for cancelled execution {}", executionId, e);
+        }
         String sessionId = runtimeStore.getSession(executionId);
         if (sessionId != null) {
             try {

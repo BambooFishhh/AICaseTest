@@ -111,11 +111,7 @@ const rowClassName = ({ row }) => {
 
 // 进度条颜色根据覆盖率
 const rateColor = computed(() => {
-  if (!props.matrix) return '#6366f1'
-  const r = props.matrix.summary.rate
-  if (r >= 0.8) return '#10b981'
-  if (r >= 0.5) return '#f59e0b'
-  return '#ef4444'
+  return '#10b981'
 })
 </script>
 

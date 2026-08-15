@@ -62,7 +62,9 @@
             <div class="info-label">技术栈</div>
             <div class="info-value">
               <div v-if="techStackList.length" class="tech-tags">
-                <span v-for="tech in visibleTechStack" :key="tech" class="tech-tag">{{ tech }}</span>
+                <span v-for="tech in visibleTechStack" :key="tech.label + tech.value" class="tech-tag">
+                  {{ tech.value ? `${tech.label}: ${tech.value}` : tech.label }}
+                </span>
                 <el-button
                   v-if="techStackList.length > MAX_TECH_VISIBLE"
                   link
@@ -244,11 +246,38 @@ function formatDate(val) {
   return d.toLocaleString('zh-CN', { hour12: false })
 }
 
+const TECH_STACK_LABELS = {
+  httpClient: 'HTTP 客户端',
+  stateManagement: '状态管理',
+  backendFramework: '后端框架',
+  backendLanguage: '后端语言',
+  language: '前端语言',
+  orm: 'ORM',
+  uiFramework: 'UI 框架',
+  router: '路由',
+  security: '安全框架',
+  apiDocs: 'API 文档',
+  vueVersion: 'Vue 版本',
+  persistence: '持久化',
+  backend: '后端',
+  springBootVersion: 'Spring Boot 版本',
+  frontendVersion: '前端版本',
+  frontend: '前端框架',
+  buildTool: '构建工具',
+  cache: '缓存',
+  type: '项目类型'
+}
+
 const techStackList = computed(() => {
   const ts = project.value?.techStack
   if (!ts) return []
-  if (Array.isArray(ts)) return ts
-  if (typeof ts === 'object') return Object.keys(ts)
+  if (typeof ts === 'object' && !Array.isArray(ts)) {
+    return Object.entries(ts).map(([key, value]) => ({
+      label: TECH_STACK_LABELS[key] || key,
+      value: Array.isArray(value) ? value.join(', ') : String(value ?? '')
+    }))
+  }
+  if (Array.isArray(ts)) return ts.map((v) => ({ label: v, value: '' }))
   return []
 })
 

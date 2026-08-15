@@ -87,6 +87,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'browser_fill',
+      description: '向输入框填入文本。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'CSS 选择器' },
+          value: { type: 'string', description: '要填入的文本' },
+        },
+        required: ['selector', 'value'],
+      },
+    },
+    {
+      name: 'browser_add_cookies',
+      description: '向浏览器上下文注入登录 Cookie。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          cookies: {
+            type: 'array',
+            items: { type: 'object' },
+            description: 'Playwright Cookie 数组，例如 [{name,value,url|domain,path}]',
+          },
+        },
+        required: ['cookies'],
+      },
+    },
+    {
       name: 'browser_get_page_status',
       description: '获取当前页面状态（url/title/textSnippet）。',
       inputSchema: { type: 'object', properties: {} },
@@ -161,6 +188,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: `clicked ${args.selector}` }] };
       }
 
+      case 'browser_fill': {
+        await page.fill(args.selector, args.value);
+        return { content: [{ type: 'text', text: `filled ${args.selector}` }] };
+      }
+
+      case 'browser_add_cookies': {
+        await context.addCookies(args.cookies || []);
+        return { content: [{ type: 'text', text: `added ${(args.cookies || []).length} cookies` }] };
+      }
+
       case 'browser_get_page_status': {
         const bodyText = await page.innerText('body').catch(() => '');
         const status = {
@@ -181,11 +218,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'browser_video_save': {
-        const video = page.video();
+        const video = page?.video();
         if (video) {
           const dir = path.dirname(args.filename);
           if (dir && !fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
+          }
+          // 先关闭 context，让 Playwright 落盘完整 WebM，避免只生成 0 字节文件
+          if (context) {
+            await context.close().catch(() => {});
+            context = null;
+            page = null;
           }
           await video.saveAs(args.filename);
           return { content: [{ type: 'text', text: args.filename }] };

@@ -184,12 +184,26 @@
                   <div class="screenshot-label">
                     <el-icon :size="12"><Camera /></el-icon>执行前截图
                   </div>
+                  <el-image
+                    :src="screenshotUrl(step.screenshotBefore)"
+                    :preview-src-list="screenshotPreviewList(step)"
+                    :initial-index="0"
+                    fit="contain"
+                    class="screenshot-image"
+                  />
                   <div class="screenshot-path">{{ step.screenshotBefore }}</div>
                 </div>
                 <div v-if="step.screenshotAfter" class="screenshot-item">
                   <div class="screenshot-label">
                     <el-icon :size="12"><Camera /></el-icon>执行后截图
                   </div>
+                  <el-image
+                    :src="screenshotUrl(step.screenshotAfter)"
+                    :preview-src-list="screenshotPreviewList(step)"
+                    :initial-index="step.screenshotBefore ? 1 : 0"
+                    fit="contain"
+                    class="screenshot-image"
+                  />
                   <div class="screenshot-path">{{ step.screenshotAfter }}</div>
                 </div>
               </div>
@@ -226,6 +240,7 @@
             controls
             autoplay
             class="video-element"
+            @error="videoError = true"
           />
           <div class="video-controls">
             <el-button :icon="Download" @click="downloadVideo">下载视频</el-button>
@@ -282,11 +297,9 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft, Loading, Download, Document, VideoPlay, VideoPause, Camera, Picture, CircleClose
 } from '@element-plus/icons-vue'
-import { getExecution, getExecutionSteps, getExecutionVideoUrl, cancelExecution } from '@/api/execution'
+import { getExecution, getExecutionSteps, getExecutionVideoUrl, getExecutionFileUrl, cancelExecution } from '@/api/execution'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { openAuthPreview, downloadAuth } from '@/utils/download'
-
-const RECORDING_BASE_URL = 'http://localhost:8000'
 
 const route = useRoute()
 const router = useRouter()
@@ -298,6 +311,7 @@ const execution = ref(null)
 const steps = ref([])
 let pollTimer = null
 const cancelling = ref(false)
+const videoError = ref(false)
 
 // v3.16: 执行时用例快照（JSON 字符串 → 对象）
 const executionSnapshot = computed(() => {
@@ -342,17 +356,23 @@ const recordingFrames = computed(() => {
 const currentFrameUrl = computed(() => {
   const frame = recordingFrames.value[currentFrameIndex.value]
   if (!frame) return ''
-  // 拼接后端 base URL，去掉开头的斜杠避免重复
-  const normalized = String(frame).replace(/^\//, '')
-  return `${RECORDING_BASE_URL}/${normalized}`
+  return getExecutionFileUrl(executionId, String(frame))
 })
 
 // v2.9: 视频录屏 URL（优先 WebM 视频，无视频时回退到图片帧）
 const recordingVideoUrl = computed(() => {
-  return execution.value?.recordingVideoPath
+  return execution.value?.recordingVideoPath && !videoError.value
     ? getExecutionVideoUrl(executionId)
     : ''
 })
+
+function screenshotUrl(path) {
+  return path ? getExecutionFileUrl(executionId, path) : ''
+}
+
+function screenshotPreviewList(step) {
+  return [step.screenshotBefore, step.screenshotAfter].filter(Boolean).map((p) => screenshotUrl(p))
+}
 
 // 是否有任何形式的录屏（视频或图片帧）
 const hasRecording = computed(() => {
@@ -373,6 +393,10 @@ watch(recordingFrames, (frames) => {
   if (currentFrameIndex.value > frames.length - 1) {
     currentFrameIndex.value = frames.length - 1
   }
+})
+
+watch(execution, () => {
+  videoError.value = false
 })
 
 function togglePlay() {
@@ -938,11 +962,21 @@ onUnmounted(() => {
   margin-bottom: 4px;
 }
 
+.screenshot-image {
+  width: 100%;
+  max-height: 260px;
+  border: 1px solid var(--card-border-light);
+  border-radius: var(--radius-sm);
+  background: #000;
+  cursor: zoom-in;
+}
+
 .screenshot-path {
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 12px;
   color: var(--text-secondary);
   background: #f8fafc;
+  margin-top: 6px;
   padding: 6px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--card-border-light);
