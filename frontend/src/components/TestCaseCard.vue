@@ -426,7 +426,7 @@
               {{ issue }}
             </div>
           </div>
-          <div v-if="suggestedChanges && Object.keys(suggestedChanges).length" class="review-suggestions">
+          <div v-if="hasSuggestions" class="review-suggestions">
             <div class="review-suggest-title">建议修改</div>
             <div v-for="(val, key) in suggestedChanges" :key="key" v-show="val" class="review-suggest-item">
               <span class="review-key">{{ key }}</span>
@@ -798,7 +798,8 @@ import {
 } from '@element-plus/icons-vue'
 import StateMachineViewer from './StateMachineViewer.vue'
 import { executeTestCase, getExecutions } from '@/api/execution'
-import { updateTestCase, reviewTestCase } from '@/api/testcase'
+import { updateTestCase, reviewTestCase, getTestCase } from '@/api/testcase'
+import { hasSuggestedChanges, pollAiReview } from '@/utils/aiReview'
 
 const props = defineProps({
   testCase: { type: Object, default: () => ({}) },
@@ -966,12 +967,19 @@ const hasStepData = (data) => data && typeof data === 'object' && Object.keys(da
 const reviewing = ref(false)
 const aiReview = computed(() => props.testCase?.executionHints?.aiReview || null)
 const suggestedChanges = computed(() => aiReview.value?.suggestedChanges || null)
+const hasSuggestions = computed(() => hasSuggestedChanges(aiReview.value))
 const reviewStatusText = computed(() => {
-  const map = { pass: '通过', fix: '需修正', reject: '应删除', ignored: '已忽略', applied: '已采纳' }
+  const map = {
+    pass: '通过', fix: '需修正', reject: '应删除', ignored: '已忽略', applied: '已采纳',
+    reviewing: '评审中', failed: '评审失败', rule: '规则兜底'
+  }
   return map[aiReview.value?.status] || aiReview.value?.status || '待评审'
 })
 const reviewTagType = computed(() => {
-  const map = { pass: 'success', fix: 'warning', reject: 'danger', ignored: 'info', applied: 'success' }
+  const map = {
+    pass: 'success', fix: 'warning', reject: 'danger', ignored: 'info', applied: 'success',
+    reviewing: 'warning', failed: 'danger', rule: 'info'
+  }
   return map[aiReview.value?.status] || 'info'
 })
 
@@ -983,14 +991,13 @@ async function applyAiReview() {
     aiReview: { ...aiReview.value, status: 'applied' }
   }
   if (s.coverageRefs) hints.coverageRefs = s.coverageRefs
+  const body = { executionHints: hints, reviewStatus: 'reviewed' }
+  if (s.title) body.title = s.title
+  if (s.module) body.module = s.module
+  if (s.type) body.type = s.type
+  if (s.priority) body.priority = s.priority
   try {
-    const res = await updateTestCase(projectId, props.testCase.id, {
-      title: s.title || props.testCase.title,
-      module: s.module || props.testCase.module,
-      type: s.type || props.testCase.type,
-      priority: s.priority || props.testCase.priority,
-      executionHints: hints
-    })
+    const res = await updateTestCase(projectId, props.testCase.id, body)
     ElMessage.success('已采纳 AI 修改')
     emit('reviewUpdated', res.data)
   } catch {
@@ -1017,9 +1024,17 @@ async function rerunAiReview() {
   if (!props.testCase?.id) return
   reviewing.value = true
   try {
-    const res = await reviewTestCase(projectId, props.testCase.id)
-    ElMessage.success('AI 评审完成')
-    emit('reviewUpdated', res.data)
+    await reviewTestCase(projectId, props.testCase.id)
+    const review = await pollAiReview(projectId, props.testCase.id)
+    if (review?.status === 'failed') {
+      ElMessage.error((review.issues && review.issues[0]) || 'AI 评审失败，请稍后重试')
+    } else if (!review) {
+      ElMessage.warning('AI 评审仍在进行，请稍后刷新查看')
+    } else {
+      ElMessage.success('AI 评审完成')
+    }
+    const updated = await getTestCase(projectId, props.testCase.id)
+    emit('reviewUpdated', updated.data)
   } catch {
     // 错误已由响应拦截器统一提示
   } finally {

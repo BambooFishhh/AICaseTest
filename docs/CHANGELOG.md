@@ -4,6 +4,80 @@
 
 ---
 
+## v5.12 — AI 评审闭环与覆盖引用收口
+**日期**: 2026-08-16
+**基线**: v5.11
+**主题**: AI 评审历史落库、单条重评异步化、采纳语义修正、覆盖引用合并与过滤、覆盖率口径统一
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| db/migration/mysql/V5__add_test_case_ai_reviews.sql | 新增 | `test_case_ai_reviews` 评审历史表 |
+| entity/TestCaseAiReview.java / repository/TestCaseAiReviewRepository.java | 新增 | 评审历史实体与仓储 |
+| service/AiReviewHistoryRecorder.java | 新增 | 生成/重评统一写历史 |
+| agent/TestCaseReviewRunner.java | 新增 | 单条重评提交 generationExecutor 异步执行 |
+| agent/TestCaseReviewAgent.java | 重构 | `suggestedChanges` 固定五键归一化；`coverageRefs` 合并而非覆盖；接口引用按代码清单过滤 |
+| service/TestCaseService.java | 重构 | 重评改为 reviewing/执行/failed 状态机；采纳同步 `reviewStatus`；覆盖率并入计划引用；删除级联清理历史 |
+| controller/TestCaseController.java | 调整 | 重评接口改为立即返回 `{status:"reviewing"}` |
+| dto/UpdateTestCaseRequest.java | 扩展 | 新增可选 `reviewStatus` |
+| service/TestCasePersistenceService.java | 扩展 | 生成落库后补记 AI 评审历史 |
+| service/ProjectService.java | 扩展 | 删除项目级联清理评审历史 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| utils/aiReview.js | 新增 | `pollAiReview` 轮询重评结果、`hasSuggestedChanges` 非空建议判断 |
+| components/TestCaseCard.vue | 重构 | 重评改为异步轮询；采纳只提交非空建议并同步 `reviewStatus`；补齐评审中/失败文案 |
+| views/TestCaseList.vue | 重构 | 同上；评审结果表建议判断与状态文案同步 |
+
+### 验证结果
+
+- `mvn compile`：BUILD SUCCESS（149 源文件）
+- `npm run build`：成功
+
+---
+
+## v5.11 — 生成链路 AI 评审与前端体验
+**日期**: 2026-08-16
+**基线**: v5.10
+**主题**: 需求文档多篇化、coverageRefs 注入与 AI 评审、代码分析/暗色主题/脑图导出体验
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| agent/OrchestratorAgent.java / PrdAgent.java | 需求文档分类 | PRD 文档 / 上下文文档 / 补充需求三类输入 |
+| agent/TestGeneratorAgent.java | coverageRefs | 生成前注入覆盖清单与缺口，输出 `coverageRefs` |
+| agent/TestCaseReviewAgent.java | 新增 | 规则兜底 + LLM 评审，结果写入 `executionHints.aiReview` |
+| controller/TestCaseController.java | 新增接口 | 单条用例重新 AI 评审 |
+| analyzer/result/BackendResult.java / FrontendResult.java | 修复 | 补充无参构造器，接口清单反序列化恢复 |
+| service/XmindService.java | 移除 | 删除已废弃的 XMind 导入模板 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| components/PrdPanel.vue | 需求文档面板 | “需求文档”支持多篇 PRD/上下文文档；“其他上下文信息”更名“补充需求” |
+| components/TestCaseCard.vue / views/TestCaseList.vue | AI 评审 UI | 评审结果表、卡片评审区块、采纳/忽略/重评 |
+| views/CodeAnalysis.vue | 统计与筛选 | 全 tab 关键字筛选 + 顶部统计摘要条 |
+| views/MindMapPreview.vue | PNG 导出 | 全展开离屏渲染、2x 高清、不改展开状态 |
+| styles/index.scss / StateMachineViewer.vue | 暗色主题 | danger/success/warning 暗色令牌与浅色硬编码收敛 |
+
+### MCP 服务变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| mcp-server/index.js | max_tokens | `llm_chat` 8192 → 16384 |
+
+### 验证结果
+
+- `mvn compile`：BUILD SUCCESS
+- `npm run build`：成功
+
+---
+
 ## v5.10 — PRD 上下文改版与用例级执行历史
 **日期**: 2026-08-16
 **基线**: v5.9 / vP5

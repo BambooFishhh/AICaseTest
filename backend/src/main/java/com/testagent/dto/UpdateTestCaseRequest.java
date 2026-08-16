@@ -31,4 +31,7 @@ public class UpdateTestCaseRequest {
     private Map<String, Object> executionHints;
 
     private String executionStatus;
+
+    // v5.12: AI 采纳后同步人工评审状态（draft/reviewed/approved/rejected）
+    private String reviewStatus;
 }

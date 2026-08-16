@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.dto.JsonHelper;
 import com.testagent.entity.TestCase;
 import com.testagent.service.LlmService;
+import com.testagent.service.AiReviewHistoryRecorder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,14 +34,21 @@ public class TestCaseReviewAgent {
     @Autowired
     private LlmService llmService;
 
+    @Autowired
+    private AiReviewHistoryRecorder aiReviewHistoryRecorder;
+
     public List<TestCase> review(List<TestCase> cases, Map<String, Object> coverage) {
+        return review(cases, coverage, "generation");
+    }
+
+    public List<TestCase> review(List<TestCase> cases, Map<String, Object> coverage, String source) {
         if (cases == null || cases.isEmpty()) {
             return cases;
         }
         List<TestCase> cleaned = ruleReview(cases, coverage);
         if (cleaned.size() <= MAX_LLM_CASES && !cleaned.isEmpty()) {
             try {
-                cleaned = llmReview(cleaned, coverage);
+                cleaned = llmReview(cleaned, coverage, source);
             } catch (Exception e) {
                 log.warn("LLM review failed, keep rule-reviewed cases: {}", e.getMessage());
             }
@@ -72,7 +80,7 @@ public class TestCaseReviewAgent {
         return result;
     }
 
-    private List<TestCase> llmReview(List<TestCase> cases, Map<String, Object> coverage) throws Exception {
+    private List<TestCase> llmReview(List<TestCase> cases, Map<String, Object> coverage, String source) throws Exception {
         List<Map<String, Object>> brief = new ArrayList<>();
         for (int i = 0; i < cases.size(); i++) {
             TestCase tc = cases.get(i);
@@ -138,14 +146,14 @@ public class TestCaseReviewAgent {
             TestCase tc = cases.get(i);
             JsonNode reviewNode = byIndex.get(i);
             if (reviewNode != null) {
-                applyReview(tc, reviewNode);
+                applyReview(tc, reviewNode, source);
             }
             result.add(tc);
         }
         return result;
     }
 
-    private void applyReview(TestCase tc, JsonNode reviewNode) {
+    private void applyReview(TestCase tc, JsonNode reviewNode, String source) {
         Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
         List<String> issues = new ArrayList<>();
         JsonNode issuesNode = reviewNode.path("issues");
@@ -156,29 +164,39 @@ public class TestCaseReviewAgent {
         review.put("status", reviewNode.path("status").asText("fix"));
         review.put("issues", issues);
         review.put("confidence", reviewNode.path("confidence").asDouble(0.5));
-        JsonNode suggestionsNode = reviewNode.path("suggestedChanges");
-        if (suggestionsNode.isObject()) {
-            try {
-                Map<String, Object> suggestions = objectMapper.convertValue(suggestionsNode, Map.class);
-                review.put("suggestedChanges", suggestions);
-            } catch (Exception e) {
-                log.warn("Failed to parse suggestedChanges: {}", e.getMessage());
-            }
-        }
+        review.put("suggestedChanges", normalizeSuggestions(reviewNode.path("suggestedChanges")));
         hints.put("aiReview", review);
 
         JsonNode refsNode = reviewNode.path("coverageRefs");
         if (refsNode.isObject()) {
             try {
                 Map<String, Object> refs = objectMapper.convertValue(refsNode, Map.class);
-                if (!isEmptyRefs(refs)) {
-                    hints.put("coverageRefs", refs);
-                }
+                Map<String, Object> existing = readCoverageRefs(hints);
+                hints.put("coverageRefs", mergeCoverageRefs(existing, refs));
             } catch (Exception e) {
                 log.warn("Failed to apply coverageRefs from review: {}", e.getMessage());
             }
         }
         tc.setExecutionHints(toJson(hints));
+    }
+
+    // v5.12: 生成链路在用例编号/项目归属确定后统一补记评审历史
+    public void recordHistoryForCases(List<TestCase> cases, String source) {
+        if (cases == null) {
+            return;
+        }
+        for (TestCase tc : cases) {
+            if (tc.getId() == null || tc.getProjectId() == null) {
+                continue;
+            }
+            Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
+            Object reviewObj = hints.get("aiReview");
+            if (reviewObj instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> review = (Map<String, Object>) reviewObj;
+                aiReviewHistoryRecorder.record(tc, review, readCoverageRefs(hints), source);
+            }
+        }
     }
 
     private Map<String, Object> readCoverageRefs(Map<String, Object> hints) {
@@ -189,6 +207,46 @@ public class TestCaseReviewAgent {
             return map;
         }
         return new LinkedHashMap<>();
+    }
+
+    private Map<String, Object> normalizeSuggestions(JsonNode suggestionsNode) {
+        Map<String, Object> suggestions = new LinkedHashMap<>();
+        suggestions.put("title", null);
+        suggestions.put("module", null);
+        suggestions.put("type", null);
+        suggestions.put("priority", null);
+        suggestions.put("coverageRefs", null);
+        if (suggestionsNode != null && suggestionsNode.isObject()) {
+            for (String key : suggestions.keySet()) {
+                JsonNode value = suggestionsNode.get(key);
+                if (value == null || value.isNull()) {
+                    continue;
+                }
+                if (value.isValueNode()) {
+                    suggestions.put(key, value.asText());
+                } else if (value.isObject()) {
+                    try {
+                        suggestions.put(key, objectMapper.convertValue(value, Map.class));
+                    } catch (Exception e) {
+                        log.warn("Failed to parse suggested change {}: {}", key, e.getMessage());
+                    }
+                }
+            }
+        }
+        return suggestions;
+    }
+
+    private Map<String, Object> mergeCoverageRefs(Map<String, Object> existing, Map<String, Object> review) {
+        Map<String, Object> merged = new LinkedHashMap<>(existing == null ? Map.of() : existing);
+        for (String key : List.of("requirementIds", "transitionIds", "endpointIds", "ruleIds")) {
+            Object value = review.get(key);
+            if (value instanceof List && !((List<?>) value).isEmpty()) {
+                merged.put(key, value);
+            } else if (!merged.containsKey(key)) {
+                merged.put(key, new ArrayList<String>());
+            }
+        }
+        return merged;
     }
 
     private boolean isEmptyRefs(Map<String, Object> refs) {
@@ -234,11 +292,17 @@ public class TestCaseReviewAgent {
     private Map<String, Object> mergeEndpointRefs(Map<String, Object> refs, TestCase tc,
                                                    Map<String, Object> coverage) {
         List<String> endpointIds = new ArrayList<>();
+        Set<String> validIds = readValidEndpointIds(coverage);
         Object existing = refs.get("endpointIds");
         if (existing instanceof List) {
             for (Object item : (List<?>) existing) {
                 if (item != null) {
-                    endpointIds.add(String.valueOf(item));
+                    String id = normalizeEndpointId(String.valueOf(item));
+                    if (validIds.isEmpty() || validIds.contains(id)) {
+                        if (!endpointIds.contains(id)) {
+                            endpointIds.add(id);
+                        }
+                    }
                 }
             }
         }
@@ -281,6 +345,28 @@ public class TestCaseReviewAgent {
             }
         }
         return bestId;
+    }
+
+    private Set<String> readValidEndpointIds(Map<String, Object> coverage) {
+        Set<String> ids = new HashSet<>();
+        for (Map<String, Object> ep : readEndpoints(coverage)) {
+            String id = String.valueOf(ep.get("id"));
+            if (id != null && !id.isBlank()) {
+                ids.add(id);
+            }
+        }
+        return ids;
+    }
+
+    private String normalizeEndpointId(String id) {
+        if (id == null) {
+            return "";
+        }
+        int space = id.indexOf(' ');
+        if (space > 0) {
+            return id.substring(0, space).toUpperCase() + id.substring(space);
+        }
+        return id;
     }
 
     @SuppressWarnings("unchecked")

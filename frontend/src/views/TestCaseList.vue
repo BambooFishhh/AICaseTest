@@ -994,6 +994,7 @@ import TestCaseCard from '@/components/TestCaseCard.vue'
 import TestCaseVersionDrawer from '@/components/TestCaseVersionDrawer.vue'
 import CoverageMatrix from '@/components/CoverageMatrix.vue'
 import { getCoverageMatrix } from '@/api/coverage'
+import { hasSuggestedChanges, pollAiReview } from '@/utils/aiReview'
 
 const route = useRoute()
 const router = useRouter()
@@ -1048,7 +1049,7 @@ const aiReviewRows = computed(() =>
         review,
         refs: hints.coverageRefs || {},
         hints,
-        suggested: review.suggestedChanges && Object.keys(review.suggestedChanges).length > 0
+        suggested: hasSuggestedChanges(review)
       }
     })
     .filter(Boolean)
@@ -1436,11 +1437,17 @@ async function handleDeleteTestCase(testcaseId) {
 
 // ===== v5.12: AI 评审操作 =====
 function aiReviewStatusText(status) {
-  return { pass: '通过', fix: '需修正', reject: '应删除', ignored: '已忽略', applied: '已采纳' }[status] || status || '待评审'
+  return {
+    pass: '通过', fix: '需修正', reject: '应删除', ignored: '已忽略', applied: '已采纳',
+    reviewing: '评审中', failed: '评审失败', rule: '规则兜底'
+  }[status] || status || '待评审'
 }
 
 function aiReviewTagType(status) {
-  return { pass: 'success', fix: 'warning', reject: 'danger', ignored: 'info', applied: 'success' }[status] || 'info'
+  return {
+    pass: 'success', fix: 'warning', reject: 'danger', ignored: 'info', applied: 'success',
+    reviewing: 'warning', failed: 'danger', rule: 'info'
+  }[status] || 'info'
 }
 
 function aiReviewRefSummary(refs) {
@@ -1458,14 +1465,13 @@ async function applyAiReviewRow(row) {
     aiReview: { ...row.review, status: 'applied' }
   }
   if (s.coverageRefs) hints.coverageRefs = s.coverageRefs
+  const body = { executionHints: hints, reviewStatus: 'reviewed' }
+  if (s.title) body.title = s.title
+  if (s.module) body.module = s.module
+  if (s.type) body.type = s.type
+  if (s.priority) body.priority = s.priority
   try {
-    await updateTestCase(projectId, row.id, {
-      title: s.title || row.title,
-      module: s.module || row.module || '',
-      type: s.type || row.type || '',
-      priority: s.priority || row.priority || '',
-      executionHints: hints
-    })
+    await updateTestCase(projectId, row.id, body)
     ElMessage.success('已采纳 AI 修改')
     await Promise.all([loadList(), loadAllForStats()])
   } catch {
@@ -1492,7 +1498,14 @@ async function rerunAiReviewRow(row) {
   reviewingId.value = row.id
   try {
     await reviewTestCase(projectId, row.id)
-    ElMessage.success('AI 评审完成')
+    const review = await pollAiReview(projectId, row.id)
+    if (review?.status === 'failed') {
+      ElMessage.error((review.issues && review.issues[0]) || 'AI 评审失败，请稍后重试')
+    } else if (!review) {
+      ElMessage.warning('AI 评审仍在进行，请稍后刷新查看')
+    } else {
+      ElMessage.success('AI 评审完成')
+    }
     await Promise.all([loadList(), loadAllForStats()])
   } catch {
     // 错误已由响应拦截器统一提示

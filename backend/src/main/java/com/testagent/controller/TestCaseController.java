@@ -1,6 +1,7 @@
 package com.testagent.controller;
 
 import com.testagent.common.ApiResponse;
+import com.testagent.agent.TestCaseReviewRunner;
 import com.testagent.dto.BatchDeleteRequest;
 import com.testagent.dto.CopyToRequest;
 import com.testagent.dto.CreateTestCaseRequest;
@@ -39,6 +40,9 @@ public class TestCaseController {
 
     @Autowired
     private TestCaseService testCaseService;
+
+    @Autowired
+    private TestCaseReviewRunner testCaseReviewRunner;
 
     @Autowired
     private SemanticService semanticService;
@@ -97,12 +101,13 @@ public class TestCaseController {
                 testCaseService.updateExecutionStatus(projectId, testcaseId, body.get("status")));
     }
 
-    // v5.12: 单条用例重新 AI 评审
+    // v5.12: 单条用例重新 AI 评审（异步启动，前端轮询 getTestCase 获取结果）
     @PostMapping("/{testcaseId}/review")
-    public ApiResponse<TestCaseDTO> reviewTestCase(
+    public ApiResponse<Map<String, Object>> reviewTestCase(
             @PathVariable String projectId,
             @PathVariable String testcaseId) {
-        return ApiResponse.success(testCaseService.reviewTestCase(projectId, testcaseId));
+        return ApiResponse.success(
+                testCaseReviewRunner.startReview(projectId, testcaseId), "已开始 AI 评审");
     }
 
     @DeleteMapping("/{testcaseId}")

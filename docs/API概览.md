@@ -41,8 +41,9 @@
 | GET | `/api/projects/{id}/testcases` | 用例列表（分页+筛选+覆盖率，v3.12 支持 executionStatus 筛选） |
 | GET | `/api/projects/{id}/coverage/matrix` | 覆盖率矩阵（每转换覆盖详情） |
 | GET | `/api/projects/{id}/testcases/{tcId}` | 用例详情 |
-| PUT | `/api/projects/{id}/testcases/{tcId}` | 更新用例 |
+| PUT | `/api/projects/{id}/testcases/{tcId}` | 更新用例（v5.12 支持可选 reviewStatus） |
 | DELETE | `/api/projects/{id}/testcases/{tcId}` | 删除用例 |
+| POST | `/api/projects/{id}/testcases/{tcId}/review` | 触发单条 AI 评审（v5.12 异步，返回 reviewing，轮询用例详情获取结果） |
 | DELETE | `/api/projects/{id}/testcases/batch` | 批量删除用例 |
 | GET | `/api/projects/{id}/testcases/export?format=json\|csv&ids=` | 导出用例（JSON/CSV 文件下载） |
 | POST | `/api/projects/{id}/testcases/import` | 导入 JSON 用例文件（multipart） |

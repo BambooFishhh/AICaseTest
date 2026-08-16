@@ -7,6 +7,7 @@ import com.testagent.agent.OrchestratorAgent;
 import com.testagent.agent.TestCaseReviewAgent;
 import com.testagent.agent.TestGeneratorAgent;
 import com.testagent.analyzer.result.BackendResult;
+import com.testagent.analyzer.result.BusinessRule;
 import com.testagent.analyzer.result.EndpointInfo;
 import com.testagent.common.BusinessException;
 import com.testagent.common.UploadGuard;
@@ -25,6 +26,7 @@ import com.testagent.entity.TestCaseVersion;
 import com.testagent.repository.CodeAnalysisRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
+import com.testagent.repository.TestCaseAiReviewRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.TestCaseVersionRepository;
 import com.testagent.runtime.RuntimeFlag;
@@ -62,6 +64,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -97,6 +100,12 @@ public class TestCaseService {
 
     @Autowired
     private TestCaseVersionRepository testCaseVersionRepository;
+
+    @Autowired
+    private TestCaseAiReviewRepository aiReviewRepository;
+
+    @Autowired
+    private AiReviewHistoryRecorder aiReviewHistoryRecorder;
 
     @Autowired
     private StateMachineRepository stateMachineRepository;
@@ -363,6 +372,8 @@ public class TestCaseService {
                 tc.setCreatedAt(LocalDateTime.now());
                 testCaseRepository.save(tc);
             }
+            // v5.12: 追加生成落库后补记 AI 评审历史
+            testCaseReviewAgent.recordHistoryForCases(toAppend, "generation");
 
             // v5.4: 追加用例写入语义索引
             semanticService.indexCases(projectId, toAppend);
@@ -527,17 +538,97 @@ public class TestCaseService {
         return TestCaseDTO.from(tc);
     }
 
-    // v5.12: 单条用例重新 AI 评审（规则 + LLM，带当前项目代码接口清单）
+    // v5.12: 单条 AI 评审异步化——先标记 reviewing，任务完成后由 TestCaseReviewRunner 执行
     @Transactional
-    public TestCaseDTO reviewTestCase(String projectId, String testcaseId) {
+    public Map<String, Object> markReviewing(String projectId, String testcaseId) {
         projectAccessService.assertOperateAccess(projectId);
         TestCase tc = findTestCase(projectId, testcaseId);
-        List<TestCase> reviewed = testCaseReviewAgent.review(List.of(tc), buildCoverageForReview(projectId));
+        Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
+        Map<String, Object> review = readAiReview(hints);
+        if (review != null && "reviewing".equals(String.valueOf(review.get("status")))) {
+            throw BusinessException.invalidState("该用例正在评审中，请勿重复提交");
+        }
+        Map<String, Object> next = new LinkedHashMap<>();
+        next.put("status", "reviewing");
+        next.put("issues", List.of());
+        next.put("confidence", 0.0);
+        next.put("suggestedChanges", emptyAiReviewSuggestions());
+        hints.put("aiReview", next);
+        tc.setExecutionHints(toJson(hints));
+        testCaseRepository.save(tc);
+        return Map.of("status", "reviewing");
+    }
+
+    @Transactional
+    public TestCaseDTO reviewTestCaseInternal(String projectId, String testcaseId) {
+        TestCase tc = findTestCase(projectId, testcaseId);
+        List<TestCase> reviewed = testCaseReviewAgent.review(
+                List.of(tc), buildCoverageForReview(projectId), "rerun");
         if (reviewed.isEmpty()) {
             throw new BusinessException(40001, "评审后没有可用用例", HttpStatus.BAD_REQUEST);
         }
         TestCase saved = testCaseRepository.save(reviewed.get(0));
+        ensureReviewCompleted(saved);
+        testCaseReviewAgent.recordHistoryForCases(List.of(saved), "rerun");
         return TestCaseDTO.from(saved);
+    }
+
+    @Transactional
+    public void markReviewFailed(String projectId, String testcaseId, String error) {
+        TestCase tc = findTestCase(projectId, testcaseId);
+        Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
+        Map<String, Object> review = new LinkedHashMap<>();
+        review.put("status", "failed");
+        review.put("issues", List.of(error == null || error.isBlank() ? "AI 评审失败" : error));
+        review.put("confidence", 0.0);
+        review.put("suggestedChanges", emptyAiReviewSuggestions());
+        hints.put("aiReview", review);
+        tc.setExecutionHints(toJson(hints));
+        testCaseRepository.save(tc);
+        aiReviewHistoryRecorder.record(tc, review, readCoverageRefs(hints), "rerun");
+    }
+
+    private void ensureReviewCompleted(TestCase tc) {
+        Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
+        Map<String, Object> review = readAiReview(hints);
+        if (review == null || "reviewing".equals(String.valueOf(review.get("status")))) {
+            Map<String, Object> fallback = new LinkedHashMap<>();
+            fallback.put("status", "failed");
+            fallback.put("issues", List.of("LLM 评审失败，已保留规则兜底结果"));
+            fallback.put("confidence", 0.0);
+            fallback.put("suggestedChanges", emptyAiReviewSuggestions());
+            hints.put("aiReview", fallback);
+            tc.setExecutionHints(toJson(hints));
+            testCaseRepository.save(tc);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readAiReview(Map<String, Object> hints) {
+        Object review = hints.get("aiReview");
+        if (review instanceof Map) {
+            return (Map<String, Object>) review;
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readCoverageRefs(Map<String, Object> hints) {
+        Object refs = hints.get("coverageRefs");
+        if (refs instanceof Map) {
+            return (Map<String, Object>) refs;
+        }
+        return new LinkedHashMap<>();
+    }
+
+    private Map<String, Object> emptyAiReviewSuggestions() {
+        Map<String, Object> suggestions = new LinkedHashMap<>();
+        suggestions.put("title", null);
+        suggestions.put("module", null);
+        suggestions.put("type", null);
+        suggestions.put("priority", null);
+        suggestions.put("coverageRefs", null);
+        return suggestions;
     }
 
     private Map<String, Object> buildCoverageForReview(String projectId) {
@@ -558,6 +649,7 @@ public class TestCaseService {
         }
 
         List<Map<String, Object>> endpoints = new ArrayList<>();
+        List<Map<String, Object>> rules = new ArrayList<>();
         Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId);
         if (analysisOpt.isPresent()) {
             String json = analysisOpt.get().getBackendResult();
@@ -574,6 +666,16 @@ public class TestCaseService {
                             endpoints.add(item);
                         }
                     }
+                    if (backendResult.getBusinessRules() != null) {
+                        int i = 1;
+                        for (BusinessRule br : backendResult.getBusinessRules()) {
+                            Map<String, Object> item = new LinkedHashMap<>();
+                            item.put("id", "rule-" + i++);
+                            item.put("rule", br.getRule());
+                            item.put("ruleType", br.getRuleType());
+                            rules.add(item);
+                        }
+                    }
                 } catch (Exception e) {
                     log.warn("Failed to parse backend result for review: {}", e.getMessage());
                 }
@@ -584,12 +686,12 @@ public class TestCaseService {
         checklist.put("requirements", List.of());
         checklist.put("transitions", transitions);
         checklist.put("endpoints", endpoints);
-        checklist.put("businessRules", List.of());
+        checklist.put("businessRules", rules);
         Map<String, Object> gaps = new LinkedHashMap<>();
         gaps.put("requirementIds", List.of());
         gaps.put("transitionIds", transitions.stream().map(t -> t.get("id")).toList());
         gaps.put("endpointIds", endpoints.stream().map(e -> e.get("id")).toList());
-        gaps.put("ruleIds", List.of());
+        gaps.put("ruleIds", rules.stream().map(r -> r.get("id")).toList());
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("checklist", checklist);
         result.put("gaps", gaps);
@@ -601,8 +703,9 @@ public class TestCaseService {
         projectAccessService.assertOperateAccess(projectId);
         TestCase tc = findTestCase(projectId, testcaseId);
         testCaseRepository.delete(tc);
-        // v5.6: 同步删除版本快照与语义向量
+        // v5.6/v5.12: 同步删除版本快照、AI 评审历史与语义向量
         testCaseVersionRepository.deleteByTestCaseId(testcaseId);
+        aiReviewRepository.deleteByTestCaseId(testcaseId);
         semanticService.removeCases(projectId, List.of(testcaseId));
     }
 
@@ -616,6 +719,7 @@ public class TestCaseService {
             if (ids.contains(tc.getId())) {
                 testCaseRepository.delete(tc);
                 testCaseVersionRepository.deleteByTestCaseId(tc.getId());
+                aiReviewRepository.deleteByTestCaseId(tc.getId());
                 deletedIds.add(tc.getId());
                 count++;
             }
@@ -951,6 +1055,7 @@ public class TestCaseService {
     public TestCaseDTO updateTestCase(String projectId, String testcaseId, UpdateTestCaseRequest req) {
         projectAccessService.assertOperateAccess(projectId);
         TestCase tc = findTestCase(projectId, testcaseId);
+        Map<String, Object> oldHints = JsonHelper.parseMap(tc.getExecutionHints());
         // v1.9: 保存编辑前快照
         createVersion(projectId, testcaseId, tc, "edit");
 
@@ -985,7 +1090,11 @@ public class TestCaseService {
             tc.setTestData(toJson(req.getTestData()));
         }
         if (req.getExecutionHints() != null) {
+            syncAiReviewStatusHistory(testcaseId, oldHints, req.getExecutionHints());
             tc.setExecutionHints(toJson(req.getExecutionHints()));
+        }
+        if (req.getReviewStatus() != null) {
+            tc.setReviewStatus(req.getReviewStatus());
         }
         if (req.getExecutionStatus() != null) {
             tc.setExecutionStatus(req.getExecutionStatus());
@@ -995,6 +1104,26 @@ public class TestCaseService {
         // v5.6: 编辑用例后重建向量（先删旧向量再写入）
         semanticService.reindexCase(projectId, tc);
         return TestCaseDTO.from(tc);
+    }
+
+    private void syncAiReviewStatusHistory(String testcaseId,
+                                           Map<String, Object> oldHints,
+                                           Map<String, Object> newHints) {
+        Map<String, Object> oldReview = readAiReview(oldHints);
+        Map<String, Object> newReview = readAiReview(newHints);
+        if (newReview == null) {
+            return;
+        }
+        String oldStatus = oldReview == null ? null : String.valueOf(oldReview.get("status"));
+        String newStatus = String.valueOf(newReview.get("status"));
+        if (!Objects.equals(oldStatus, newStatus)
+                && ("applied".equals(newStatus) || "ignored".equals(newStatus))) {
+            aiReviewRepository.findFirstByTestCaseIdOrderByCreatedAtDesc(testcaseId)
+                    .ifPresent(row -> {
+                        row.setStatus(newStatus);
+                        aiReviewRepository.save(row);
+                    });
+        }
     }
 
     // ==================== v1.9: 用例版本管理 ====================
@@ -1126,6 +1255,8 @@ public class TestCaseService {
 
         Set<String> coveredTransitions = new HashSet<>();
         for (TestCase tc : allTestCases) {
+            // v5.12: 计划覆盖（coverageRefs）先计入，未执行也视为已规划覆盖
+            coveredTransitions.addAll(parseCoverageRefTransitions(tc));
             if (!isExecuted(tc)) {
                 continue;
             }
@@ -1167,7 +1298,7 @@ public class TestCaseService {
                     BackendResult backendResult = objectMapper.readValue(backendResultJson, BackendResult.class);
                     if (backendResult.getEndpoints() != null) {
                         for (EndpointInfo ep : backendResult.getEndpoints()) {
-                            totalEndpoints.add(ep.getMethod() + " " + ep.getPath());
+                            totalEndpoints.add(normalizeEndpointIdForCoverage(ep.getMethod() + " " + ep.getPath()));
                         }
                     }
                 } catch (Exception e) {
@@ -1178,6 +1309,8 @@ public class TestCaseService {
 
         Set<String> coveredEndpoints = new HashSet<>();
         for (TestCase tc : allTestCases) {
+            // v5.12: 计划接口覆盖先计入，与状态机矩阵口径一致
+            coveredEndpoints.addAll(parseCoverageRefEndpoints(tc));
             if (!isExecuted(tc)) {
                 continue;
             }
@@ -1185,7 +1318,7 @@ public class TestCaseService {
             for (Map<String, Object> ep : eps) {
                 String method = String.valueOf(ep.getOrDefault("method", ""));
                 String path = String.valueOf(ep.getOrDefault("path", ""));
-                coveredEndpoints.add(method + " " + path);
+                coveredEndpoints.add(normalizeEndpointIdForCoverage(method + " " + path));
             }
         }
 
@@ -1217,6 +1350,51 @@ public class TestCaseService {
         coverage.put("typeDistribution", typeDist);
 
         return coverage;
+    }
+
+    private Set<String> parseCoverageRefTransitions(TestCase tc) {
+        Set<String> result = new HashSet<>();
+        Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
+        Object refs = hints.get("coverageRefs");
+        if (refs instanceof Map) {
+            Object ids = ((Map<?, ?>) refs).get("transitionIds");
+            if (ids instanceof List) {
+                for (Object id : (List<?>) ids) {
+                    if (id != null) {
+                        result.add(String.valueOf(id));
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private Set<String> parseCoverageRefEndpoints(TestCase tc) {
+        Set<String> result = new HashSet<>();
+        Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
+        Object refs = hints.get("coverageRefs");
+        if (refs instanceof Map) {
+            Object ids = ((Map<?, ?>) refs).get("endpointIds");
+            if (ids instanceof List) {
+                for (Object id : (List<?>) ids) {
+                    if (id != null) {
+                        result.add(normalizeEndpointIdForCoverage(String.valueOf(id)));
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    private String normalizeEndpointIdForCoverage(String id) {
+        if (id == null) {
+            return "";
+        }
+        int space = id.indexOf(' ');
+        if (space > 0) {
+            return id.substring(0, space).toUpperCase() + id.substring(space);
+        }
+        return id;
     }
 
     private boolean isExecuted(TestCase tc) {

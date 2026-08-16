@@ -1,5 +1,6 @@
 package com.testagent.service;
 
+import com.testagent.agent.TestCaseReviewAgent;
 import com.testagent.entity.TestCase;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.TestCaseVersionRepository;
@@ -21,6 +22,9 @@ public class TestCasePersistenceService {
     @Autowired
     private TestCaseVersionRepository testCaseVersionRepository;
 
+    @Autowired
+    private TestCaseReviewAgent testCaseReviewAgent;
+
     @Transactional
     public List<TestCase> replaceAll(String projectId, List<TestCase> cases) {
         testCaseVersionRepository.deleteByProjectId(projectId);
@@ -29,6 +33,8 @@ public class TestCasePersistenceService {
             tc.setProjectId(projectId);
             testCaseRepository.save(tc);
         }
+        // v5.12: 项目归属确定后补记 AI 评审历史
+        testCaseReviewAgent.recordHistoryForCases(cases, "generation");
         return cases;
     }
 }

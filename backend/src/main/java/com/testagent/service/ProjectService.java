@@ -22,6 +22,7 @@ import com.testagent.repository.MindMapRepository;
 import com.testagent.repository.ProjectGroupRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
+import com.testagent.repository.TestCaseAiReviewRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.TestCaseVersionRepository;
 import com.testagent.repository.TestSuiteRepository;
@@ -97,6 +98,9 @@ public class ProjectService {
 
     @Autowired
     private TestCaseVersionRepository testCaseVersionRepository;
+
+    @Autowired
+    private TestCaseAiReviewRepository aiReviewRepository;
 
     // v1.10: PRD 解析 Agent
     @Autowired
@@ -195,6 +199,8 @@ public class ProjectService {
         executionRecordRepository.deleteAll(executions);
         testSuiteRepository.deleteAll(testSuiteRepository.findByProjectIdOrderByCreatedAtDesc(id));
         testCaseVersionRepository.deleteByProjectId(id);
+        // v5.12: AI 评审历史随项目级联清理
+        aiReviewRepository.deleteByProjectId(id);
         mindMapRepository.findAllByProjectId(id).forEach(mindMapRepository::delete);
         // v5.6: 清理 Milvus 三集合
         semanticService.clearProject(id);
