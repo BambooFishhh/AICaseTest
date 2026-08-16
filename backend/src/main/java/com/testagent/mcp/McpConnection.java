@@ -116,6 +116,13 @@ public class McpConnection {
      * @return 工具返回的文本内容（content[0].text）
      */
     public synchronized String callTool(String toolName, Map<String, Object> args) throws Exception {
+        return callToolWithMeta(toolName, args).getText();
+    }
+
+    /**
+     * v5.14: 调用工具并返回文本 + usage 元数据。
+     */
+    public synchronized McpToolResult callToolWithMeta(String toolName, Map<String, Object> args) throws Exception {
         if (!initialized || process == null || !process.isAlive()) {
             // 尝试重启
             log.warn("MCP [{}] 未启动或已死, 尝试重启...", name);
@@ -148,8 +155,9 @@ public class McpConnection {
         JsonNode content = result.path("content");
         if (content.isArray() && !content.isEmpty()) {
             String text = content.get(0).path("text").asText("");
+            JsonNode metadata = readMetadata(content);
             log.info("MCP [{}] callTool 返回, 长度={}", name, text.length());
-            return text;
+            return new McpToolResult(text, metadata);
         }
 
         throw new RuntimeException("MCP Server [" + name + "] 返回内容为空");
@@ -161,6 +169,15 @@ public class McpConnection {
      * 与 callTool 对称，但循环读取 notification + response。
      */
     public synchronized String callToolStreaming(
+            String toolName, Map<String, Object> args,
+            Consumer<String> chunkConsumer) throws Exception {
+        return callToolStreamingWithMeta(toolName, args, chunkConsumer).getText();
+    }
+
+    /**
+     * v5.14: 流式调用工具并返回文本 + usage 元数据。
+     */
+    public synchronized McpToolResult callToolStreamingWithMeta(
             String toolName, Map<String, Object> args,
             Consumer<String> chunkConsumer) throws Exception {
 
@@ -223,14 +240,26 @@ public class McpConnection {
                 JsonNode content = result.path("content");
                 if (content.isArray() && !content.isEmpty()) {
                     String text = content.get(0).path("text").asText("");
+                    JsonNode metadata = readMetadata(content);
                     log.info("MCP [{}] callToolStreaming 完成, id={}, 长度={}", name, id, text.length());
-                    return text;
+                    return new McpToolResult(text, metadata);
                 }
                 throw new RuntimeException("MCP Server [" + name + "] 返回内容为空");
             }
             // id 不匹配 → 忽略（不应在 synchronized 模式下发生）
             log.debug("MCP [{}] 忽略不匹配的响应: {}", name, line);
         }
+    }
+
+    private JsonNode readMetadata(JsonNode content) {
+        if (content.size() > 1 && content.get(1).has("text")) {
+            try {
+                return objectMapper.readTree(content.get(1).path("text").asText("{}"));
+            } catch (Exception e) {
+                log.debug("MCP [{}] 元数据解析失败: {}", name, e.getMessage());
+            }
+        }
+        return null;
     }
 
     public boolean isAvailable() {

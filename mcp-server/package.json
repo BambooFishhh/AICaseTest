@@ -1,6 +1,6 @@
 {
   "name": "aicasetest-mcp-server",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "description": "AICaseTest MCP Server - 多模态视觉识别服务",
   "type": "module",
   "scripts": {

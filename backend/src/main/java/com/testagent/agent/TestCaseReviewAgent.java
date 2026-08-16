@@ -6,6 +6,7 @@ import com.testagent.dto.JsonHelper;
 import com.testagent.entity.TestCase;
 import com.testagent.service.LlmService;
 import com.testagent.service.AiReviewHistoryRecorder;
+import com.testagent.service.TelemetryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +38,9 @@ public class TestCaseReviewAgent {
     @Autowired
     private AiReviewHistoryRecorder aiReviewHistoryRecorder;
 
+    @Autowired
+    private TelemetryService telemetryService;
+
     public List<TestCase> review(List<TestCase> cases, Map<String, Object> coverage) {
         return review(cases, coverage, "generation");
     }
@@ -47,10 +51,15 @@ public class TestCaseReviewAgent {
         }
         List<TestCase> cleaned = ruleReview(cases, coverage);
         if (cleaned.size() <= MAX_LLM_CASES && !cleaned.isEmpty()) {
+            boolean reviewPhase = telemetryService.beginPhaseIfActive("ai_review");
             try {
                 cleaned = llmReview(cleaned, coverage, source);
             } catch (Exception e) {
                 log.warn("LLM review failed, keep rule-reviewed cases: {}", e.getMessage());
+            } finally {
+                if (reviewPhase) {
+                    telemetryService.endPhase();
+                }
             }
         } else if (cleaned.size() > MAX_LLM_CASES) {
             log.info("Skip LLM review for {} cases (limit {})", cleaned.size(), MAX_LLM_CASES);

@@ -66,6 +66,9 @@ public class AnalysisService {
     @Autowired
     private SemanticService semanticService;
 
+    @Autowired
+    private TelemetryService telemetryService;
+
     // v5.3: 分析结果缓存（分析完成后失效）
     @Cacheable(value = "analysis", key = "#projectId")
     public CodeAnalysis getAnalysis(String projectId) {
@@ -125,22 +128,30 @@ public class AnalysisService {
         analysis.setStatus("running");
         codeAnalysisRepository.save(analysis);
 
+        TelemetryService.TelemetryContext telemetry = telemetryService.start("analysis", projectId);
+        boolean telemetryOk = false;
         try {
             updateProjectStatus(projectId, "analyzing");
             report(progressCb, "正在扫描项目结构...");
 
+            telemetryService.beginPhaseIfActive("scan");
             ScanResult scanResult = projectScanner.scan(sourcePath);
+            telemetryService.endPhase();
             report(progressCb, "项目结构扫描完成，正在解析后端代码...");
 
             FrontendResult frontendResult = null;
             if (scanResult.getFrontendDir() != null && !scanResult.getFrontendDir().isBlank()) {
                 report(progressCb, "正在解析前端代码...");
+                telemetryService.beginPhaseIfActive("frontend");
                 frontendResult = vueAnalyzer.analyze(scanResult.getFrontendDir());
+                telemetryService.endPhase();
             }
 
             BackendResult backendResult = null;
             if (scanResult.getBackendDir() != null && !scanResult.getBackendDir().isBlank()) {
+                telemetryService.beginPhaseIfActive("backend");
                 backendResult = springAnalyzer.analyze(scanResult.getBackendDir());
+                telemetryService.endPhase();
             }
             report(progressCb, "代码解析完成，正在提取状态机...");
 
@@ -172,7 +183,9 @@ public class AnalysisService {
 
             if (backendResult != null) {
                 stateMachineRepository.deleteAll(stateMachineRepository.findByProjectId(projectId));
+                telemetryService.beginPhaseIfActive("state_machine");
                 List<StateMachine> stateMachines = stateMachineAgent.extract(backendResult);
+                telemetryService.endPhase();
                 for (StateMachine sm : stateMachines) {
                     sm.setId(UUID.randomUUID().toString().substring(0, 8));
                     sm.setProjectId(projectId);
@@ -183,6 +196,7 @@ public class AnalysisService {
             updateProjectStatus(projectId, "analyzed");
             report(progressCb, "分析完成");
             log.info("Analysis completed for project {}", projectId);
+            telemetryOk = true;
 
         } catch (Exception e) {
             log.error("Analysis failed for project {}", projectId, e);
@@ -192,6 +206,7 @@ public class AnalysisService {
             evictAnalysisCaches(projectId);
             updateProjectStatus(projectId, "failed");
         }
+        telemetryService.finish(telemetryOk);
     }
 
     private void evictAnalysisCaches(String projectId) {

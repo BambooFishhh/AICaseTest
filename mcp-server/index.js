@@ -50,7 +50,7 @@ class StreamingServer extends Server {
 }
 
 const server = new StreamingServer(
-  { name: 'aicasetest-mcp-server', version: '1.2.0' },
+  { name: 'aicasetest-mcp-server', version: '1.3.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -122,11 +122,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // v3.7: 流式模式——逐块推送 notification + 累积完整文本
         if (stream) {
           let fullText = '';
+          let usage = null;
           const completion = await client.chat.completions.create({
             model,
             temperature: parseFloat(temperature),
             max_tokens: 16384,
             stream: true,
+            stream_options: { include_usage: true },
             messages: [
               { role: 'system', content: system_prompt },
               { role: 'user', content: user_prompt },
@@ -134,13 +136,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           });
           let chunkIndex = 0;
           for await (const chunk of completion) {
+            if (chunk.usage) {
+              usage = chunk.usage;
+            }
             const delta = chunk.choices[0]?.delta?.content || '';
             if (delta) {
               fullText += delta;
               await server.sendChunkNotification(delta, chunkIndex++);
             }
           }
-          return { content: [{ type: 'text', text: fullText }] };
+          return {
+            content: [
+              { type: 'text', text: fullText },
+              { type: 'text', text: JSON.stringify({ usage: usage || {} }) },
+            ],
+          };
         }
         // 非流式：原有逻辑
         const response = await client.chat.completions.create({
@@ -153,7 +163,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ],
         });
         const text = response.choices[0]?.message?.content || '';
-        return { content: [{ type: 'text', text }] };
+        const usage = response.usage || {};
+        return {
+          content: [
+            { type: 'text', text },
+            { type: 'text', text: JSON.stringify({ usage }) },
+          ],
+        };
       }
 
       case 'llm_chat_with_image': {
@@ -174,7 +190,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ],
         });
         const text = response.choices[0]?.message?.content || '';
-        return { content: [{ type: 'text', text }] };
+        const usage = response.usage || {};
+        return {
+          content: [
+            { type: 'text', text },
+            { type: 'text', text: JSON.stringify({ usage }) },
+          ],
+        };
       }
 
       case 'multimodal_element_locate': {

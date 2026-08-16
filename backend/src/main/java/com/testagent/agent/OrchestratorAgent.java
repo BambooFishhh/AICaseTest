@@ -12,6 +12,7 @@ import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
 import com.testagent.runtime.CancellationSignal;
 import com.testagent.service.SemanticService;
+import com.testagent.service.TelemetryService;
 import com.testagent.repository.CodeAnalysisRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
@@ -55,6 +56,9 @@ public class OrchestratorAgent {
     @Autowired
     private SemanticService semanticService;
 
+    @Autowired
+    private TelemetryService telemetryService;
+
     // v3.2: 生成上下文容器，供 generate 与 generateStreaming 共用
     // v3.4: 新增 params 字段（项目级生成参数）
     private record GenContext(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
@@ -70,9 +74,19 @@ public class OrchestratorAgent {
      * v3.4: 透传 GenerationParams（从 Project.settings 解析），供 TestGeneratorAgent 动态拼接 prompt + 调整 temperature。
      */
     public List<TestCase> generate(String projectId, TestGeneratorAgent.ProgressCallback progressCallback) {
-        GenContext ctx = loadGenerationContext(projectId, progressCallback);
-        return testGeneratorAgent.generate(ctx.prdResult(), ctx.stateMachines(), ctx.backendResult(),
-                ctx.frontendResult(), progressCallback, ctx.params());
+        TelemetryService.TelemetryContext telemetry = telemetryService.start("generation", projectId);
+        boolean ok = false;
+        try {
+            GenContext ctx = loadGenerationContext(projectId, progressCallback);
+            telemetryService.beginPhaseIfActive("generation");
+            List<TestCase> result = testGeneratorAgent.generate(ctx.prdResult(), ctx.stateMachines(),
+                    ctx.backendResult(), ctx.frontendResult(), progressCallback, ctx.params());
+            telemetryService.endPhase();
+            ok = true;
+            return result;
+        } finally {
+            telemetryService.finish(ok);
+        }
     }
 
     /**
@@ -84,9 +98,19 @@ public class OrchestratorAgent {
                                             TestGeneratorAgent.ProgressCallback progressCallback,
                                             TestGeneratorAgent.CaseCallback caseCallback,
                                             CancellationSignal cancelled) {
-        GenContext ctx = loadGenerationContext(projectId, progressCallback);
-        return testGeneratorAgent.generateStreaming(ctx.prdResult(), ctx.stateMachines(), ctx.backendResult(),
-                ctx.frontendResult(), progressCallback, caseCallback, cancelled, ctx.params());
+        TelemetryService.TelemetryContext telemetry = telemetryService.start("generation", projectId);
+        boolean ok = false;
+        try {
+            GenContext ctx = loadGenerationContext(projectId, progressCallback);
+            telemetryService.beginPhaseIfActive("generation");
+            List<TestCase> result = testGeneratorAgent.generateStreaming(ctx.prdResult(), ctx.stateMachines(),
+                    ctx.backendResult(), ctx.frontendResult(), progressCallback, caseCallback, cancelled, ctx.params());
+            telemetryService.endPhase();
+            ok = true;
+            return result;
+        } finally {
+            telemetryService.finish(ok);
+        }
     }
 
     // v3.2: 抽取生成上下文加载（PRD 解析 + 代码/前端结果加载），供 generate 与 generateStreaming 复用
@@ -160,7 +184,11 @@ public class OrchestratorAgent {
             if (progressCallback != null) {
                 progressCallback.update("正在解析需求资料（PRD/上下文文档/补充需求）...");
             }
+            boolean prdPhase = telemetryService.beginPhaseIfActive("prd");
             prdResult = prdAgent.analyze(prdDocs, contextDocs, supplementary);
+            if (prdPhase) {
+                telemetryService.endPhase();
+            }
             // v5.4: 生成前 RAG 上下文检索（Milvus 未启用时返回空，不影响原流程）
             String ragText = ragTextBuilder.toString();
             if (!ragText.isBlank()) {

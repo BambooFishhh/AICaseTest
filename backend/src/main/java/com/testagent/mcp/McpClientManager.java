@@ -93,6 +93,17 @@ public class McpClientManager {
     }
 
     /**
+     * v5.14: 调用工具并返回文本 + usage 元数据。
+     */
+    public McpToolResult callToolWithMeta(String serverName, String toolName, Map<String, Object> args) throws Exception {
+        McpConnection conn = connections.get(serverName);
+        if (conn == null) {
+            throw new IllegalArgumentException("未知 MCP Server: " + serverName);
+        }
+        return conn.callToolWithMeta(toolName, args);
+    }
+
+    /**
      * v3.7: 流式调用工具。路由到 McpConnection.callToolStreaming。
      */
     public String callToolStreaming(String serverName, String toolName,
@@ -103,6 +114,19 @@ public class McpClientManager {
             throw new IllegalArgumentException("未知 MCP Server: " + serverName);
         }
         return conn.callToolStreaming(toolName, args, chunkConsumer);
+    }
+
+    /**
+     * v5.14: 流式调用工具并返回文本 + usage 元数据。
+     */
+    public McpToolResult callToolStreamingWithMeta(String serverName, String toolName,
+                                                   Map<String, Object> args,
+                                                   Consumer<String> chunkConsumer) throws Exception {
+        McpConnection conn = connections.get(serverName);
+        if (conn == null) {
+            throw new IllegalArgumentException("未知 MCP Server: " + serverName);
+        }
+        return conn.callToolStreamingWithMeta(toolName, args, chunkConsumer);
     }
 
     /**

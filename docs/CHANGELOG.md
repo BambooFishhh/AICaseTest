@@ -4,6 +4,41 @@
 
 ---
 
+## 功能记录 — 分析/生成/AI评审埋点
+**日期**: 2026-08-16
+**主题**: LLM usage 透出、任务耗时/首 token 埋点、task_telemetry 落库与 Prometheus 指标
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| mcp-server/index.js | usage 透出 | `llm_chat`/`llm_chat_with_image` 返回 usage；流式启用 `include_usage` 并记录 usage |
+| mcp/McpToolResult.java / McpConnection.java / McpClientManager.java | 元数据解析 | 工具调用返回文本 + usage 元数据，保留旧文本接口兼容 |
+| dto/LlmCallResult.java | 新增 | 单次 LLM 调用耗时/token/首 token 结果 |
+| service/TelemetryService.java | 新增 | ThreadLocal 任务栈、阶段累计、落库与 Micrometer 指标 |
+| entity/TaskTelemetry.java / repository/TaskTelemetryRepository.java | 新增 | `task_telemetry` 埋点表 |
+| db/migration/mysql/V6__add_task_telemetry.sql | 新增 | Flyway V6 迁移 |
+| service/AnalysisService.java | 接入 | 分析按 scan/frontend/backend/state_machine 阶段埋点 |
+| agent/OrchestratorAgent.java | 接入 | 生成任务埋点（prd/generation 阶段） |
+| agent/TestCaseReviewAgent.java | 接入 | AI 评审 LLM 阶段埋点 |
+| service/TestCaseService.java | 接入 | 单条重评独立 ai_review 任务埋点 |
+| service/LlmService.java | 接入 | 每次 LLM 调用自动记录耗时/usage/首 token |
+
+### 指标
+
+- `aicasetest.task.duration`：任务/阶段耗时
+- `aicasetest.llm.tokens`：prompt/completion/total token 累计
+- `aicasetest.llm.ttft`：流式首 token 耗时
+- `aicasetest.llm.calls`：LLM 调用次数
+
+### 验证结果
+
+- `mvn compile`：BUILD SUCCESS
+- `node --check mcp-server/index.js`：通过
+- 流式 `stream_options.include_usage` 实测返回 usage
+
+---
+
 ## v5.12 — AI 评审闭环与覆盖引用收口
 **日期**: 2026-08-16
 **基线**: v5.11

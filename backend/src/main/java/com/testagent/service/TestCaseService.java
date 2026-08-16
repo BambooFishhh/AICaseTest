@@ -108,6 +108,9 @@ public class TestCaseService {
     private AiReviewHistoryRecorder aiReviewHistoryRecorder;
 
     @Autowired
+    private TelemetryService telemetryService;
+
+    @Autowired
     private StateMachineRepository stateMachineRepository;
 
     @Autowired
@@ -561,16 +564,23 @@ public class TestCaseService {
 
     @Transactional
     public TestCaseDTO reviewTestCaseInternal(String projectId, String testcaseId) {
-        TestCase tc = findTestCase(projectId, testcaseId);
-        List<TestCase> reviewed = testCaseReviewAgent.review(
-                List.of(tc), buildCoverageForReview(projectId), "rerun");
-        if (reviewed.isEmpty()) {
-            throw new BusinessException(40001, "评审后没有可用用例", HttpStatus.BAD_REQUEST);
+        TelemetryService.TelemetryContext telemetry = telemetryService.start("ai_review", projectId);
+        boolean ok = false;
+        try {
+            TestCase tc = findTestCase(projectId, testcaseId);
+            List<TestCase> reviewed = testCaseReviewAgent.review(
+                    List.of(tc), buildCoverageForReview(projectId), "rerun");
+            if (reviewed.isEmpty()) {
+                throw new BusinessException(40001, "评审后没有可用用例", HttpStatus.BAD_REQUEST);
+            }
+            TestCase saved = testCaseRepository.save(reviewed.get(0));
+            ensureReviewCompleted(saved);
+            testCaseReviewAgent.recordHistoryForCases(List.of(saved), "rerun");
+            ok = true;
+            return TestCaseDTO.from(saved);
+        } finally {
+            telemetryService.finish(ok);
         }
-        TestCase saved = testCaseRepository.save(reviewed.get(0));
-        ensureReviewCompleted(saved);
-        testCaseReviewAgent.recordHistoryForCases(List.of(saved), "rerun");
-        return TestCaseDTO.from(saved);
     }
 
     @Transactional

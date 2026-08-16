@@ -25,6 +25,7 @@ import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.TestCaseAiReviewRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.TestCaseVersionRepository;
+import com.testagent.repository.TaskTelemetryRepository;
 import com.testagent.repository.TestSuiteRepository;
 import com.testagent.security.SecurityUtils;
 import com.testagent.security.AccessLevel;
@@ -101,6 +102,9 @@ public class ProjectService {
 
     @Autowired
     private TestCaseAiReviewRepository aiReviewRepository;
+
+    @Autowired
+    private TaskTelemetryRepository telemetryRepository;
 
     // v1.10: PRD 解析 Agent
     @Autowired
@@ -201,6 +205,8 @@ public class ProjectService {
         testCaseVersionRepository.deleteByProjectId(id);
         // v5.12: AI 评审历史随项目级联清理
         aiReviewRepository.deleteByProjectId(id);
+        // v5.14: 任务埋点随项目级联清理
+        telemetryRepository.deleteByProjectId(id);
         mindMapRepository.findAllByProjectId(id).forEach(mindMapRepository::delete);
         // v5.6: 清理 Milvus 三集合
         semanticService.clearProject(id);
