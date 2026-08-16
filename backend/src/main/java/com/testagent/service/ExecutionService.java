@@ -866,7 +866,7 @@ public class ExecutionService {
     // 录屏节奏：步骤之间留出停顿，避免回放看起来一闪而过
     private void pauseForRecording() {
         try {
-            Thread.sleep(800);
+            Thread.sleep(600);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }

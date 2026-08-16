@@ -113,6 +113,7 @@ public class ExecutionAgent {
 
             // 操作前页面状态（用于步骤 6 验证点击是否生效）
             Map<String, String> statusBefore = playwrightSkill.getPageStatus(sessionId);
+            String domSelectorUsed = null;
 
             // 步骤 5: 执行决策
             switch (strategy) {
@@ -131,6 +132,7 @@ public class ExecutionAgent {
                     String selType = selector.path("type").asText("css");
                     String selValue = selector.path("value").asText("");
                     if (!selValue.isEmpty()) {
+                        domSelectorUsed = selValue;
                         int[] clickPos = playwrightSkill.domClick(sessionId, selType, selValue);
                         if (clickPos != null) {
                             clickX = clickPos[0];
@@ -165,7 +167,10 @@ public class ExecutionAgent {
                         JsonNode selector = step.path("uiSelector");
                         String selType = selector.path("type").asText("css");
                         String selValue = selector.path("value").asText("");
-                        if (!selValue.isEmpty()) {
+                        // 已用 DOM 点击过同一选择器时不再重试，避免二次点击改变业务结果
+                        boolean alreadyDomClicked = "dom_click".equals(strategy)
+                                || (domSelectorUsed != null && domSelectorUsed.equals(selValue));
+                        if (!selValue.isEmpty() && !alreadyDomClicked) {
                             int[] clickPos = playwrightSkill.domClick(sessionId, selType, selValue);
                             if (clickPos != null) {
                                 clickX = clickPos[0];
@@ -175,7 +180,9 @@ public class ExecutionAgent {
                             // 兜底重试后保留 passed（最佳努力重试）
                         } else {
                             result = "failed";
-                            error = "操作未生效且无 DOM 选择器可兜底";
+                            error = alreadyDomClicked
+                                    ? "操作未生效且已尝试 DOM 点击，为避免重复点击不再重试"
+                                    : "操作未生效且无 DOM 选择器可兜底";
                         }
                     } else {
                         result = "failed";

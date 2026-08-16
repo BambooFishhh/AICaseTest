@@ -214,7 +214,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'browser_navigate': {
         await clearClickMarker()
         await page.goto(args.url, { waitUntil: 'load', timeout: 30000 });
-        await page.waitForTimeout(1200);
+        await page.waitForTimeout(1000);
         return { content: [{ type: 'text', text: page.url() }] };
       }
 
@@ -231,33 +231,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'browser_visual_click': {
         await clearClickMarker()
         await markPoint(args.x, args.y)
-        await page.waitForTimeout(600)
+        await page.waitForTimeout(500)
         await page.mouse.click(args.x, args.y);
-        await page.waitForTimeout(1200);
+        await page.waitForTimeout(1000);
         return { content: [{ type: 'text', text: `clicked (${args.x},${args.y})` }] };
       }
 
       case 'browser_dom_click': {
         const pos = await markSelector(args.selector)
-        await page.waitForTimeout(600)
+        await page.waitForTimeout(500)
         await page.click(args.selector, { timeout: 10000 });
-        await page.waitForTimeout(1200);
+        await page.waitForTimeout(1000);
         const clicked = pos || { x: 0, y: 0 };
         return { content: [{ type: 'text', text: JSON.stringify({ clicked: args.selector, x: clicked.x, y: clicked.y }) }] };
       }
 
       case 'browser_fill': {
         const fillPos = await markSelector(args.selector)
-        await page.waitForTimeout(600)
+        await page.waitForTimeout(500)
         await page.fill(args.selector, args.value);
-        await page.waitForTimeout(800);
+        await page.waitForTimeout(600);
         const filled = fillPos || { x: 0, y: 0 };
         return { content: [{ type: 'text', text: JSON.stringify({ filled: args.selector, x: filled.x, y: filled.y }) }] };
       }
 
       case 'browser_key_press': {
         await page.keyboard.press(args.key);
-        await page.waitForTimeout(1200);
+        await page.waitForTimeout(800);
         return { content: [{ type: 'text', text: `pressed ${args.key}` }] };
       }
 
