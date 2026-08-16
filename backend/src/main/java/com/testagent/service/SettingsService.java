@@ -83,6 +83,20 @@ public class SettingsService {
         if (params.getCaseDensity() == null) params.setCaseDensity("medium");
         if (params.getTemperature() == null) params.setTemperature(0.4);
         if (params.getFocusTypes() == null) params.setFocusTypes(java.util.List.of());
+        // v5.13: 默认执行 URL 不再由生成参数界面维护，保存时保留历史值
+        if (params.getDefaultTargetUrl() == null || params.getDefaultTargetUrl().isBlank()) {
+            try {
+                String json = getSetting("default_generation_params", "");
+                if (json != null && !json.isBlank()) {
+                    GenerationParams existing = objectMapper.readValue(json, GenerationParams.class);
+                    if (existing.getDefaultTargetUrl() != null && !existing.getDefaultTargetUrl().isBlank()) {
+                        params.setDefaultTargetUrl(existing.getDefaultTargetUrl());
+                    }
+                }
+            } catch (Exception e) {
+                // 忽略历史值解析失败，保持空值
+            }
+        }
         try {
             saveSetting("default_generation_params", objectMapper.writeValueAsString(params));
         } catch (Exception e) {

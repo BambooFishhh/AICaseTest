@@ -123,13 +123,6 @@
               <el-radio-button label="high">详尽</el-radio-button>
             </el-radio-group>
           </el-form-item>
-          <el-form-item label="默认执行 URL">
-            <el-input
-              v-model="defaultParams.defaultTargetUrl"
-              placeholder="例如 http://localhost:5173"
-              size="large"
-            />
-          </el-form-item>
           <el-form-item label="创造性">
             <el-slider
               v-model="defaultParams.temperature"
@@ -179,8 +172,7 @@ const savingDefaults = ref(false)
 const defaultParams = ref({
   caseDensity: 'medium',
   temperature: 0.4,
-  focusTypes: [],
-  defaultTargetUrl: ''
+  focusTypes: []
 })
 
 const form = reactive({
@@ -213,8 +205,7 @@ async function loadDefaultParams() {
     defaultParams.value = {
       caseDensity: data.caseDensity || 'medium',
       temperature: typeof data.temperature === 'number' ? data.temperature : 0.4,
-      focusTypes: Array.isArray(data.focusTypes) ? data.focusTypes : [],
-      defaultTargetUrl: data.defaultTargetUrl || ''
+      focusTypes: Array.isArray(data.focusTypes) ? data.focusTypes : []
     }
   } catch {
     // 保持默认

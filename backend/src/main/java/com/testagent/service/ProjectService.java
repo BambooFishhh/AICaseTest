@@ -580,7 +580,22 @@ public class ProjectService {
         try {
             ObjectNode settings = (ObjectNode) objectMapper.readTree(
                     project.getSettings() != null ? project.getSettings() : "{}");
-            settings.set("generationParams", objectMapper.valueToTree(params));
+            // v5.13: defaultTargetUrl 属于执行配置，不再由生成参数弹窗提交；
+            // 保留历史值，避免保存生成参数时误清掉项目默认执行 URL
+            String previousUrl = null;
+            JsonNode gpNode = settings.path("generationParams");
+            if (gpNode.isObject()) {
+                String url = gpNode.path("defaultTargetUrl").asText("");
+                if (!url.isBlank()) {
+                    previousUrl = url;
+                }
+            }
+            ObjectNode nextParams = (ObjectNode) objectMapper.valueToTree(params);
+            if ((params.getDefaultTargetUrl() == null || params.getDefaultTargetUrl().isBlank())
+                    && previousUrl != null) {
+                nextParams.put("defaultTargetUrl", previousUrl);
+            }
+            settings.set("generationParams", nextParams);
             project.setSettings(objectMapper.writeValueAsString(settings));
             projectRepository.save(project);
             return params;

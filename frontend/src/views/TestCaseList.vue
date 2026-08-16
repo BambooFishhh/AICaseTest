@@ -848,15 +848,6 @@
           </el-checkbox-group>
           <div class="form-tip">不选 = 全部类型；勾选后仅生成对应类型用例（v3.13 起强制过滤）</div>
         </el-form-item>
-        <!-- v3.12: 默认执行 URL -->
-        <el-form-item label="默认执行URL">
-          <el-input
-            v-model="genParams.defaultTargetUrl"
-            placeholder="例如 http://localhost:5173"
-            clearable
-          />
-          <div class="form-tip">执行用例时自动带入的默认地址，可在执行对话框覆盖</div>
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showGenParamsDialog = false">取消</el-button>
@@ -2231,8 +2222,7 @@ const savingParams = ref(false)
 const genParams = ref({
   caseDensity: 'medium',
   temperature: 0.4,
-  focusTypes: [],
-  defaultTargetUrl: ''
+  focusTypes: []
 })
 
 async function handleOpenGenParams() {
@@ -2243,10 +2233,8 @@ async function handleOpenGenParams() {
       genParams.value = {
         caseDensity: res.data.caseDensity || 'medium',
         temperature: typeof res.data.temperature === 'number' ? res.data.temperature : 0.4,
-        focusTypes: Array.isArray(res.data.focusTypes) ? res.data.focusTypes : [],
-        defaultTargetUrl: res.data.defaultTargetUrl || ''
+        focusTypes: Array.isArray(res.data.focusTypes) ? res.data.focusTypes : []
       }
-      defaultTargetUrl.value = genParams.value.defaultTargetUrl
     }
   } catch {
     // 拉取失败用默认值
