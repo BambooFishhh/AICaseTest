@@ -112,6 +112,11 @@ export function updateTestCaseExecutionStatus(projectId, tcId, status) {
   return request.put(`/projects/${projectId}/testcases/${tcId}/execution-status`, { status })
 }
 
+// v5.12: 单条用例重新 AI 评审
+export function reviewTestCase(projectId, tcId) {
+  return request.post(`/projects/${projectId}/testcases/${tcId}/review`)
+}
+
 export function deleteTestCase(projectId, tcId) {
   return request.delete(`/projects/${projectId}/testcases/${tcId}`)
 }

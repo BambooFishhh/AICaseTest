@@ -75,23 +75,6 @@ public class XmindService {
     }
 
     /**
-     * v3.16: 生成 XMind 导入模板文件（含一个示例用例，说明结构约定）。
-     */
-    public String generateTemplateFile() throws IOException {
-        TestCase sample = new TestCase();
-        sample.setId("TC-000");
-        sample.setTitle("示例用例：创建订单（正向）");
-        sample.setModule("示例模块");
-        sample.setType("positive");
-        sample.setPriority("P0");
-        sample.setPreconditions("[\"用户已登录\"]");
-        sample.setSteps("[\"填写商品信息\",\"点击提交订单\"]");
-        sample.setExpectedResults("[\"订单创建成功，返回订单ID\"]");
-        sample.setStructuredSteps("[]");
-        return generateXmind(List.of(sample), "XMind导入模板");
-    }
-
-    /**
      * v3.9: 逆向解析 XMind 文件 → TestCase 列表。
      * 解压 ZIP → 读 content.json → 遍历树（模块→类型→用例→详情）。
      */

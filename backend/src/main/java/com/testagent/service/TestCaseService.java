@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.criteria.Predicate;
 import com.testagent.agent.OrchestratorAgent;
+import com.testagent.agent.TestCaseReviewAgent;
 import com.testagent.agent.TestGeneratorAgent;
 import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.EndpointInfo;
@@ -105,6 +106,9 @@ public class TestCaseService {
 
     @Autowired
     private TestGeneratorAgent testGeneratorAgent;
+
+    @Autowired
+    private TestCaseReviewAgent testCaseReviewAgent;
 
     @Autowired
     private OrchestratorAgent orchestratorAgent;
@@ -521,6 +525,75 @@ public class TestCaseService {
         projectAccessService.assertViewAccess(projectId);
         TestCase tc = findTestCase(projectId, testcaseId);
         return TestCaseDTO.from(tc);
+    }
+
+    // v5.12: 单条用例重新 AI 评审（规则 + LLM，带当前项目代码接口清单）
+    @Transactional
+    public TestCaseDTO reviewTestCase(String projectId, String testcaseId) {
+        projectAccessService.assertOperateAccess(projectId);
+        TestCase tc = findTestCase(projectId, testcaseId);
+        List<TestCase> reviewed = testCaseReviewAgent.review(List.of(tc), buildCoverageForReview(projectId));
+        if (reviewed.isEmpty()) {
+            throw new BusinessException(40001, "评审后没有可用用例", HttpStatus.BAD_REQUEST);
+        }
+        TestCase saved = testCaseRepository.save(reviewed.get(0));
+        return TestCaseDTO.from(saved);
+    }
+
+    private Map<String, Object> buildCoverageForReview(String projectId) {
+        List<Map<String, Object>> transitions = new ArrayList<>();
+        for (StateMachine sm : stateMachineRepository.findByProjectId(projectId)) {
+            for (Map<String, Object> t : JsonHelper.parseListMap(sm.getTransitions())) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                String from = String.valueOf(t.getOrDefault("from", ""));
+                String to = String.valueOf(t.getOrDefault("to", ""));
+                item.put("id", from + "->" + to);
+                item.put("from", from);
+                item.put("to", to);
+                item.put("trigger", t.get("trigger"));
+                item.put("condition", t.get("condition"));
+                item.put("stateMachine", sm.getName());
+                transitions.add(item);
+            }
+        }
+
+        List<Map<String, Object>> endpoints = new ArrayList<>();
+        Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId);
+        if (analysisOpt.isPresent()) {
+            String json = analysisOpt.get().getBackendResult();
+            if (json != null && !json.isBlank() && !json.equals("{}")) {
+                try {
+                    BackendResult backendResult = objectMapper.readValue(json, BackendResult.class);
+                    if (backendResult.getEndpoints() != null) {
+                        for (EndpointInfo ep : backendResult.getEndpoints()) {
+                            Map<String, Object> item = new LinkedHashMap<>();
+                            item.put("id", (ep.getMethod() == null ? "" : ep.getMethod().toUpperCase()) + " " + ep.getPath());
+                            item.put("method", ep.getMethod());
+                            item.put("path", ep.getPath());
+                            item.put("description", ep.getFunction());
+                            endpoints.add(item);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to parse backend result for review: {}", e.getMessage());
+                }
+            }
+        }
+
+        Map<String, Object> checklist = new LinkedHashMap<>();
+        checklist.put("requirements", List.of());
+        checklist.put("transitions", transitions);
+        checklist.put("endpoints", endpoints);
+        checklist.put("businessRules", List.of());
+        Map<String, Object> gaps = new LinkedHashMap<>();
+        gaps.put("requirementIds", List.of());
+        gaps.put("transitionIds", transitions.stream().map(t -> t.get("id")).toList());
+        gaps.put("endpointIds", endpoints.stream().map(e -> e.get("id")).toList());
+        gaps.put("ruleIds", List.of());
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("checklist", checklist);
+        result.put("gaps", gaps);
+        return result;
     }
 
     @Transactional

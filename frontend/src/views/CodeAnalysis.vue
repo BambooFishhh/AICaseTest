@@ -21,70 +21,53 @@
     <!-- 分析内容 -->
     <section v-if="analysis" class="analysis-content">
       <!-- 概览统计 -->
-      <div class="stats-grid">
-        <div class="stat-card stat-primary">
-          <div class="stat-icon"><el-icon :size="20"><Share /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ stateMachines.length }}</div>
-            <div class="stat-label">状态机</div>
-          </div>
+      <div class="stats-summary">
+        <div class="stat-cell">
+          <span class="stat-label">状态机</span>
+          <span class="stat-value">{{ stateMachines.length }}</span>
         </div>
-        <div class="stat-card stat-success">
-          <div class="stat-icon"><el-icon :size="20"><Connection /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ endpoints.length }}</div>
-            <div class="stat-label">API 端点</div>
-          </div>
+        <div class="stat-cell">
+          <span class="stat-label">API 端点</span>
+          <span class="stat-value">{{ endpoints.length }}</span>
         </div>
-        <div class="stat-card stat-warning">
-          <div class="stat-icon"><el-icon :size="20"><Collection /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ entities.length }}</div>
-            <div class="stat-label">实体类</div>
-          </div>
+        <div class="stat-cell">
+          <span class="stat-label">实体类</span>
+          <span class="stat-value">{{ entities.length }}</span>
         </div>
-        <div class="stat-card stat-danger">
-          <div class="stat-icon"><el-icon :size="20"><Files /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ businessRules.length }}</div>
-            <div class="stat-label">业务规则</div>
-          </div>
+        <div class="stat-cell">
+          <span class="stat-label">业务规则</span>
+          <span class="stat-value">{{ businessRules.length }}</span>
         </div>
-        <div class="stat-card stat-info">
-          <div class="stat-icon"><el-icon :size="20"><List /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ enums.length }}</div>
-            <div class="stat-label">枚举常量</div>
-          </div>
+        <div class="stat-cell">
+          <span class="stat-label">枚举常量</span>
+          <span class="stat-value">{{ enums.length }}</span>
         </div>
-        <div class="stat-card stat-info">
-          <div class="stat-icon"><el-icon :size="20"><Document /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ frontendForms.length }}</div>
-            <div class="stat-label">表单字段</div>
-          </div>
+        <div class="stat-cell">
+          <span class="stat-label">表单字段</span>
+          <span class="stat-value">{{ frontendForms.length }}</span>
         </div>
-        <div class="stat-card stat-info">
-          <div class="stat-icon"><el-icon :size="20"><Switch /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ componentStates.length }}</div>
-            <div class="stat-label">组件状态</div>
-          </div>
+        <div class="stat-cell">
+          <span class="stat-label">组件状态</span>
+          <span class="stat-value">{{ componentStates.length }}</span>
         </div>
-        <div class="stat-card stat-info">
-          <div class="stat-icon"><el-icon :size="20"><Aim /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ domSelectors.length }}</div>
-            <div class="stat-label">DOM 选择器</div>
-          </div>
+        <div class="stat-cell">
+          <span class="stat-label">DOM 选择器</span>
+          <span class="stat-value">{{ domSelectors.length }}</span>
         </div>
-        <div class="stat-card stat-info">
-          <div class="stat-icon"><el-icon :size="20"><Connection /></el-icon></div>
-          <div class="stat-body">
-            <div class="stat-value">{{ pageFlows.length }}</div>
-            <div class="stat-label">页面跳转</div>
-          </div>
+        <div class="stat-cell">
+          <span class="stat-label">页面跳转</span>
+          <span class="stat-value">{{ pageFlows.length }}</span>
         </div>
+      </div>
+
+      <!-- 全局关键字筛选 -->
+      <div class="global-filter">
+        <el-input
+          v-model="searchKeyword"
+          clearable
+          placeholder="搜索接口路径、函数、字段、规则、组件、选择器等"
+          :prefix-icon="Search"
+        />
       </div>
 
       <!-- 选项卡 -->
@@ -97,9 +80,9 @@
               <span v-if="stateMachines.length" class="tab-count">{{ stateMachines.length }}</span>
             </span>
           </template>
-          <el-empty v-if="stateMachines.length === 0" description="无状态机数据" />
+          <el-empty v-if="filteredStateMachines.length === 0" description="无匹配的状态机数据" />
           <div v-else class="sm-list">
-            <article v-for="sm in stateMachines" :key="sm.id" class="sm-block">
+            <article v-for="sm in filteredStateMachines" :key="sm.id" class="sm-block">
               <div class="sm-head">
                 <div class="sm-title-row">
                   <el-icon :size="18" class="sm-icon"><Share /></el-icon>
@@ -214,11 +197,11 @@
               <span v-if="enums.length" class="tab-count">{{ enums.length }}</span>
             </span>
           </template>
-          <el-empty v-if="enums.length === 0" description="无枚举/常量数据" />
+          <el-empty v-if="filteredEnums.length === 0" description="无匹配的枚举/常量数据" />
           <div v-else class="collapse-list">
             <el-collapse v-model="activeEnum">
               <el-collapse-item
-                v-for="(en, idx) in enums"
+                v-for="(en, idx) in filteredEnums"
                 :key="idx"
                 :name="idx"
               >
@@ -247,11 +230,11 @@
               <span v-if="entities.length" class="tab-count">{{ entities.length }}</span>
             </span>
           </template>
-          <el-empty v-if="entities.length === 0" description="无实体类数据" />
+          <el-empty v-if="filteredEntities.length === 0" description="无匹配的实体类数据" />
           <div v-else class="collapse-list">
             <el-collapse v-model="activeEntity">
               <el-collapse-item
-                v-for="(ent, idx) in entities"
+                v-for="(ent, idx) in filteredEntities"
                 :key="idx"
                 :name="idx"
               >
@@ -280,8 +263,8 @@
               <span v-if="businessRules.length" class="tab-count">{{ businessRules.length }}</span>
             </span>
           </template>
-          <el-empty v-if="businessRules.length === 0" description="无业务规则数据" />
-          <el-table v-else :data="businessRules" stripe>
+          <el-empty v-if="filteredBusinessRules.length === 0" description="无匹配的业务规则数据" />
+          <el-table v-else :data="filteredBusinessRules" stripe>
             <el-table-column prop="file" label="来源文件" min-width="200" show-overflow-tooltip />
             <el-table-column prop="function" label="函数" min-width="160" show-overflow-tooltip />
             <el-table-column prop="rule" label="规则" min-width="280" show-overflow-tooltip />
@@ -301,8 +284,8 @@
               <span v-if="frontendForms.length" class="tab-count">{{ frontendForms.length }}</span>
             </span>
           </template>
-          <el-empty v-if="!frontendForms.length" description="无表单字段数据" />
-          <el-table v-else :data="frontendForms" stripe size="small">
+          <el-empty v-if="!filteredFrontendForms.length" description="无匹配的表单字段数据" />
+          <el-table v-else :data="filteredFrontendForms" stripe size="small">
             <el-table-column prop="component" label="组件" width="150" />
             <el-table-column label="字段">
               <template #default="{ row }">
@@ -334,8 +317,8 @@
               <span v-if="componentStates.length" class="tab-count">{{ componentStates.length }}</span>
             </span>
           </template>
-          <el-empty v-if="!componentStates.length" description="无组件状态数据" />
-          <el-table v-else :data="componentStates" stripe size="small">
+          <el-empty v-if="!filteredComponentStates.length" description="无匹配的组件状态数据" />
+          <el-table v-else :data="filteredComponentStates" stripe size="small">
             <el-table-column prop="component" label="组件" width="150" />
             <el-table-column label="类型" width="100">
               <template #default="{ row }">
@@ -360,8 +343,8 @@
               <span v-if="domSelectors.length" class="tab-count">{{ domSelectors.length }}</span>
             </span>
           </template>
-          <el-empty v-if="!domSelectors.length" description="无 DOM 选择器数据" />
-          <el-table v-else :data="domSelectors" stripe size="small">
+          <el-empty v-if="!filteredDomSelectors.length" description="无匹配的 DOM 选择器数据" />
+          <el-table v-else :data="filteredDomSelectors" stripe size="small">
             <el-table-column prop="component" label="组件" width="150" />
             <el-table-column label="选择器">
               <template #default="{ row }">
@@ -386,8 +369,8 @@
               <span v-if="pageFlows.length" class="tab-count">{{ pageFlows.length }}</span>
             </span>
           </template>
-          <el-empty v-if="!pageFlows.length" description="无页面跳转数据" />
-          <el-table v-else :data="pageFlows" stripe size="small">
+          <el-empty v-if="!filteredPageFlows.length" description="无匹配的页面跳转数据" />
+          <el-table v-else :data="filteredPageFlows" stripe size="small">
             <el-table-column label="来源页面" width="150">
               <template #default="{ row }">{{ fromDisplay(row) }}</template>
             </el-table-column>
@@ -421,7 +404,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft, Share, Connection, Collection, Files, List,
-  Document, Switch, Right, Aim, DataAnalysis
+  Document, Switch, Right, Aim, DataAnalysis, Search
 } from '@element-plus/icons-vue'
 import { getAnalysis, getStateMachines } from '@/api/analysis'
 import StateMachineViewer from '@/components/StateMachineViewer.vue'
@@ -436,6 +419,7 @@ const activeTab = ref('stateMachines')
 const analysis = ref(null)
 const stateMachines = ref([])
 const methodFilter = ref('')
+const searchKeyword = ref('')
 const activeEnum = ref([])
 const activeEntity = ref([])
 
@@ -453,13 +437,57 @@ const componentStates = computed(() => frontendResult.value.componentStates || [
 const domSelectors = computed(() => frontendResult.value.domSelectors || [])
 const pageFlows = computed(() => frontendResult.value.pageFlows || [])
 
-// 按方法筛选的端点列表
-const filteredEndpoints = computed(() => {
-  if (!methodFilter.value) return endpoints.value
-  return endpoints.value.filter(
-    (e) => (e.method || '').toUpperCase() === methodFilter.value
-  )
-})
+function matches(value) {
+  const kw = searchKeyword.value.trim().toLowerCase()
+  if (!kw) return true
+  return String(value ?? '').toLowerCase().includes(kw)
+}
+
+// 全局关键字 + 方法筛选
+const filteredEndpoints = computed(() => endpoints.value.filter((e) => {
+  const methodOk = !methodFilter.value || (e.method || '').toUpperCase() === methodFilter.value
+  return methodOk && [e.method, e.path, e.function, e.file].some(matches)
+}))
+
+const filteredStateMachines = computed(() => stateMachines.value.filter((sm) => {
+  if (matches(sm.name) || matches(sm.description)) return true
+  return (sm.states || []).some((s) => matches(typeof s === 'string' ? s : s?.name))
+    || (sm.transitions || []).some((t) => matches(t?.from) || matches(t?.to)
+        || matches(t?.trigger) || matches(t?.condition))
+}))
+
+const filteredEnums = computed(() => enums.value.filter((en) =>
+  matches(en.name) || matches(en.file)
+  || (en.values || []).some((v) => matches(v.name) || matches(v.value))
+))
+
+const filteredEntities = computed(() => entities.value.filter((ent) =>
+  matches(ent.name) || matches(ent.file)
+  || (ent.fields || []).some((f) => matches(f.name) || matches(f.type))
+))
+
+const filteredBusinessRules = computed(() => businessRules.value.filter((br) =>
+  matches(br.file) || matches(br.function) || matches(br.rule) || matches(br.ruleType)
+))
+
+const filteredFrontendForms = computed(() => frontendForms.value.filter((row) =>
+  matches(row.component) || matches(row.file)
+  || (row.fields || []).some((f) => matches(f.name) || matches(f.type) || matches(f.label))
+))
+
+const filteredComponentStates = computed(() => componentStates.value.filter((row) =>
+  matches(row.component) || matches(row.type) || matches(row.file)
+  || matches(row.stateVar) || matches(row.trigger)
+))
+
+const filteredDomSelectors = computed(() => domSelectors.value.filter((row) =>
+  matches(row.component) || matches(row.file)
+  || (row.selectors || []).some((s) => matches(s.value) || matches(s.type) || matches(s.element))
+))
+
+const filteredPageFlows = computed(() => pageFlows.value.filter((row) =>
+  matches(row.from) || matches(row.to) || matches(row.trigger) || matches(row.component)
+))
 
 // HTTP 方法对应的标签类型
 function methodTagType(method) {
@@ -548,59 +576,46 @@ onMounted(loadData)
   flex-direction: column;
 }
 
-/* ===== 统计卡片网格 ===== */
-.stats-grid {
+/* ===== 统计摘要条 ===== */
+.stats-summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: var(--space-md);
-  margin-bottom: var(--space-lg);
-}
-
-.stat-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 16px 20px;
-  background: var(--bg-surface);
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
+  background: var(--bg-surface);
   box-shadow: var(--shadow-xs);
-  transition: all var(--transition-normal);
+  overflow: hidden;
+  margin-bottom: var(--space-md);
+}
 
-  &:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
-  }
+.stat-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border-right: 1px solid var(--card-border-light);
+  border-bottom: 1px solid var(--card-border-light);
 
-  .stat-icon {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 44px;
-    height: 44px;
-    border-radius: var(--radius-md);
-    color: #fff;
-  }
-
-  .stat-value {
-    font-size: 26px;
-    font-weight: 700;
-    line-height: 1.1;
-    color: var(--text-primary);
+  &:last-child {
+    border-right: none;
   }
 
   .stat-label {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--text-tertiary);
-    margin-top: 2px;
   }
 
-  &.stat-primary .stat-icon { background: var(--brand-primary); }
-  &.stat-success .stat-icon { background: var(--color-success); }
-  &.stat-warning .stat-icon { background: var(--color-warning); }
-  &.stat-danger .stat-icon { background: var(--color-danger); }
-  &.stat-info .stat-icon { background: var(--color-info); }
+  .stat-value {
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.global-filter {
+  margin-bottom: 16px;
 }
 
 /* ===== 选项卡 ===== */

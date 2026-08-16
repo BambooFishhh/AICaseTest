@@ -15,6 +15,7 @@ public interface ProjectRepository extends JpaRepository<Project, String> {
 
     List<Project> findAllByOrderByCreatedAtDesc();
 
+    @Transactional
     @Modifying
     @Query("UPDATE Project p SET p.status = :status WHERE p.id = :id")
     int updateStatus(@Param("id") String id, @Param("status") String status);

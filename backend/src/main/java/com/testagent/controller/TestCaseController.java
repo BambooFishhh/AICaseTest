@@ -11,13 +11,11 @@ import com.testagent.dto.TestCaseListResponse;
 import com.testagent.dto.UpdateTestCaseRequest;
 import com.testagent.service.TestCaseService;
 import com.testagent.service.SemanticService;
-import com.testagent.service.XmindService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.core.io.InputStreamResource;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,8 +29,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.io.File;
-import java.io.FileInputStream;
 import java.util.List;
 import java.util.Map;
 
@@ -43,9 +39,6 @@ public class TestCaseController {
 
     @Autowired
     private TestCaseService testCaseService;
-
-    @Autowired
-    private XmindService xmindService;
 
     @Autowired
     private SemanticService semanticService;
@@ -104,6 +97,14 @@ public class TestCaseController {
                 testCaseService.updateExecutionStatus(projectId, testcaseId, body.get("status")));
     }
 
+    // v5.12: 单条用例重新 AI 评审
+    @PostMapping("/{testcaseId}/review")
+    public ApiResponse<TestCaseDTO> reviewTestCase(
+            @PathVariable String projectId,
+            @PathVariable String testcaseId) {
+        return ApiResponse.success(testCaseService.reviewTestCase(projectId, testcaseId));
+    }
+
     @DeleteMapping("/{testcaseId}")
     public ApiResponse<Void> deleteTestCase(
             @PathVariable String projectId,
@@ -143,19 +144,6 @@ public class TestCaseController {
             @PathVariable String projectId,
             @RequestParam("file") MultipartFile file) {
         return ApiResponse.success(testCaseService.importFromXmind(projectId, file));
-    }
-
-    // v3.16: 下载 XMind 导入模板
-    @GetMapping("/xmind-template")
-    public ResponseEntity<Resource> downloadXmindTemplate() throws IOException {
-        String path = xmindService.generateTemplateFile();
-        File file = new File(path);
-        InputStreamResource resource = new InputStreamResource(new FileInputStream(file));
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"xmind_template.xmind\"")
-                .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                .contentLength(file.length())
-                .body(resource);
     }
 
     // v1.7: 复制选中用例到其他项目

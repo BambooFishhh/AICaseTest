@@ -390,39 +390,111 @@ function handleDownload() {
   downloadAuth(downloadMindmapUrl(projectId), 'mindmap.xmind')
 }
 
-// v3.18: 脑图导出 PNG（SVG → canvas）
-function exportPng() {
+// v3.18/v5.12: 脑图导出 PNG
+// 默认先临时全部展开，按内容真实尺寸 + 2x 高清导出，导出后恢复原展开状态
+async function exportPng() {
   const svg = chartRef.value
-  if (!svg) return
-  const bounds = svg.getBoundingClientRect()
-  const width = Math.max(bounds.width || 1200, 1200)
-  const height = Math.max(bounds.height || 900, 900)
-  const clone = svg.cloneNode(true)
-  clone.setAttribute('width', width)
-  clone.setAttribute('height', height)
-  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
-  const xml = new XMLSerializer().serializeToString(clone)
-  const url = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml;charset=utf-8' }))
-  const img = new Image()
-  img.onload = () => {
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    const ctx = canvas.getContext('2d')
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, width, height)
-    ctx.drawImage(img, 0, 0, width, height)
-    URL.revokeObjectURL(url)
-    const a = document.createElement('a')
-    a.href = canvas.toDataURL('image/png')
-    a.download = `${previewData.value?.title || 'mindmap'}.png`
-    a.click()
+  if (!svg || !previewData.value) return
+  const tempWrap = document.createElement('div')
+  tempWrap.style.position = 'fixed'
+  tempWrap.style.left = '-99999px'
+  tempWrap.style.top = '0'
+  tempWrap.style.width = '1200px'
+  tempWrap.style.height = '900px'
+  tempWrap.style.opacity = '0'
+  tempWrap.style.pointerEvents = 'none'
+  tempWrap.style.zIndex = '-1'
+  const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  tempSvg.setAttribute('width', '1200')
+  tempSvg.setAttribute('height', '900')
+  tempSvg.setAttribute('class', 'mindmap-chart')
+  tempWrap.appendChild(tempSvg)
+  document.body.appendChild(tempWrap)
+  let tempInstance = null
+  try {
+    const data = transformToMarkmap(previewData.value)
+    if (!data) return
+    const opts = getMarkmapOptions()
+    opts.initialExpandLevel = -1
+    opts.duration = 400
+    opts.zoom = false
+    opts.pan = false
+    tempInstance = Markmap.create(tempSvg, opts, data)
+    await new Promise((r) => setTimeout(r, 1200))
+    await renderExportPng(tempSvg, tempInstance)
+  } finally {
+    if (tempInstance) {
+      tempInstance.destroy()
+    }
+    tempWrap.remove()
   }
-  img.onerror = () => {
-    URL.revokeObjectURL(url)
-    ElMessage.error('导出 PNG 失败')
-  }
-  img.src = url
+}
+
+function renderExportPng(svg, instance) {
+  return new Promise((resolve, reject) => {
+    if (!svg) {
+      reject(new Error('no svg'))
+      return
+    }
+    const pad = 40
+    const scale = 2
+    const rect = instance?.state?.rect
+    let width = 1200
+    let height = 900
+    let viewBox = null
+    if (rect && rect.x2 > rect.x1 && rect.y2 > rect.y1) {
+      width = Math.ceil(rect.x2 - rect.x1 + pad * 2)
+      height = Math.ceil(rect.y2 - rect.y1 + pad * 2)
+      viewBox = `${rect.x1 - pad} ${rect.y1 - pad} ${width} ${height}`
+    } else {
+      const b = svg.getBBox()
+      width = Math.ceil(b.width + pad * 2)
+      height = Math.ceil(b.height + pad * 2)
+      viewBox = `${b.x - pad} ${b.y - pad} ${width} ${height}`
+    }
+
+    const canvasWidth = Math.round(width * scale)
+    const canvasHeight = Math.round(height * scale)
+    const clone = svg.cloneNode(true)
+    const contentG = [...clone.children].find(
+      (el) => el.tagName.toLowerCase() === 'g'
+    )
+    if (contentG) {
+      contentG.removeAttribute('transform')
+    }
+    clone.setAttribute('width', canvasWidth)
+    clone.setAttribute('height', canvasHeight)
+    clone.setAttribute('viewBox', viewBox)
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+    const xml = new XMLSerializer().serializeToString(clone)
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width = canvasWidth
+        canvas.height = canvasHeight
+        const ctx = canvas.getContext('2d')
+        ctx.fillStyle = '#ffffff'
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight)
+        ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight)
+        const a = document.createElement('a')
+        a.href = canvas.toDataURL('image/png')
+        a.download = `${previewData.value?.title || 'mindmap'}.png`
+        a.click()
+        ElMessage.success('PNG 已导出')
+        resolve()
+      } catch (e) {
+        console.error('[MindMap] PNG 导出失败:', e)
+        ElMessage.error('导出 PNG 失败')
+        reject(e)
+      }
+    }
+    img.onerror = () => {
+      ElMessage.error('导出 PNG 失败')
+      reject(new Error('svg image load failed'))
+    }
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml)
+  })
 }
 
 function goBack() {

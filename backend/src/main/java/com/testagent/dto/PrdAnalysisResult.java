@@ -18,8 +18,9 @@ public class PrdAnalysisResult {
     // v5.4: RAG 检索到的相似上下文（代码分析/PRD 语义片段）
     private List<String> ragContexts;
 
-    // v5.10: 用户其他上下文信息与多篇上下文文档（注入 LLM 生成上下文）
+    // v5.10/v5.11: 用户其他上下文信息（补充需求）与多篇文档（注入 LLM 生成上下文）
     private String otherContextInfo;
+    private List<Map<String, Object>> prdDocs;
     private List<Map<String, Object>> contextDocs;
 
     public boolean isEmpty() {

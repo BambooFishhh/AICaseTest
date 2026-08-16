@@ -130,31 +130,32 @@ const selectedSm = computed(() =>
 )
 
 // 解析状态机字段
+function parseJsonField(value, fallback = []) {
+  if (Array.isArray(value)) return value
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : fallback
+    } catch {
+      return fallback
+    }
+  }
+  return fallback
+}
+
 const parsedStates = computed(() => {
   if (!selectedSm.value) return []
-  try {
-    return JSON.parse(selectedSm.value.states || '[]')
-  } catch {
-    return []
-  }
+  return parseJsonField(selectedSm.value.states)
 })
 
 const parsedTransitions = computed(() => {
   if (!selectedSm.value) return []
-  try {
-    return JSON.parse(selectedSm.value.transitions || '[]')
-  } catch {
-    return []
-  }
+  return parseJsonField(selectedSm.value.transitions)
 })
 
 const parsedForbidden = computed(() => {
   if (!selectedSm.value) return []
-  try {
-    return JSON.parse(selectedSm.value.forbiddenTransitions || '[]')
-  } catch {
-    return []
-  }
+  return parseJsonField(selectedSm.value.forbiddenTransitions)
 })
 
 // 覆盖数据（仅包含当前选中的状态机）

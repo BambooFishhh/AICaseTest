@@ -20,6 +20,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -93,45 +95,90 @@ public class OrchestratorAgent {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new IllegalStateException("项目不存在: " + projectId));
 
-        // 1. PRD 解析
+        // 1. 需求资料解析：PRD 文档 / 上下文文档 / 补充需求，全部交给 PrdAgent 并区分来源
         PrdAnalysisResult prdResult = new PrdAnalysisResult();
-        if (project.getPrdContent() != null && !project.getPrdContent().isBlank()) {
-            if (progressCallback != null) {
-                progressCallback.update("正在解析 PRD...");
-            }
-            prdResult = prdAgent.analyze(project.getPrdContent());
-            // v5.4: 生成前 RAG 上下文检索（Milvus 未启用时返回空，不影响原流程）
-            List<String> ragContexts = semanticService.retrieveContexts(
-                    projectId, project.getPrdContent(), 5);
-            prdResult.setRagContexts(ragContexts);
-            if (!ragContexts.isEmpty()) {
-                log.info("RAG retrieved {} contexts for project {}", ragContexts.size(), projectId);
-            }
-            // v5.9: 注入用户额外 Prompt 与多篇上下文文档
-            try {
-                JsonNode settings = objectMapper.readTree(
-                        project.getSettings() != null ? project.getSettings() : "{}");
-                String otherContextInfo = settings.path("otherContextInfo").asText("");
-                if (otherContextInfo.isBlank()) {
-                    otherContextInfo = settings.path("extraPrompt").asText("");
-                }
-                if (!otherContextInfo.isBlank()) {
-                    prdResult.setOtherContextInfo(otherContextInfo);
-                }
+        List<Map<String, Object>> reqDocs = new ArrayList<>();
+        String supplementary = "";
+        try {
+            JsonNode settings = objectMapper.readTree(
+                    project.getSettings() != null ? project.getSettings() : "{}");
+            JsonNode reqNode = settings.path("reqDocs");
+            if (reqNode.isArray() && reqNode.size() > 0) {
+                reqDocs = objectMapper.convertValue(reqNode,
+                        new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+            } else {
                 JsonNode docsNode = settings.path("contextDocs");
                 if (docsNode.isArray()) {
-                    prdResult.setContextDocs(objectMapper.convertValue(docsNode,
-                            new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {}));
+                    reqDocs = objectMapper.convertValue(docsNode,
+                            new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
                 }
-            } catch (Exception e) {
-                log.warn("Failed to load project extra context for {}: {}", projectId, e.getMessage());
+                if (project.getPrdContent() != null && !project.getPrdContent().isBlank()) {
+                    Map<String, Object> prdDoc = new LinkedHashMap<>();
+                    prdDoc.put("id", "prd-legacy");
+                    prdDoc.put("title", "主 PRD");
+                    prdDoc.put("content", project.getPrdContent());
+                    prdDoc.put("sourceType", project.getPrdSourceType() == null ? "text" : project.getPrdSourceType());
+                    prdDoc.put("sourceRef", project.getPrdSourceRef() == null ? "" : project.getPrdSourceRef());
+                    prdDoc.put("docType", "prd");
+                    reqDocs.add(0, prdDoc);
+                }
             }
-            log.info("PRD analyzed for project {}: modules={}, requirements={}",
-                    projectId,
+            supplementary = settings.path("otherContextInfo").asText("");
+            if (supplementary.isBlank()) {
+                supplementary = settings.path("supplementaryRequirements").asText("");
+            }
+            if (supplementary.isBlank()) {
+                supplementary = settings.path("extraPrompt").asText("");
+            }
+        } catch (Exception e) {
+            log.warn("Failed to load project requirement docs for {}: {}", projectId, e.getMessage());
+        }
+
+        List<Map<String, Object>> prdDocs = new ArrayList<>();
+        List<Map<String, Object>> contextDocs = new ArrayList<>();
+        StringBuilder ragTextBuilder = new StringBuilder();
+        for (Map<String, Object> doc : reqDocs) {
+            Object contentObj = doc == null ? null : doc.get("content");
+            if (!(contentObj instanceof String content) || content.isBlank()) {
+                continue;
+            }
+            if ("prd".equals(doc.get("docType"))) {
+                prdDocs.add(doc);
+            } else {
+                contextDocs.add(doc);
+            }
+            if (ragTextBuilder.length() > 0) {
+                ragTextBuilder.append("\n\n");
+            }
+            ragTextBuilder.append(content);
+        }
+        if (!supplementary.isBlank()) {
+            ragTextBuilder.append("\n\n").append(supplementary);
+        }
+
+        if (!prdDocs.isEmpty() || !contextDocs.isEmpty() || !supplementary.isBlank()) {
+            if (progressCallback != null) {
+                progressCallback.update("正在解析需求资料（PRD/上下文文档/补充需求）...");
+            }
+            prdResult = prdAgent.analyze(prdDocs, contextDocs, supplementary);
+            // v5.4: 生成前 RAG 上下文检索（Milvus 未启用时返回空，不影响原流程）
+            String ragText = ragTextBuilder.toString();
+            if (!ragText.isBlank()) {
+                List<String> ragContexts = semanticService.retrieveContexts(projectId, ragText, 5);
+                prdResult.setRagContexts(ragContexts);
+                if (!ragContexts.isEmpty()) {
+                    log.info("RAG retrieved {} contexts for project {}", ragContexts.size(), projectId);
+                }
+            }
+            prdResult.setOtherContextInfo(supplementary);
+            prdResult.setContextDocs(contextDocs);
+            prdResult.setPrdDocs(prdDocs);
+            log.info("Requirement docs analyzed for project {}: prdDocs={}, contextDocs={}, modules={}, requirements={}",
+                    projectId, prdDocs.size(), contextDocs.size(),
                     prdResult.getModules() == null ? 0 : prdResult.getModules().size(),
                     prdResult.getRequirements() == null ? 0 : prdResult.getRequirements().size());
         } else {
-            log.info("No PRD for project {}, fallback to code-driven generation", projectId);
+            log.info("No requirement docs for project {}, fallback to code-driven generation", projectId);
         }
 
         // 2. 代码侧（后端 + 前端）

@@ -337,13 +337,18 @@ public class ProjectService {
         if (otherContextInfo.isBlank()) {
             otherContextInfo = readSettingsField(p.getSettings(), "extraPrompt");
         }
+        List<Map<String, Object>> reqDocs = loadReqDocs(p);
+        String joinedPrd = joinPrdDocs(reqDocs, p.getPrdContent());
         Map<String, Object> r = new LinkedHashMap<>();
-        r.put("prdContent", p.getPrdContent());
+        r.put("prdContent", joinedPrd);
         r.put("prdSourceType", p.getPrdSourceType());
         r.put("prdSourceRef", p.getPrdSourceRef());
         r.put("otherContextInfo", otherContextInfo);
         r.put("extraPrompt", otherContextInfo); // 兼容旧客户端
-        r.put("contextDocs", parseSettingsArray(p.getSettings(), "contextDocs"));
+        r.put("reqDocs", reqDocs);
+        r.put("contextDocs", reqDocs.stream()
+                .filter(d -> !"prd".equals(d.get("docType")))
+                .collect(Collectors.toList()));
         return r;
     }
 
@@ -357,14 +362,32 @@ public class ProjectService {
                     p.getSettings() != null ? p.getSettings() : "{}");
             Object otherRaw = payload == null ? null : payload.get("otherContextInfo");
             if (!(otherRaw instanceof String) && payload != null) {
+                otherRaw = payload.get("supplementaryRequirements");
+            }
+            if (!(otherRaw instanceof String) && payload != null) {
                 otherRaw = payload.get("extraPrompt");
             }
             if (otherRaw instanceof String otherContextInfo) {
                 settings.put("otherContextInfo", otherContextInfo);
             }
-            Object contextDocs = payload == null ? null : payload.get("contextDocs");
-            if (contextDocs != null) {
-                settings.set("contextDocs", objectMapper.valueToTree(contextDocs));
+            Object reqDocsRaw = payload == null ? null : payload.get("reqDocs");
+            if (reqDocsRaw instanceof List<?>) {
+                List<Map<String, Object>> normalized = normalizeReqDocs((List<?>) reqDocsRaw);
+                settings.set("reqDocs", objectMapper.valueToTree(normalized));
+                List<Map<String, Object>> ctxDocs = normalized.stream()
+                        .filter(d -> !"prd".equals(d.get("docType")))
+                        .collect(Collectors.toList());
+                settings.set("contextDocs", objectMapper.valueToTree(ctxDocs));
+                String joinedPrd = joinPrdDocs(normalized, null);
+                p.setPrdContent(joinedPrd == null ? null : joinedPrd);
+                p.setPrdSourceType("multi");
+                p.setPrdSourceRef("多篇需求文档");
+                semanticService.replaceContext(projectId, "prd", joinedPrd == null ? "" : joinedPrd);
+            } else {
+                Object contextDocs = payload == null ? null : payload.get("contextDocs");
+                if (contextDocs != null) {
+                    settings.set("contextDocs", objectMapper.valueToTree(contextDocs));
+                }
             }
             p.setSettings(objectMapper.writeValueAsString(settings));
             projectRepository.save(p);
@@ -375,11 +398,68 @@ public class ProjectService {
             }
             r.put("otherContextInfo", saved);
             r.put("extraPrompt", saved);
-            r.put("contextDocs", parseSettingsArray(p.getSettings(), "contextDocs"));
+            List<Map<String, Object>> savedDocs = loadReqDocs(p);
+            r.put("reqDocs", savedDocs);
+            r.put("contextDocs", savedDocs.stream()
+                    .filter(d -> !"prd".equals(d.get("docType")))
+                    .collect(Collectors.toList()));
             return r;
         } catch (Exception e) {
             throw new BusinessException(50012, "保存项目上下文失败: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private List<Map<String, Object>> loadReqDocs(Project p) {
+        List<Map<String, Object>> reqDocs = parseSettingsArray(p.getSettings(), "reqDocs");
+        if (!reqDocs.isEmpty()) {
+            return reqDocs;
+        }
+        if (p.getPrdContent() != null && !p.getPrdContent().isBlank()) {
+            Map<String, Object> prdDoc = new LinkedHashMap<>();
+            prdDoc.put("id", "prd-legacy");
+            prdDoc.put("title", "主 PRD");
+            prdDoc.put("content", p.getPrdContent());
+            prdDoc.put("sourceType", p.getPrdSourceType() == null ? "text" : p.getPrdSourceType());
+            prdDoc.put("sourceRef", p.getPrdSourceRef() == null ? "" : p.getPrdSourceRef());
+            prdDoc.put("docType", "prd");
+            reqDocs.add(prdDoc);
+        }
+        for (Map<String, Object> doc : parseSettingsArray(p.getSettings(), "contextDocs")) {
+            doc.putIfAbsent("docType", "context");
+            reqDocs.add(doc);
+        }
+        return reqDocs;
+    }
+
+    private List<Map<String, Object>> normalizeReqDocs(List<?> raw) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Object item : raw) {
+            if (item instanceof Map<?, ?> map) {
+                Map<String, Object> doc = new LinkedHashMap<>();
+                for (Map.Entry<?, ?> e : map.entrySet()) {
+                    doc.put(String.valueOf(e.getKey()), e.getValue());
+                }
+                doc.putIfAbsent("id", "doc-" + UUID.randomUUID());
+                doc.putIfAbsent("docType", "context");
+                doc.putIfAbsent("sourceType", "text");
+                doc.putIfAbsent("sourceRef", "");
+                result.add(doc);
+            }
+        }
+        return result;
+    }
+
+    private String joinPrdDocs(List<Map<String, Object>> reqDocs, String fallback) {
+        StringBuilder sb = new StringBuilder();
+        for (Map<String, Object> doc : reqDocs) {
+            if ("prd".equals(doc.get("docType")) && doc.get("content") != null) {
+                if (sb.length() > 0) {
+                    sb.append("\n\n");
+                }
+                sb.append(doc.get("content"));
+            }
+        }
+        return sb.length() > 0 ? sb.toString() : fallback;
     }
 
     // v5.10: 上下文文档解析（md/txt/PDF），不直接落库，由前端随整体上下文保存

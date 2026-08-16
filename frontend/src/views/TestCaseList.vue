@@ -238,7 +238,6 @@
             <el-dropdown-menu>
               <el-dropdown-item command="xmind" :icon="Files">XMind</el-dropdown-item>
               <el-dropdown-item command="json" :icon="Document">JSON</el-dropdown-item>
-              <el-dropdown-item command="template" :icon="Download">导入模板</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -369,15 +368,15 @@
         @row-click="handleRowClick"
         @selection-change="handleSelectionChange"
       >
-        <el-table-column type="selection" width="45" />
-        <el-table-column prop="id" label="编号" width="110" show-overflow-tooltip>
+        <el-table-column type="selection" width="40" />
+        <el-table-column prop="id" label="编号" width="100" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.isModule"></span>
             <span v-else-if="streaming" class="text-muted">生成中</span>
             <span v-else class="case-id">{{ row.id }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip>
+        <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.isModule" class="module-label">
               <el-icon class="module-icon" :size="16"><FolderOpened /></el-icon>
@@ -387,21 +386,21 @@
             <span v-else class="case-title">{{ row.title }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="columnSettings.type" label="类型" width="80">
+        <el-table-column v-if="columnSettings.type" label="类型" width="70">
           <template #default="{ row }">
             <el-tag v-if="!row.isModule" :type="typeTagType(row.type)" size="small" effect="light">
               {{ typeText(row.type) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="columnSettings.priority" label="优先级" width="70">
+        <el-table-column v-if="columnSettings.priority" label="优先级" width="60">
           <template #default="{ row }">
             <el-tag v-if="!row.isModule" :type="priorityTagType(row.priority)" size="small" effect="plain">
               {{ row.priority }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="columnSettings.preconditions" label="前置条件" min-width="160" show-overflow-tooltip>
+        <el-table-column v-if="columnSettings.preconditions" label="前置条件" width="130" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.isModule"></span>
             <span v-else-if="row.preconditions && row.preconditions.length" class="detail-summary">
@@ -410,7 +409,7 @@
             <span v-else class="text-muted">无</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="columnSettings.steps" label="测试步骤" min-width="160" show-overflow-tooltip>
+        <el-table-column v-if="columnSettings.steps" label="测试步骤" width="130" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.isModule"></span>
             <span v-else-if="row.steps && row.steps.length" class="detail-summary">
@@ -419,7 +418,7 @@
             <span v-else class="text-muted">无</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="columnSettings.expectedResults" label="预期结果" min-width="160" show-overflow-tooltip>
+        <el-table-column v-if="columnSettings.expectedResults" label="预期结果" width="130" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.isModule"></span>
             <span v-else-if="row.expectedResults && row.expectedResults.length" class="detail-summary">
@@ -428,7 +427,7 @@
             <span v-else class="text-muted">无</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="columnSettings.quality" label="质量" width="90">
+        <el-table-column v-if="columnSettings.quality" label="质量" width="80">
           <template #default="{ row }">
             <el-progress
               v-if="!row.isModule && row.qualityScore > 0"
@@ -440,14 +439,14 @@
           </template>
         </el-table-column>
         <!-- v3.12: 执行状态列 -->
-        <el-table-column v-if="columnSettings.execution" label="执行" width="80">
+        <el-table-column v-if="columnSettings.execution" label="执行" width="76">
           <template #default="{ row }">
             <span v-if="!row.isModule" class="status-pill" :class="`status-${executionStatusKey(row.executionStatus)}`">
               <i class="status-dot"></i>{{ executionStatusText(row.executionStatus) }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column v-if="columnSettings.review" label="评审" width="70">
+        <el-table-column v-if="columnSettings.review" label="评审" width="66">
           <template #default="{ row }">
             <el-tag v-if="!row.isModule" :type="reviewTagType(row.reviewStatus)" size="small" effect="light">
               {{ reviewText(row.reviewStatus) }}
@@ -455,7 +454,7 @@
           </template>
         </el-table-column>
         <!-- 操作列：单条执行 + 手动标记状态 -->
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="132">
           <template #default="{ row }">
             <div v-if="!row.isModule && canOperate" class="row-actions">
               <el-tooltip content="执行" placement="top">
@@ -545,6 +544,52 @@
       @filter-by-ids="handleFilterByIds"
     />
 
+    <!-- v5.12: AI 评审结果表 -->
+    <el-collapse v-model="aiReviewExpanded" class="review-collapse">
+      <el-collapse-item name="review">
+        <template #title>
+          <div class="review-collapse-title">
+            <el-icon :size="16"><MagicStick /></el-icon>
+            <span>AI 评审结果</span>
+            <el-tag v-if="aiReviewRows.length" size="small" effect="light">{{ aiReviewRows.length }} 条</el-tag>
+          </div>
+        </template>
+        <el-table v-if="aiReviewRows.length" :data="aiReviewRows" size="small" stripe>
+          <el-table-column prop="id" label="编号" width="110" show-overflow-tooltip />
+          <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
+          <el-table-column label="评审状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="aiReviewTagType(row.review.status)" size="small" effect="light">
+                {{ aiReviewStatusText(row.review.status) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="问题" min-width="240">
+            <template #default="{ row }">
+              <div class="ai-review-issues">
+                <div v-for="(issue, i) in (row.review.issues || [])" :key="i" class="ai-review-issue">
+                  {{ issue }}
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="覆盖引用" min-width="180">
+            <template #default="{ row }">
+              <span>{{ aiReviewRefSummary(row.refs) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="210" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="applyAiReviewRow(row)">采纳</el-button>
+              <el-button link @click="ignoreAiReviewRow(row)">忽略</el-button>
+              <el-button link type="warning" :loading="reviewingId === row.id" @click="rerunAiReviewRow(row)">重评</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-else description="暂无 AI 评审结果" :image-size="70" />
+      </el-collapse-item>
+    </el-collapse>
+
     <!-- v3.17: 用例详情/编辑抽屉 -->
     <el-drawer
       v-model="dialogVisible"
@@ -566,6 +611,7 @@
         @next="handleNext"
         @versions="handleOpenVersions"
         @executed="handleExecuted"
+        @review-updated="handleReviewUpdated"
       />
     </el-drawer>
 
@@ -739,27 +785,47 @@
     </el-dialog>
 
     <!-- v3.15: 多执行环境对话框 -->
-    <el-dialog v-model="envDialogVisible" title="执行环境" width="600px">
-      <div class="env-list">
-        <div v-for="(env, idx) in envForm.environments" :key="idx" class="env-row">
-          <el-radio v-model="envForm.active" :value="env.name" />
-          <el-input v-model="env.name" placeholder="环境名，如 dev/staging/prod" style="width: 150px" />
-          <el-input v-model="env.url" placeholder="http://localhost:5173" style="flex: 1" />
-          <el-button :icon="Delete" text type="danger" @click="removeEnv(idx)" />
-          <div class="env-pre-steps">
-            <el-input
-              v-model="env.preStepsText"
-              type="textarea"
-              :rows="3"
-              placeholder='前置步骤 JSON 数组，例如 [{"action":"输入用户名","type":"input","inputValue":"admin123",...}]'
-            />
-            <el-button size="small" text type="primary" @click="applyAdminLoginPreSteps(env)">
-              填入管理后台登录
-            </el-button>
-          </div>
-        </div>
-        <el-empty v-if="envForm.environments.length === 0" description="尚未配置环境" :image-size="60" />
-      </div>
+    <el-dialog v-model="envDialogVisible" title="执行环境" width="860px">
+      <el-table :data="envForm.environments" class="env-table" stripe>
+        <el-table-column label="激活" width="64" align="center">
+          <template #default="{ row }">
+            <el-radio v-model="envForm.active" :value="row.name" />
+          </template>
+        </el-table-column>
+        <el-table-column label="环境名" width="160">
+          <template #default="{ row }">
+            <el-input v-model="row.name" placeholder="dev/staging/prod" />
+          </template>
+        </el-table-column>
+        <el-table-column label="URL" min-width="200">
+          <template #default="{ row }">
+            <el-input v-model="row.url" placeholder="http://localhost:5173" />
+          </template>
+        </el-table-column>
+        <el-table-column label="前置步骤 JSON" min-width="250">
+          <template #default="{ row }">
+            <div class="env-pre-cell">
+              <el-input
+                v-model="row.preStepsText"
+                type="textarea"
+                :rows="2"
+                placeholder='[{"action":"输入用户名","type":"input","inputValue":"admin123",...}]'
+              />
+              <el-button size="small" text type="primary" @click="applyAdminLoginPreSteps(row)">
+                填入管理后台登录
+              </el-button>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="64" align="center">
+          <template #default="{ row, $index }">
+            <el-button text type="danger" :icon="Delete" @click="removeEnv($index)" />
+          </template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="尚未配置环境" :image-size="60" />
+        </template>
+      </el-table>
       <div class="env-actions">
         <el-button :icon="Plus" @click="addEnv">添加环境</el-button>
         <div style="flex: 1"></div>
@@ -911,7 +977,8 @@ import {
   listTestCases, streamGenerate, streamGenerateAppend,
   cancelGenerate, createTestCase, deleteTestCase,
   batchDeleteTestCases, importXmind, reviewTestCases,
-  exportTestCases, importTestCases, copyToProject, updateTestCaseExecutionStatus, semanticSearch
+  exportTestCases, importTestCases, copyToProject, updateTestCaseExecutionStatus, semanticSearch,
+  updateTestCase, reviewTestCase
 } from '@/api/testcase'
 import {
   getProject, getGenerationParams, updateGenerationParams, listProjects,
@@ -920,7 +987,6 @@ import {
 import {
   createSuite, listSuites, deleteSuite, executeSuite
 } from '@/api/suite'
-import { downloadAuth } from '@/utils/download'
 import { generateMindmap } from '@/api/mindmap'
 import { executeBatch, executeTestCase, copyExecute } from '@/api/execution'
 import { useProjectStore } from '@/stores/project'
@@ -964,6 +1030,30 @@ const testCases = ref([])
 const allTestCases = ref([])
 const coverage = ref(null)
 const coverageExpanded = ref(['coverage'])
+const aiReviewExpanded = ref([])
+const reviewingId = ref('')
+
+const aiReviewRows = computed(() =>
+  (testCases.value || [])
+    .map((tc) => {
+      const hints = tc.executionHints || {}
+      const review = hints.aiReview
+      if (!review) return null
+      return {
+        id: tc.id,
+        title: tc.title,
+        module: tc.module,
+        type: tc.type,
+        priority: tc.priority,
+        review,
+        refs: hints.coverageRefs || {},
+        hints,
+        suggested: review.suggestedChanges && Object.keys(review.suggestedChanges).length > 0
+      }
+    })
+    .filter(Boolean)
+)
+
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
@@ -1007,14 +1097,14 @@ const columnSettings = reactive({
   expectedResults: true, quality: true, execution: true, review: true
 })
 try {
-  const savedCols = JSON.parse(localStorage.getItem('tcl-columns') || '{}')
+  const savedCols = JSON.parse(localStorage.getItem('tcl-columns-v3') || '{}')
   Object.keys(savedCols).forEach((k) => {
     if (k in columnSettings) columnSettings[k] = savedCols[k]
   })
 } catch {
   // 忽略损坏数据
 }
-watch(columnSettings, (val) => localStorage.setItem('tcl-columns', JSON.stringify(val)), { deep: true })
+watch(columnSettings, (val) => localStorage.setItem('tcl-columns-v3', JSON.stringify(val)), { deep: true })
 
 const tableDense = ref(localStorage.getItem('tcl-size') === 'small')
 const tableSize = computed(() => (tableDense.value ? 'small' : 'default'))
@@ -1071,7 +1161,6 @@ function handleHeaderCommand(command) {
 function handleImportCommand(command) {
   if (command === 'xmind') triggerImportXmind()
   else if (command === 'json') triggerImportJson()
-  else if (command === 'template') downloadXmindTemplate()
 }
 
 // 工具栏“快捷执行”菜单
@@ -1345,6 +1434,80 @@ async function handleDeleteTestCase(testcaseId) {
   }
 }
 
+// ===== v5.12: AI 评审操作 =====
+function aiReviewStatusText(status) {
+  return { pass: '通过', fix: '需修正', reject: '应删除', ignored: '已忽略', applied: '已采纳' }[status] || status || '待评审'
+}
+
+function aiReviewTagType(status) {
+  return { pass: 'success', fix: 'warning', reject: 'danger', ignored: 'info', applied: 'success' }[status] || 'info'
+}
+
+function aiReviewRefSummary(refs) {
+  const parts = []
+  if ((refs?.transitionIds || []).length) parts.push(`状态转换 ${refs.transitionIds.length} 项`)
+  if ((refs?.endpointIds || []).length) parts.push(`接口 ${refs.endpointIds.length} 项`)
+  if ((refs?.ruleIds || []).length) parts.push(`业务规则 ${refs.ruleIds.length} 项`)
+  return parts.join('，') || '暂无引用'
+}
+
+async function applyAiReviewRow(row) {
+  const s = row.review.suggestedChanges || {}
+  const hints = {
+    ...(row.hints || {}),
+    aiReview: { ...row.review, status: 'applied' }
+  }
+  if (s.coverageRefs) hints.coverageRefs = s.coverageRefs
+  try {
+    await updateTestCase(projectId, row.id, {
+      title: s.title || row.title,
+      module: s.module || row.module || '',
+      type: s.type || row.type || '',
+      priority: s.priority || row.priority || '',
+      executionHints: hints
+    })
+    ElMessage.success('已采纳 AI 修改')
+    await Promise.all([loadList(), loadAllForStats()])
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+}
+
+async function ignoreAiReviewRow(row) {
+  try {
+    await updateTestCase(projectId, row.id, {
+      executionHints: {
+        ...(row.hints || {}),
+        aiReview: { ...row.review, status: 'ignored' }
+      }
+    })
+    ElMessage.success('已忽略本次评审')
+    await Promise.all([loadList(), loadAllForStats()])
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+}
+
+async function rerunAiReviewRow(row) {
+  reviewingId.value = row.id
+  try {
+    await reviewTestCase(projectId, row.id)
+    ElMessage.success('AI 评审完成')
+    await Promise.all([loadList(), loadAllForStats()])
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    reviewingId.value = ''
+  }
+}
+
+function handleReviewUpdated(updated) {
+  if (currentTestCase.value && updated && currentTestCase.value.id === updated.id) {
+    currentTestCase.value = updated
+  }
+  loadList()
+}
+
 async function handleSaveTestCase() {
   dialogVisible.value = false
   await Promise.all([loadList(), loadAllForStats()])
@@ -1402,11 +1565,6 @@ async function handleExportSelected() {
 
 function triggerImportXmind() {
   xmindFileInput.value?.click()
-}
-
-// v3.16: 下载 XMind 导入模板
-function downloadXmindTemplate() {
-  downloadAuth(`/api/projects/${projectId}/testcases/xmind-template`, 'xmind_template.xmind')
 }
 
 async function handleImportXmind(e) {
@@ -2388,8 +2546,17 @@ onUnmounted(() => {
   box-shadow: var(--shadow-xs);
   margin-bottom: var(--space-md);
 
+  :deep(.el-table__inner-wrapper) {
+    width: 100%;
+  }
+
+  :deep(.el-table__body-wrapper) {
+    overflow-x: hidden;
+  }
+
   :deep(.el-table) {
     border: none;
+    width: 100%;
 
     .module-row {
       background-color: var(--bg-base);
@@ -2407,12 +2574,19 @@ onUnmounted(() => {
 }
 
 .case-id {
+  white-space: nowrap;
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 12px;
   color: var(--text-secondary);
 }
 
 .case-title {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
   color: var(--text-primary);
 }
 
@@ -2572,6 +2746,46 @@ onUnmounted(() => {
   line-height: 1.4;
 }
 
+/* ===== v5.12: AI 评审结果表 ===== */
+.review-collapse {
+  margin-top: var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.review-collapse :deep(.el-collapse-item__header) {
+  padding: 0 16px;
+  height: 52px;
+  font-size: 15px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--card-border);
+}
+
+.review-collapse :deep(.el-collapse-item__content) {
+  padding: 16px;
+}
+
+.review-collapse-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.ai-review-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-review-issue {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
 /* ===== v3.15: 测试集与执行环境 ===== */
 .suite-create {
   display: flex;
@@ -2607,30 +2821,19 @@ onUnmounted(() => {
   gap: 8px;
 }
 
-.env-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.env-table {
+  width: 100%;
   margin-bottom: 12px;
 }
 
-.env-row {
+.env-pre-cell {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 6px 0;
-}
+  flex-direction: column;
+  gap: 6px;
 
-.env-pre-steps {
-  width: 100%;
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.env-pre-steps .el-textarea {
-  flex: 1;
+  .el-textarea {
+    width: 100%;
+  }
 }
 
 .env-actions {

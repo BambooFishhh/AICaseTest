@@ -72,13 +72,18 @@ const hasData = () => {
   )
 }
 
+function cssColor(name, fallback) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return value || fallback
+}
+
 // 根据状态类型获取节点边框颜色
 const getColorByType = (type) => {
   switch (type) {
     case 'initial':
       return '#10b981' // 绿色 - 初始状态
     case 'final':
-      return '#ef4444' // 红色 - 终止状态
+      return cssColor('--color-danger', '#ef4444') // 红色 - 终止状态
     case 'normal':
     default:
       return '#4f46e5' // 品牌色 - 普通状态
@@ -178,7 +183,9 @@ const buildEdges = () => {
       symbol: ['none', 'arrow'],
       symbolSize: [0, 10],
       lineStyle: {
-        color: covered === false ? '#ef4444' : (covered === true ? '#10b981' : '#94a3b8'),
+        color: covered === false
+          ? cssColor('--color-danger', '#ef4444')
+          : (covered === true ? '#10b981' : '#94a3b8'),
         width: 2,
         type: covered === false ? 'dashed' : 'solid',
         curveness: 0.2
@@ -216,7 +223,7 @@ const buildForbiddenEdges = () => {
       symbol: ['none', 'arrow'],
       symbolSize: [0, 10],
       lineStyle: {
-        color: '#ef4444',
+        color: cssColor('--color-danger', '#ef4444'),
         width: 2,
         type: 'dashed',
         curveness: 0.3
@@ -225,11 +232,11 @@ const buildForbiddenEdges = () => {
         show: true,
         formatter: label,
         fontSize: 11,
-        color: '#ef4444',
-        backgroundColor: '#fee2e2',
+        color: cssColor('--color-danger', '#ef4444'),
+        backgroundColor: cssColor('--color-danger-bg', '#fee2e2'),
         padding: [3, 6],
         borderRadius: 4,
-        borderColor: '#fecaca',
+        borderColor: cssColor('--color-danger-bg', '#fecaca'),
         borderWidth: 1
       }
     }
@@ -381,7 +388,7 @@ watch(
   background: #fff;
 
   &.dot-initial { border-color: #10b981; }
-  &.dot-final { border-color: #ef4444; }
+  &.dot-final { border-color: var(--color-danger); }
   &.dot-normal { border-color: #4f46e5; }
 }
 
@@ -392,7 +399,7 @@ watch(
   border-top: 2px solid;
 
   &.line-covered { border-color: #10b981; }
-  &.line-uncovered { border-color: #ef4444; border-top-style: dashed; }
-  &.line-forbidden { border-color: #ef4444; border-top-style: dashed; }
+  &.line-uncovered { border-color: var(--color-danger); border-top-style: dashed; }
+  &.line-forbidden { border-color: var(--color-danger); border-top-style: dashed; }
 }
 </style>

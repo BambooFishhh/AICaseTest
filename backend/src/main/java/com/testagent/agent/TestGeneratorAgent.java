@@ -133,7 +133,8 @@ public class TestGeneratorAgent {
             tc.setStructuredSteps(nodeToJson(node.path("structuredSteps"), "[]"));
             tc.setApiEndpoints(nodeToJson(node.path("apiEndpoints"), "[]"));
             tc.setTestData(nodeToJson(node.path("testData"), "{}"));
-            tc.setExecutionHints(nodeToJson(node.path("executionHints"), "{}"));
+            tc.setExecutionHints(mergeCoverageRefs(node.path("coverageRefs"),
+                    nodeToJson(node.path("executionHints"), "{}")));
             tc.setStateMachineRef(nodeToJson(node.path("stateMachineRef"), "{}"));
             tc.setSource("ai_generation");
             tc.setConfidence(0.8);
@@ -191,6 +192,13 @@ public class TestGeneratorAgent {
             - api_call 类型步骤的 target 必须用真实接口路径，data 为该接口的入参
             - 每步的 target、expected 都不能为空
 
+            ## coverageRefs 覆盖要求（v5.12）
+            - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}
+            - id 只能从 coverageChecklist 中选取真实存在的项：
+              transitionIds 用 "from->to"；endpointIds 用 "METHOD /path"；ruleIds 用 "rule-N"；requirementIds 用 "req-N"
+            - 优先覆盖 coverageGaps 列出的缺口；整体用例集必须让每个 transition/endpoint/rule 至少被一条用例引用
+            - 单次只输出 8-15 条用例，不要尝试一次性输出全部缺口
+
             ## stateMachineRef 要求
             - transitions 数组必须包含本用例测试的状态转换
             - forbiddenTransitions 仅在 negative 类型用例中填写
@@ -209,6 +217,7 @@ public class TestGeneratorAgent {
             - testData: {字段名: 值}
             - executionHints: {approach, notes, prerequisites}
             - stateMachineRef: {states, transitions, forbiddenTransitions}
+            - coverageRefs: {requirementIds, transitionIds, endpointIds, ruleIds}
 
             只返回 JSON 数组，不要包含其他文字。
             """;
@@ -220,7 +229,7 @@ public class TestGeneratorAgent {
             你是资深测试工程师，以需求为源生成结构化、AI 可执行的测试用例。
 
             # 任务
-            根据【需求上下文（PRD 解析结果）】为主，【代码上下文（状态机/接口/业务规则）】为辅，生成测试用例。
+            根据【需求上下文（PRD 文档解析结果 + 上下文文档 + 补充需求）】为主，【代码上下文（状态机/接口/业务规则）】为辅，生成测试用例。
 
             # 生成要求
             ## 以需求为纲
@@ -247,9 +256,16 @@ public class TestGeneratorAgent {
             - state_assert 的 expected 写可验证断言；api_call 的 target 用真实接口路径
             - target、expected 都不能为空；testData 含具体字段值
 
+            ## coverageRefs 覆盖要求（v5.12）
+            - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}
+            - id 只能从 coverageChecklist 中选取真实存在的项：
+              transitionIds 用 "from->to"；endpointIds 用 "METHOD /path"；ruleIds 用 "rule-N"；requirementIds 用 "req-N"
+            - 优先覆盖 coverageGaps 列出的缺口；整体用例集必须让每个 transition/endpoint/rule 至少被一条用例引用
+            - 单次只输出 8-15 条用例，不要尝试一次性输出全部缺口
+
             # 输出格式（同 v1.4）
             返回 JSON 数组，字段：title/module/type/priority/preconditions/steps/expectedResults/
-            structuredSteps/apiEndpoints/testData/executionHints/stateMachineRef
+            structuredSteps/apiEndpoints/testData/executionHints/stateMachineRef/coverageRefs
             只返回 JSON 数组，不要包含其他文字。
             """;
 
@@ -275,7 +291,8 @@ public class TestGeneratorAgent {
                 "apiEndpoints": [{"method":"POST","path":"/admin/auth/login","description":"登录"}],
                 "testData": {"username":"admin","password":"admin123"},
                 "executionHints": {"approach":"ui","notes":"UI 操作登录并断言跳转","prerequisites":["已打开登录页"]},
-                "stateMachineRef": {"states":[],"transitions":[],"forbiddenTransitions":[]}
+                "stateMachineRef": {"states":[],"transitions":[],"forbiddenTransitions":[]},
+                "coverageRefs": {"requirementIds":[],"transitionIds":[],"endpointIds":["POST /admin/auth/login"],"ruleIds":[]}
               },
               {
                 "title": "创建订单-正常流程",
@@ -292,7 +309,8 @@ public class TestGeneratorAgent {
                 "apiEndpoints": [{"method":"POST","path":"/api/order/create","description":"创建订单"}],
                 "testData": {"userId":"U001","amount":99.90},
                 "executionHints": {"approach":"api_call","notes":"先创建再查询验证状态","prerequisites":["用户已登录"]},
-                "stateMachineRef": {"states":[],"transitions":[{"from":"NONE","to":"PENDING_PAYMENT","trigger":"create"}],"forbiddenTransitions":[]}
+                "stateMachineRef": {"states":[],"transitions":[{"from":"NONE","to":"PENDING_PAYMENT","trigger":"create"}],"forbiddenTransitions":[]},
+                "coverageRefs": {"requirementIds":["req-1"],"transitionIds":["NONE->PENDING_PAYMENT"],"endpointIds":["POST /api/order/create"],"ruleIds":["rule-1"]}
               },
               {
                 "title": "创建订单-金额为负数",
@@ -308,13 +326,17 @@ public class TestGeneratorAgent {
                 "apiEndpoints": [{"method":"POST","path":"/api/order/create","description":"创建订单"}],
                 "testData": {"userId":"U001","amount":-1},
                 "executionHints": {"approach":"api_call","notes":"验证金额校验逻辑","prerequisites":["用户已登录"]},
-                "stateMachineRef": {"states":[],"transitions":[],"forbiddenTransitions":[{"from":"PENDING_PAYMENT","to":"NONE","reason":"金额非法不可创建"}]}
+                "stateMachineRef": {"states":[],"transitions":[],"forbiddenTransitions":[{"from":"PENDING_PAYMENT","to":"NONE","reason":"金额非法不可创建"}]},
+                "coverageRefs": {"requirementIds":["req-1"],"transitionIds":[],"endpointIds":["POST /api/order/create"],"ruleIds":["rule-2"]}
               }
             ]
             """;
 
     @Autowired
     private LlmService llmService;
+
+    @Autowired
+    private TestCaseReviewAgent testCaseReviewAgent;
 
     // ==================== v3.4: 动态 prompt + temperature 参数化 ====================
 
@@ -375,6 +397,82 @@ public class TestGeneratorAgent {
     private String buildPrdDrivenPrompt(GenerationParams params) {
         String density = (params != null && params.getCaseDensity() != null) ? params.getCaseDensity() : "medium";
         return SYSTEM_PROMPT_PRD_HEADER + buildPrdQuantityGuide(density) + SYSTEM_PROMPT_PRD_FOOTER;
+    }
+
+    // v5.12: 构建覆盖清单与缺口（需求/转换/接口/规则），供生成与评审使用
+    private Map<String, Object> buildCoverageChecklist(PrdAnalysisResult prdResult,
+                                                       List<StateMachine> stateMachines,
+                                                       BackendResult backendResult) {
+        List<Map<String, Object>> requirements = new ArrayList<>();
+        if (prdResult != null && prdResult.getRequirements() != null) {
+            int i = 1;
+            for (Map<String, Object> req : prdResult.getRequirements()) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("id", "req-" + i++);
+                item.put("title", req.get("title"));
+                item.put("description", req.get("description"));
+                requirements.add(item);
+            }
+        }
+
+        List<Map<String, Object>> transitions = new ArrayList<>();
+        if (stateMachines != null) {
+            for (StateMachine sm : stateMachines) {
+                for (Map<String, Object> t : JsonHelper.parseListMap(sm.getTransitions())) {
+                    String from = String.valueOf(t.getOrDefault("from", ""));
+                    String to = String.valueOf(t.getOrDefault("to", ""));
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("id", from + "->" + to);
+                    item.put("from", from);
+                    item.put("to", to);
+                    item.put("trigger", t.get("trigger"));
+                    item.put("condition", t.get("condition"));
+                    item.put("stateMachine", sm.getName());
+                    transitions.add(item);
+                }
+            }
+        }
+
+        List<Map<String, Object>> endpoints = new ArrayList<>();
+        if (backendResult != null && backendResult.getEndpoints() != null) {
+            for (EndpointInfo ep : backendResult.getEndpoints()) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("id", (ep.getMethod() == null ? "" : ep.getMethod().toUpperCase()) + " " + ep.getPath());
+                item.put("method", ep.getMethod());
+                item.put("path", ep.getPath());
+                item.put("description", ep.getFunction());
+                endpoints.add(item);
+            }
+        }
+
+        List<Map<String, Object>> rules = new ArrayList<>();
+        if (backendResult != null && backendResult.getBusinessRules() != null) {
+            int i = 1;
+            for (BusinessRule br : backendResult.getBusinessRules()) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("id", "rule-" + i++);
+                item.put("rule", br.getRule());
+                item.put("ruleType", br.getRuleType());
+                rules.add(item);
+            }
+        }
+
+        Map<String, Object> checklist = new LinkedHashMap<>();
+        checklist.put("requirements", requirements);
+        checklist.put("transitions", transitions);
+        checklist.put("endpoints", endpoints);
+        checklist.put("businessRules", rules);
+
+        Map<String, Object> gaps = new LinkedHashMap<>();
+        gaps.put("requirementIds", requirements.stream().map(r -> r.get("id")).toList());
+        gaps.put("transitionIds", transitions.stream().map(t -> t.get("id")).toList());
+        gaps.put("endpointIds", endpoints.stream().map(e -> e.get("id")).toList());
+        gaps.put("ruleIds", rules.stream().map(r -> r.get("id")).toList());
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("checklist", checklist);
+        result.put("gaps", gaps);
+        return result;
     }
 
     // v3.4: 从 params 读取 temperature，null/越界时默认 0.4（与 v3.3 行为一致）
@@ -446,6 +544,12 @@ public class TestGeneratorAgent {
             enrichStructuredSteps(frontendResult, tc);
         }
 
+        // v5.12: 覆盖缺口评审 + coverageRefs 补全（先评审后评分/去重）
+        if (!result.isEmpty()) {
+            result = testCaseReviewAgent.review(
+                    result, buildCoverageChecklist(prdResult, stateMachines, backendResult));
+        }
+
         if (progressCallback != null) {
             progressCallback.update("正在质量评分与去重...");
         }
@@ -496,6 +600,12 @@ public class TestGeneratorAgent {
         // 前端选择器补齐：为 ui_action 步骤匹配真实 uiSelector
         for (TestCase tc : result) {
             enrichStructuredSteps(frontendResult, tc);
+        }
+
+        // v5.12: 覆盖缺口评审 + coverageRefs 补全（先评审后评分/去重）
+        if (!result.isEmpty()) {
+            result = testCaseReviewAgent.review(
+                    result, buildCoverageChecklist(prdResult, stateMachines, backendResult));
         }
 
         if (progressCallback != null) {
@@ -709,6 +819,11 @@ public class TestGeneratorAgent {
         }
         context.put("businessRules", ruleList);
 
+        // v5.12: 覆盖清单与缺口（状态机单模块）
+        Map<String, Object> coverage = buildCoverageChecklist(null, List.of(sm), backendResult);
+        context.put("coverageChecklist", coverage.get("checklist"));
+        context.put("coverageGaps", coverage.get("gaps"));
+
         // v1.11: 前端上下文
         putFrontendContext(context, frontendResult);
 
@@ -765,9 +880,13 @@ public class TestGeneratorAgent {
         // v5.4: RAG 语义检索上下文
         context.put("ragContexts",
                 prdResult.getRagContexts() == null ? List.of() : prdResult.getRagContexts());
-        // v5.10: 用户其他上下文信息与上下文文档
+        // v5.10/v5.11: 补充需求与 PRD/上下文文档（随需求上下文一起注入，来源保持区分）
         if (prdResult.getOtherContextInfo() != null && !prdResult.getOtherContextInfo().isBlank()) {
+            context.put("supplementaryRequirements", prdResult.getOtherContextInfo());
             context.put("otherContextInfo", prdResult.getOtherContextInfo());
+        }
+        if (prdResult.getPrdDocs() != null && !prdResult.getPrdDocs().isEmpty()) {
+            context.put("prdDocs", prdResult.getPrdDocs());
         }
         if (prdResult.getContextDocs() != null && !prdResult.getContextDocs().isEmpty()) {
             context.put("contextDocs", prdResult.getContextDocs());
@@ -813,9 +932,14 @@ public class TestGeneratorAgent {
         // v1.11: 前端上下文（辅助）
         putFrontendContext(context, frontendResult);
 
+        // v5.12: 覆盖清单与缺口（需求/转换/接口/规则）
+        Map<String, Object> coverage = buildCoverageChecklist(prdResult, stateMachines, backendResult);
+        context.put("coverageChecklist", coverage.get("checklist"));
+        context.put("coverageGaps", coverage.get("gaps"));
+
         String userPrompt = "上下文信息：\n" + objectMapper.writeValueAsString(context)
                 + "\n\n" + FEW_SHOT_EXAMPLES
-                + "\n\n请以 PRD 需求为纲生成测试用例，代码信息用于补充接口路径与前置状态。";
+                + "\n\n请以 PRD 文档为纲生成测试用例；上下文文档和补充需求用于补充约束与场景，代码信息用于补充接口路径与前置状态。";
         checkCancelled(cancelled);  // v3.3: LLM 调用前检查（耗时操作，最关键的取消点）
         // v3.4: 动态构建 PRD system prompt + temperature 参数化
         // v3.7: caseCb 非空时启用流式调用 + 增量解析
@@ -901,7 +1025,8 @@ public class TestGeneratorAgent {
                     tc.setStructuredSteps(nodeToJson(node.path("structuredSteps"), "[]"));
                     tc.setApiEndpoints(nodeToJson(node.path("apiEndpoints"), "[]"));
                     tc.setTestData(nodeToJson(node.path("testData"), "{}"));
-                    tc.setExecutionHints(nodeToJson(node.path("executionHints"), "{}"));
+                    tc.setExecutionHints(mergeCoverageRefs(node.path("coverageRefs"),
+                            nodeToJson(node.path("executionHints"), "{}")));
                     tc.setStateMachineRef(nodeToJson(node.path("stateMachineRef"), "{}"));
                     tc.setSource("ai_generation");
                     tc.setConfidence(0.8);
@@ -919,6 +1044,24 @@ public class TestGeneratorAgent {
             throw new RuntimeException("Failed to parse LLM response", e);
         }
         return result;
+    }
+
+    // v5.12: 把 LLM 输出的 coverageRefs 合并进 executionHints，避免新增数据库字段
+    private String mergeCoverageRefs(JsonNode refsNode, String hintsJson) {
+        Map<String, Object> hints = JsonHelper.parseMap(hintsJson);
+        if (refsNode != null && refsNode.isObject()) {
+            try {
+                Map<String, Object> refs = objectMapper.convertValue(refsNode, Map.class);
+                hints.put("coverageRefs", refs);
+            } catch (Exception e) {
+                log.warn("Failed to merge coverageRefs: {}", e.getMessage());
+            }
+        }
+        try {
+            return objectMapper.writeValueAsString(hints);
+        } catch (Exception e) {
+            return hintsJson;
+        }
     }
 
     // ==================== 规则生成（单模块回退） ====================

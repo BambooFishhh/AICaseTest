@@ -411,6 +411,38 @@
         </el-alert>
       </section>
 
+      <!-- v5.12: AI 评审结果 -->
+      <section v-if="aiReview" class="block review-block">
+        <header class="block-head">
+          <div class="block-title">
+            <el-icon :size="16"><MagicStick /></el-icon>
+            <span>AI 评审</span>
+            <el-tag :type="reviewTagType" size="small" effect="light">{{ reviewStatusText }}</el-tag>
+          </div>
+        </header>
+        <div class="review-body">
+          <div v-if="aiReview.issues && aiReview.issues.length" class="review-issues">
+            <div v-for="(issue, i) in aiReview.issues" :key="'issue-' + i" class="review-issue">
+              {{ issue }}
+            </div>
+          </div>
+          <div v-if="suggestedChanges && Object.keys(suggestedChanges).length" class="review-suggestions">
+            <div class="review-suggest-title">建议修改</div>
+            <div v-for="(val, key) in suggestedChanges" :key="key" v-show="val" class="review-suggest-item">
+              <span class="review-key">{{ key }}</span>
+              <span class="review-val">{{ typeof val === 'object' ? JSON.stringify(val) : val }}</span>
+            </div>
+          </div>
+          <div class="review-actions">
+            <el-button size="small" type="primary" @click="applyAiReview">
+              采纳修改
+            </el-button>
+            <el-button size="small" @click="ignoreAiReview">忽略</el-button>
+            <el-button size="small" :loading="reviewing" @click="rerunAiReview">重新评审</el-button>
+          </div>
+        </div>
+      </section>
+
       <!-- 测试数据 -->
       <section v-if="hasTestData" class="block">
         <header class="block-head">
@@ -762,10 +794,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Delete, EditPen, Check, Clock, VideoPlay,
   List, Tickets, CircleCheck, Connection, InfoFilled,
-  Coin, Share, ArrowLeft, ArrowRight
+  Coin, Share, ArrowLeft, ArrowRight, MagicStick
 } from '@element-plus/icons-vue'
 import StateMachineViewer from './StateMachineViewer.vue'
 import { executeTestCase, getExecutions } from '@/api/execution'
+import { updateTestCase, reviewTestCase } from '@/api/testcase'
 
 const props = defineProps({
   testCase: { type: Object, default: () => ({}) },
@@ -778,7 +811,7 @@ const props = defineProps({
   mode: { type: String, default: 'view' }
 })
 
-const emit = defineEmits(['save', 'close', 'delete', 'prev', 'next', 'versions', 'create', 'executed'])
+const emit = defineEmits(['save', 'close', 'delete', 'prev', 'next', 'versions', 'create', 'executed', 'reviewUpdated'])
 
 const route = useRoute()
 const router = useRouter()
@@ -928,6 +961,71 @@ const hasTestData = computed(() => {
   return d && typeof d === 'object' && Object.keys(d).length > 0
 })
 const hasStepData = (data) => data && typeof data === 'object' && Object.keys(data).length > 0
+
+// v5.12: AI 评审展示与操作
+const reviewing = ref(false)
+const aiReview = computed(() => props.testCase?.executionHints?.aiReview || null)
+const suggestedChanges = computed(() => aiReview.value?.suggestedChanges || null)
+const reviewStatusText = computed(() => {
+  const map = { pass: '通过', fix: '需修正', reject: '应删除', ignored: '已忽略', applied: '已采纳' }
+  return map[aiReview.value?.status] || aiReview.value?.status || '待评审'
+})
+const reviewTagType = computed(() => {
+  const map = { pass: 'success', fix: 'warning', reject: 'danger', ignored: 'info', applied: 'success' }
+  return map[aiReview.value?.status] || 'info'
+})
+
+async function applyAiReview() {
+  const s = suggestedChanges.value || {}
+  if (!props.testCase?.id) return
+  const hints = {
+    ...(props.testCase.executionHints || {}),
+    aiReview: { ...aiReview.value, status: 'applied' }
+  }
+  if (s.coverageRefs) hints.coverageRefs = s.coverageRefs
+  try {
+    const res = await updateTestCase(projectId, props.testCase.id, {
+      title: s.title || props.testCase.title,
+      module: s.module || props.testCase.module,
+      type: s.type || props.testCase.type,
+      priority: s.priority || props.testCase.priority,
+      executionHints: hints
+    })
+    ElMessage.success('已采纳 AI 修改')
+    emit('reviewUpdated', res.data)
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+}
+
+async function ignoreAiReview() {
+  if (!props.testCase?.id) return
+  const hints = {
+    ...(props.testCase.executionHints || {}),
+    aiReview: { ...aiReview.value, status: 'ignored' }
+  }
+  try {
+    const res = await updateTestCase(projectId, props.testCase.id, { executionHints: hints })
+    ElMessage.success('已忽略本次评审')
+    emit('reviewUpdated', res.data)
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+}
+
+async function rerunAiReview() {
+  if (!props.testCase?.id) return
+  reviewing.value = true
+  try {
+    const res = await reviewTestCase(projectId, props.testCase.id)
+    ElMessage.success('AI 评审完成')
+    emit('reviewUpdated', res.data)
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    reviewing.value = false
+  }
+}
 
 // ========== 编辑相关方法 ==========
 const enterEditMode = () => {
@@ -1351,6 +1449,68 @@ watch(() => props.visible, (val) => {
 .api-path {
   font-weight: 500;
   word-break: break-all;
+}
+
+/* ===== v5.12: AI 评审 ===== */
+.review-block {
+  border-color: var(--el-color-warning-light-7);
+}
+
+.review-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.review-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.review-issue {
+  padding: 6px 10px;
+  background: var(--color-warning-bg);
+  border: 1px solid var(--el-color-warning-light-7);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.review-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.review-suggest-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.review-suggest-item {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.review-key {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.review-val {
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.review-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* ========== 执行提示 ========== */

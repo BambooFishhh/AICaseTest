@@ -125,7 +125,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const completion = await client.chat.completions.create({
             model,
             temperature: parseFloat(temperature),
-            max_tokens: 8192,
+            max_tokens: 16384,
             stream: true,
             messages: [
               { role: 'system', content: system_prompt },
@@ -146,7 +146,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const response = await client.chat.completions.create({
           model,
           temperature: parseFloat(temperature),
-          max_tokens: 8192,
+          max_tokens: 16384,
           messages: [
             { role: 'system', content: system_prompt },
             { role: 'user', content: user_prompt },

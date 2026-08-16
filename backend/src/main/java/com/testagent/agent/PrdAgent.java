@@ -18,6 +18,9 @@ import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.URL;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 // v1.10: PRD 解析 Agent，把 PRD 文本解析为结构化 PrdAnalysisResult
 @Component
@@ -31,6 +34,7 @@ public class PrdAgent {
 
     // v1.10: PRD 文本最大长度（防止 LLM token 超限）
     private static final int MAX_PRD_LENGTH = 12000;
+    private static final int MAX_TOTAL_DOC_LENGTH = 24000;
     private static final int MAX_FETCH_BYTES = 2_000_000;
     private static final int FETCH_TIMEOUT_MS = 10_000;
     private static final int MAX_REDIRECTS = 3;
@@ -43,21 +47,94 @@ public class PrdAgent {
         if (prdContent == null || prdContent.isBlank()) {
             return new PrdAnalysisResult();
         }
-        String truncated = prdContent.length() > MAX_PRD_LENGTH
-                ? prdContent.substring(0, MAX_PRD_LENGTH) + "\n...(PRD已截断)"
-                : prdContent;
+        Map<String, Object> prdDoc = new LinkedHashMap<>();
+        prdDoc.put("title", "主 PRD");
+        prdDoc.put("content", prdContent);
+        prdDoc.put("docType", "prd");
+        return analyze(List.of(prdDoc), List.of(), null);
+    }
+
+    /**
+     * v5.11: 多篇需求文档解析。输入明确区分 PRD 文档 / 上下文文档 / 补充需求，
+     * 全部拼入 Prompt 后交给 LLM 做结构化需求分析。
+     */
+    public PrdAnalysisResult analyze(List<Map<String, Object>> prdDocs,
+                                     List<Map<String, Object>> contextDocs,
+                                     String supplementary) {
+        String requirementText = buildRequirementPrompt(prdDocs, contextDocs, supplementary);
+        if (requirementText.isBlank()) {
+            return new PrdAnalysisResult();
+        }
         try {
-            return analyzeByLlm(truncated);
+            return analyzeByLlm(requirementText);
         } catch (Exception e) {
             log.warn("PRD analyze failed, return empty: {}", e.getMessage());
             return new PrdAnalysisResult();
         }
     }
 
-    private PrdAnalysisResult analyzeByLlm(String prdContent) throws Exception {
-        log.info("[PRD] 开始 LLM 解析, PRD 长度={}", prdContent.length());
+    private String buildRequirementPrompt(List<Map<String, Object>> prdDocs,
+                                          List<Map<String, Object>> contextDocs,
+                                          String supplementary) {
+        StringBuilder sb = new StringBuilder();
+        int prdIndex = 0;
+        if (prdDocs != null) {
+            for (Map<String, Object> doc : prdDocs) {
+                Object contentRaw = doc == null ? null : doc.get("content");
+                String content = contentRaw instanceof String s
+                        ? s : (contentRaw == null ? "" : String.valueOf(contentRaw));
+                if (content.isBlank()) continue;
+                prdIndex++;
+                Object titleRaw = doc == null ? null : doc.get("title");
+                String title = titleRaw instanceof String s
+                        ? s : (titleRaw == null ? "" : String.valueOf(titleRaw));
+                sb.append("## 【PRD 文档 ").append(prdIndex).append("】")
+                        .append(title.isBlank() ? "" : " - " + title)
+                        .append("\n").append(truncateDoc(content)).append("\n\n");
+            }
+        }
+        int ctxIndex = 0;
+        if (contextDocs != null) {
+            for (Map<String, Object> doc : contextDocs) {
+                Object contentRaw = doc == null ? null : doc.get("content");
+                String content = contentRaw instanceof String s
+                        ? s : (contentRaw == null ? "" : String.valueOf(contentRaw));
+                if (content.isBlank()) continue;
+                ctxIndex++;
+                Object titleRaw = doc == null ? null : doc.get("title");
+                String title = titleRaw instanceof String s
+                        ? s : (titleRaw == null ? "" : String.valueOf(titleRaw));
+                sb.append("## 【上下文文档 ").append(ctxIndex).append("】")
+                        .append(title.isBlank() ? "" : " - " + title)
+                        .append("\n").append(truncateDoc(content)).append("\n\n");
+            }
+        }
+        if (supplementary != null && !supplementary.isBlank()) {
+            sb.append("## 【补充需求】\n").append(truncateDoc(supplementary)).append("\n\n");
+        }
+        if (sb.length() > MAX_TOTAL_DOC_LENGTH) {
+            sb.setLength(MAX_TOTAL_DOC_LENGTH);
+            sb.append("\n...(需求资料已截断)");
+        }
+        return sb.toString();
+    }
+
+    private String truncateDoc(String content) {
+        String trimmed = content == null ? "" : content.trim();
+        if (trimmed.length() <= MAX_PRD_LENGTH) {
+            return trimmed;
+        }
+        return trimmed.substring(0, MAX_PRD_LENGTH) + "\n...(文档已截断)";
+    }
+
+    private PrdAnalysisResult analyzeByLlm(String requirementText) throws Exception {
+        log.info("[PRD] 开始 LLM 解析, 需求资料长度={}", requirementText.length());
         String systemPrompt = """
-                你是需求分析专家。把 PRD 文档解析为结构化 JSON。
+                你是需求分析专家。输入包含三类资料，必须区分对待：
+                - 【PRD 文档】是核心需求来源，作为模块/需求/验收标准的主要依据；
+                - 【上下文文档】是补充业务说明、接口文档、约束条件等辅助资料；
+                - 【补充需求】是用户额外要求，优先级高于一般上下文，用于修正或补充 PRD。
+                把三类资料合并解析为结构化 JSON。
                 返回 JSON：
                 {
                   "modules": [{"name":"模块名","description":"描述"}],
@@ -69,7 +146,7 @@ public class PrdAgent {
                 priority 取值：P0/P1/P2；ruleType 取值：validation/constraint/workflow。
                 只返回 JSON，不要其他文字。
                 """;
-        String userPrompt = "PRD 文档：\n" + prdContent;
+        String userPrompt = "需求资料：\n" + requirementText;
         log.info("[PRD] 调用 LlmService.chat() ...");
         long start = System.currentTimeMillis();
         String response = llmService.chat(systemPrompt, userPrompt, 0.2);
