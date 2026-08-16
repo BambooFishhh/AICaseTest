@@ -169,6 +169,10 @@
           <el-icon class="is-loading"><Loading /></el-icon>
           <span>{{ pollingMessage }}</span>
         </div>
+        <div v-else-if="analysisSuccess" class="polling-banner success-banner">
+          <el-icon :size="16"><Check /></el-icon>
+          <span>分析完成</span>
+        </div>
       </Transition>
 
       <!-- PRD 面板 -->
@@ -228,6 +232,7 @@ const projectId = route.params.id
 
 const loading = ref(false)
 const pollingMessage = ref('')
+const analysisSuccess = ref(false)
 // v4.4: 流式分析 EventSource
 let analyzeEs = null
 
@@ -377,6 +382,7 @@ async function refreshProject() {
 // v4.4: 流式分析——SSE 实时阶段进度
 function handleAnalyze() {
   ElMessage.success('分析已启动')
+  analysisSuccess.value = false
   pollingMessage.value = '正在启动分析...'
   const token = encodeURIComponent(localStorage.getItem('aicase-token') || '')
   analyzeEs = new EventSource(`/api/projects/${projectId}/analyze-stream?token=${token}`)
@@ -393,7 +399,7 @@ function handleAnalyze() {
     analyzeEs?.close()
     analyzeEs = null
     pollingMessage.value = ''
-    ElMessage.success('分析完成')
+    analysisSuccess.value = true
     refreshProject()
   })
 
@@ -409,6 +415,7 @@ function handleAnalyze() {
     analyzeEs?.close()
     analyzeEs = null
     pollingMessage.value = ''
+    analysisSuccess.value = false
     ElMessage.error(msg === '分析连接异常' ? '分析失败，请重试' : msg)
     refreshProject()
   })
@@ -856,6 +863,12 @@ onUnmounted(() => {
   .is-loading {
     animation: spin 1s linear infinite;
   }
+}
+
+.polling-banner.success-banner {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  border: 1px solid var(--color-success);
 }
 
 /* ===== 过渡动画 ===== */
