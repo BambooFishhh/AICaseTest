@@ -4,6 +4,28 @@
 
 ---
 
+## 功能记录 — Grafana 埋点面板与 Prometheus 抓取修复
+**日期**: 2026-08-16
+**主题**: 放行 `/actuator/prometheus`、Grafana 增加任务埋点面板与 MySQL 原始表面板
+
+### 变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| security/SecurityConfig.java | 放行 | `/actuator/prometheus` 无需登录，Prometheus 可抓取 |
+| service/TelemetryService.java | 指标标签 | 埋点指标增加 project/status 标签 |
+| monitoring/grafana/provisioning/datasources/datasources.yml | 新增 MySQL | Grafana 可直接查询 `task_telemetry` 原始数据 |
+| monitoring/grafana/dashboards/aicasetest.json | 新增面板 | Task Duration/LLM Token/TTFT/Calls + Task Telemetry Raw |
+| docker-compose.yml | Grafana 环境 | 透传 MySQL 连接变量 |
+
+### 验证结果
+
+- Prometheus `up{job="aicasetest-backend"}=1`
+- Grafana provisioning 成功注册 Prometheus + MySQL 数据源
+- AICaseTest SLO 仪表盘加载 11 个面板
+
+---
+
 ## 功能记录 — 分析/生成/AI评审埋点
 **日期**: 2026-08-16
 **主题**: LLM usage 透出、任务耗时/首 token 埋点、task_telemetry 落库与 Prometheus 指标

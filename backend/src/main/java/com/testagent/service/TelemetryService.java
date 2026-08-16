@@ -141,27 +141,33 @@ public class TelemetryService {
 
     private void recordMetrics(TelemetryContext ctx, String phase, long durationMs, PhaseStat stat) {
         try {
+            String project = ctx.projectId == null ? "unknown" : ctx.projectId;
             Timer.builder("aicasetest.task.duration")
                     .tag("task", ctx.taskType)
                     .tag("phase", phase)
+                    .tag("project", project)
+                    .tag("status", ctx.status)
                     .register(meterRegistry)
                     .record(Duration.ofMillis(durationMs));
 
             Counter.builder("aicasetest.llm.tokens")
                     .tag("task", ctx.taskType)
                     .tag("phase", phase)
+                    .tag("project", project)
                     .tag("token_type", "prompt")
                     .register(meterRegistry)
                     .increment(stat.promptTokens);
             Counter.builder("aicasetest.llm.tokens")
                     .tag("task", ctx.taskType)
                     .tag("phase", phase)
+                    .tag("project", project)
                     .tag("token_type", "completion")
                     .register(meterRegistry)
                     .increment(stat.completionTokens);
             Counter.builder("aicasetest.llm.tokens")
                     .tag("task", ctx.taskType)
                     .tag("phase", phase)
+                    .tag("project", project)
                     .tag("token_type", "total")
                     .register(meterRegistry)
                     .increment(stat.totalTokens);
@@ -170,12 +176,14 @@ public class TelemetryService {
                 Timer.builder("aicasetest.llm.ttft")
                         .tag("task", ctx.taskType)
                         .tag("phase", phase)
+                        .tag("project", project)
                         .register(meterRegistry)
                         .record(Duration.ofMillis(stat.firstTokenMs));
             }
             Counter.builder("aicasetest.llm.calls")
                     .tag("task", ctx.taskType)
                     .tag("phase", phase)
+                    .tag("project", project)
                     .register(meterRegistry)
                     .increment(stat.calls);
         } catch (Exception e) {

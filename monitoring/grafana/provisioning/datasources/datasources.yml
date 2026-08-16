@@ -8,3 +8,16 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
     editable: false
+  - name: MySQL
+    uid: mysql
+    type: mysql
+    access: proxy
+    url: aicasetest-mysql:3306
+    database: ${MYSQL_DATABASE:-aicasetest}
+    user: ${MYSQL_USERNAME:-aicasetest}
+    secureJsonData:
+      password: ${MYSQL_PASSWORD:-aicasetest123}
+    jsonData:
+      maxOpenConns: 5
+      maxIdleConns: 2
+    editable: false

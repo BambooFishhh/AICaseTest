@@ -78,6 +78,72 @@
       "targets": [
         { "expr": "process_uptime_seconds", "refId": "A" }
       ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Task Duration P95 (s)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aicasetest_task_duration_seconds_bucket[5m])) by (le, task))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "LLM Token Usage",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "expr": "sum(increase(aicasetest_llm_tokens_total{token_type=\"total\"}[$__range])) by (task, phase)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "LLM TTFT P95 (s)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(aicasetest_llm_ttft_seconds_bucket[5m])) by (le, task))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "LLM Calls (rps)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "targets": [
+        {
+          "expr": "sum(rate(aicasetest_llm_calls_total[5m])) by (task)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Task Telemetry Raw",
+      "datasource": { "type": "mysql", "uid": "mysql" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 40 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawSql": "SELECT created_at, project_id, task_type, phase, status, duration_ms, first_token_ms, prompt_tokens, completion_tokens, total_tokens FROM task_telemetry ORDER BY created_at DESC LIMIT 100"
+        }
+      ]
     }
   ]
 }
