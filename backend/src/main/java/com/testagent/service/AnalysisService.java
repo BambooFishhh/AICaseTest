@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -68,6 +69,9 @@ public class AnalysisService {
 
     @Autowired
     private TelemetryService telemetryService;
+
+    // v5.14: 同项目分析互斥，防止双击/并发触发多个分析任务
+    private final ConcurrentHashMap<String, Boolean> analysisRunning = new ConcurrentHashMap<>();
 
     // v5.3: 分析结果缓存（分析完成后失效）
     @Cacheable(value = "analysis", key = "#projectId")
@@ -113,7 +117,15 @@ public class AnalysisService {
 
     @Async("analysisExecutor")
     public void runAnalysis(String projectId, String sourcePath) {
-        runAnalysisWithProgress(projectId, sourcePath, null);
+        if (analysisRunning.putIfAbsent(projectId, Boolean.TRUE) != null) {
+            log.warn("Analysis already running for project {}, skip duplicate", projectId);
+            return;
+        }
+        try {
+            runAnalysisWithProgress(projectId, sourcePath, null);
+        } finally {
+            analysisRunning.remove(projectId);
+        }
     }
 
     /**
@@ -227,6 +239,17 @@ public class AnalysisService {
      */
     @Async("analysisExecutor")
     public void runAnalysisStream(String projectId, SseEmitter emitter) {
+        if (analysisRunning.putIfAbsent(projectId, Boolean.TRUE) != null) {
+            try {
+                emitter.send(SseEmitter.event().name("error").data(
+                        Map.of("message", "分析已在进行中，请勿重复点击"),
+                        MediaType.APPLICATION_JSON));
+            } catch (Exception ignored) {
+                // 客户端可能已断开
+            }
+            emitter.complete();
+            return;
+        }
         AtomicBoolean clientGone = new AtomicBoolean(false);
         emitter.onCompletion(() -> clientGone.set(true));
         emitter.onTimeout(() -> clientGone.set(true));
@@ -263,6 +286,8 @@ public class AnalysisService {
                 // 客户端可能已断开
             }
             emitter.complete();
+        } finally {
+            analysisRunning.remove(projectId);
         }
     }
 

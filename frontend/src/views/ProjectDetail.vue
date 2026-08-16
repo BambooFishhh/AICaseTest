@@ -95,7 +95,8 @@
               <el-button
                 type="primary"
                 :icon="Aim"
-                :disabled="!canAnalyze"
+                :disabled="!canAnalyze || analysisRunning"
+                :loading="analysisRunning"
                 :title="analyzeBlockedReason"
                 @click="handleAnalyze"
               >
@@ -233,6 +234,7 @@ const projectId = route.params.id
 const loading = ref(false)
 const pollingMessage = ref('')
 const analysisSuccess = ref(false)
+const analysisRunning = ref(false)
 // v4.4: 流式分析 EventSource
 let analyzeEs = null
 
@@ -328,13 +330,14 @@ const hasSourcePath = computed(() => {
 const canAnalyze = computed(() => {
   const s = project.value?.status
   // v5.13: 已分析/已完成也可重新分析，仅 analyzing/generating 拦截
-  return hasSourcePath.value && (
+  return !analysisRunning.value && hasSourcePath.value && (
     s === 'created' || s === 'failed' || s === 'analyzed' || s === 'completed'
   )
 })
 
 const analyzeBlockedReason = computed(() => {
   const s = project.value?.status
+  if (analysisRunning.value) return '正在分析中，请稍候'
   if (!hasSourcePath.value) return '未配置代码路径，可直接用 PRD 生成用例'
   if (s === 'analyzing') return '正在分析中，请稍候'
   if (s === 'generating') return '项目正在生成用例，请稍后再启动分析'
@@ -381,6 +384,8 @@ async function refreshProject() {
 
 // v4.4: 流式分析——SSE 实时阶段进度
 function handleAnalyze() {
+  if (analysisRunning.value || analyzeEs) return
+  analysisRunning.value = true
   ElMessage.success('分析已启动')
   analysisSuccess.value = false
   pollingMessage.value = '正在启动分析...'
@@ -398,6 +403,7 @@ function handleAnalyze() {
   analyzeEs.addEventListener('complete', () => {
     analyzeEs?.close()
     analyzeEs = null
+    analysisRunning.value = false
     pollingMessage.value = ''
     analysisSuccess.value = true
     refreshProject()
@@ -414,6 +420,7 @@ function handleAnalyze() {
     }
     analyzeEs?.close()
     analyzeEs = null
+    analysisRunning.value = false
     pollingMessage.value = ''
     analysisSuccess.value = false
     ElMessage.error(msg === '分析连接异常' ? '分析失败，请重试' : msg)
