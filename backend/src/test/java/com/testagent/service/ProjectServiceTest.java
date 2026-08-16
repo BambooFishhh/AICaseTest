@@ -11,6 +11,8 @@ import com.testagent.repository.MindMapRepository;
 import com.testagent.repository.ProjectGroupRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
+import com.testagent.repository.TaskTelemetryRepository;
+import com.testagent.repository.TestCaseAiReviewRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.TestCaseVersionRepository;
 import com.testagent.repository.TestSuiteRepository;
@@ -40,6 +42,8 @@ class ProjectServiceTest {
     private ExecutionStepRepository executionStepRepository;
     private TestSuiteRepository testSuiteRepository;
     private TestCaseVersionRepository testCaseVersionRepository;
+    private TestCaseAiReviewRepository aiReviewRepository;
+    private TaskTelemetryRepository telemetryRepository;
     private MindMapRepository mindMapRepository;
     private SemanticService semanticService;
     private ProjectAccessService projectAccessService;
@@ -55,6 +59,8 @@ class ProjectServiceTest {
         executionStepRepository = mock(ExecutionStepRepository.class);
         testSuiteRepository = mock(TestSuiteRepository.class);
         testCaseVersionRepository = mock(TestCaseVersionRepository.class);
+        aiReviewRepository = mock(TestCaseAiReviewRepository.class);
+        telemetryRepository = mock(TaskTelemetryRepository.class);
         mindMapRepository = mock(MindMapRepository.class);
         semanticService = mock(SemanticService.class);
         projectAccessService = mock(ProjectAccessService.class);
@@ -67,6 +73,8 @@ class ProjectServiceTest {
         ReflectionTestUtils.setField(service, "executionStepRepository", executionStepRepository);
         ReflectionTestUtils.setField(service, "testSuiteRepository", testSuiteRepository);
         ReflectionTestUtils.setField(service, "testCaseVersionRepository", testCaseVersionRepository);
+        ReflectionTestUtils.setField(service, "aiReviewRepository", aiReviewRepository);
+        ReflectionTestUtils.setField(service, "telemetryRepository", telemetryRepository);
         ReflectionTestUtils.setField(service, "mindMapRepository", mindMapRepository);
         ReflectionTestUtils.setField(service, "semanticService", semanticService);
         ReflectionTestUtils.setField(service, "projectAccessService", projectAccessService);
@@ -95,6 +103,8 @@ class ProjectServiceTest {
         verify(executionRecordRepository).deleteAll(List.of(record));
         verify(testSuiteRepository).deleteAll(anyList());
         verify(testCaseVersionRepository).deleteByProjectId("p1");
+        verify(aiReviewRepository).deleteByProjectId("p1");
+        verify(telemetryRepository).deleteByProjectId("p1");
         verify(semanticService).clearProject("p1");
         verify(projectRepository).delete(project);
     }
