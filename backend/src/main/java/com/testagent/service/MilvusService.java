@@ -2,6 +2,9 @@ package com.testagent.service;
 
 import io.milvus.client.MilvusServiceClient;
 import io.milvus.grpc.DataType;
+import io.milvus.grpc.CollectionSchema;
+import io.milvus.grpc.DescribeCollectionResponse;
+import io.milvus.grpc.FieldSchema;
 import io.milvus.grpc.GetCollectionStatisticsResponse;
 import io.milvus.grpc.KeyValuePair;
 import io.milvus.grpc.SearchResults;
@@ -11,6 +14,8 @@ import io.milvus.param.MetricType;
 import io.milvus.param.R;
 import io.milvus.param.RpcStatus;
 import io.milvus.param.collection.CreateCollectionParam;
+import io.milvus.param.collection.DescribeCollectionParam;
+import io.milvus.param.collection.DropCollectionParam;
 import io.milvus.param.collection.FieldType;
 import io.milvus.param.collection.HasCollectionParam;
 import io.milvus.param.collection.LoadCollectionParam;
@@ -49,7 +54,7 @@ public class MilvusService {
     @Value("${app.milvus.port:19530}")
     private int port;
 
-    @Value("${app.milvus.dimension:1536}")
+    @Value("${app.milvus.dimension:1024}")
     private int dimension;
 
     @Value("${app.milvus.duplicate-threshold:0.92}")
@@ -108,7 +113,14 @@ public class MilvusService {
         try {
             R<Boolean> exists = c.hasCollection(
                     HasCollectionParam.newBuilder().withCollectionName(name).build());
-            if (exists == null || !Boolean.TRUE.equals(exists.getData())) {
+            boolean needCreate = exists == null || !Boolean.TRUE.equals(exists.getData());
+            if (!needCreate && existingDimension(c, name) != dimension) {
+                log.warn("Milvus collection {} dimension mismatch, drop and recreate: expected={}, found={}",
+                        name, dimension, existingDimension(c, name));
+                c.dropCollection(DropCollectionParam.newBuilder().withCollectionName(name).build());
+                needCreate = true;
+            }
+            if (needCreate) {
                 CreateCollectionParam param = CreateCollectionParam.newBuilder()
                         .withCollectionName(name)
                         .withDescription(name + " semantic collection")
@@ -134,6 +146,29 @@ public class MilvusService {
         } catch (Exception e) {
             log.warn("Failed to ensure Milvus collection {}: {}", name, e.getMessage());
         }
+    }
+
+    private int existingDimension(MilvusServiceClient c, String name) {
+        try {
+            R<DescribeCollectionResponse> desc = c.describeCollection(
+                    DescribeCollectionParam.newBuilder().withCollectionName(name).build());
+            if (desc == null || desc.getData() == null || desc.getData().getSchema() == null) {
+                return -1;
+            }
+            CollectionSchema schema = desc.getData().getSchema();
+            for (FieldSchema field : schema.getFieldsList()) {
+                if ("embedding".equals(field.getName())) {
+                    for (KeyValuePair kv : field.getTypeParamsList()) {
+                        if ("dim".equals(kv.getKey())) {
+                            return Integer.parseInt(kv.getValue());
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to describe Milvus collection {}: {}", name, e.getMessage());
+        }
+        return -1;
     }
 
     private void createIndexAndLoad(MilvusServiceClient c, String name) {

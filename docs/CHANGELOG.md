@@ -26,6 +26,28 @@
 
 ---
 
+## 功能记录 — Milvus 鉴权与 embedding 修复
+**日期**: 2026-08-16
+**主题**: Milvus 账号密码映射、embedding 模型切换 qwen3.7-text-embedding、向量维度 1024
+
+### 变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| resources/application.yml | 配置补全 | `app.milvus.username/password` 显式绑定环境变量；`MILVUS_DIMENSION` 默认 1024 |
+| mcp/McpClientManager.java | embedding 模型 | MCP 子进程注入 `OPENAI_EMBEDDING_MODEL=qwen3.7-text-embedding` |
+| service/MilvusService.java | 维度自愈 | 集合维度与配置不一致时自动删除重建，避免写入维度错误 |
+| docker-compose.yml / .env.example | 配置 | 默认 embedding 模型 qwen3.7-text-embedding、Milvus 维度 1024 |
+
+### 验证结果
+
+- `qwen3.7-text-embedding` 实测返回 1024 维向量
+- Milvus root 密码已与 `MILVUS_ROOT_PASSWORD` 对齐
+- Milvus 连接成功，cases/contexts/failures 集合均为 1024 维
+- 后端日志不再出现 `UNAUTHENTICATED` 与 `Embedding failed`
+
+---
+
 ## 功能记录 — 分析/生成/AI评审埋点
 **日期**: 2026-08-16
 **主题**: LLM usage 透出、任务耗时/首 token 埋点、task_telemetry 落库与 Prometheus 指标

@@ -40,6 +40,9 @@ public class McpClientManager {
     @Value("${llm.model:gpt-4o}")
     private String llmModel;
 
+    @Value("${llm.embedding-model:qwen3.7-text-embedding}")
+    private String llmEmbeddingModel;
+
     // v2.7: Playwright MCP Server 配置
     @Value("${mcp.servers.playwright.node-path:node}")
     private String playwrightNodePath;
@@ -62,6 +65,7 @@ public class McpClientManager {
         llmEnv.put("OPENAI_API_KEY", llmApiKey);
         llmEnv.put("OPENAI_BASE_URL", llmBaseUrl);
         llmEnv.put("OPENAI_MODEL", llmModel);
+        llmEnv.put("OPENAI_EMBEDDING_MODEL", llmEmbeddingModel);
 
         McpConnection llmConn = new McpConnection("llm", llmNodePath, llmScriptPath, null, llmEnv);
         llmConn.start();
