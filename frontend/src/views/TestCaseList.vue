@@ -84,38 +84,21 @@
           <div class="stat-label">数据</div>
         </div>
       </div>
-    </div>
-
-    <!-- v5.13: 覆盖率度量紧凑摘要（筛选上方） -->
-    <section class="coverage-summary">
-      <div class="coverage-summary-head">
-        <el-icon :size="16"><DataAnalysis /></el-icon>
-        <span>覆盖率度量</span>
+      <div class="stat-card stat-coverage stat-coverage-state">
+        <div class="stat-icon"><el-icon :size="18"><DataAnalysis /></el-icon></div>
+        <div class="stat-body">
+          <div class="stat-value">{{ coverage ? `${Math.round(coverage.stateTransition.rate * 100)}%` : '—' }}</div>
+          <div class="stat-label">状态机覆盖</div>
+        </div>
       </div>
-      <template v-if="coverage">
-        <div class="coverage-summary-item">
-          <span class="coverage-summary-label">状态机</span>
-          <el-progress
-            :percentage="Math.round(coverage.stateTransition.rate * 100)"
-            :color="coverageColor(coverage.stateTransition.rate)"
-            :stroke-width="10"
-            class="coverage-summary-bar"
-          />
-          <span class="coverage-summary-rate">{{ Math.round(coverage.stateTransition.rate * 100) }}%</span>
+      <div class="stat-card stat-coverage stat-coverage-api">
+        <div class="stat-icon"><el-icon :size="18"><DataAnalysis /></el-icon></div>
+        <div class="stat-body">
+          <div class="stat-value">{{ coverage ? `${Math.round(coverage.apiEndpoint.rate * 100)}%` : '—' }}</div>
+          <div class="stat-label">接口覆盖</div>
         </div>
-        <div class="coverage-summary-item">
-          <span class="coverage-summary-label">接口</span>
-          <el-progress
-            :percentage="Math.round(coverage.apiEndpoint.rate * 100)"
-            :color="coverageColor(coverage.apiEndpoint.rate)"
-            :stroke-width="10"
-            class="coverage-summary-bar"
-          />
-          <span class="coverage-summary-rate">{{ Math.round(coverage.apiEndpoint.rate * 100) }}%</span>
-        </div>
-      </template>
-      <div v-else class="coverage-summary-empty">暂无覆盖率数据，完成代码分析与用例生成后展示</div>
-    </section>
+      </div>
+    </div>
 
     <!-- 筛选卡片 -->
     <section class="filter-section">
@@ -1324,12 +1307,6 @@ async function handleReviewCommand(command) {
   }
 }
 
-function coverageColor(rate) {
-  if (rate >= 0.8) return '#10b981'
-  if (rate >= 0.5) return '#f59e0b'
-  return '#ef4444'
-}
-
 function qualityColor(score) {
   if (score >= 80) return '#10b981'
   if (score >= 50) return '#f59e0b'
@@ -2319,7 +2296,7 @@ onUnmounted(() => {
 /* ===== 统计卡 ===== */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: var(--space-md);
   margin-bottom: var(--space-lg);
 }
@@ -2374,6 +2351,13 @@ onUnmounted(() => {
 .stat-boundary .stat-value { color: var(--color-warning); }
 .stat-data .stat-icon { background: linear-gradient(135deg, #a78bfa, #8b5cf6); }
 .stat-data .stat-value { color: #8b5cf6; }
+
+.stat-coverage .stat-icon { width: 34px; height: 34px; }
+.stat-coverage .stat-value { font-size: 18px; }
+.stat-coverage-state .stat-icon { background: linear-gradient(135deg, #22d3ee, #0ea5e9); }
+.stat-coverage-state .stat-value { color: #0ea5e9; }
+.stat-coverage-api .stat-icon { background: linear-gradient(135deg, #f472b6, #ec4899); }
+.stat-coverage-api .stat-value { color: #ec4899; }
 
 /* ===== 筛选区 ===== */
 .filter-section {
@@ -2638,63 +2622,6 @@ onUnmounted(() => {
 .text-muted {
   color: var(--text-tertiary);
   font-size: 12px;
-}
-
-/* ===== 覆盖率度量紧凑摘要（v5.13） ===== */
-.coverage-summary {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  flex-wrap: wrap;
-  margin-top: var(--space-md);
-  padding: 12px 16px;
-  background: var(--bg-surface);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-lg);
-}
-
-.coverage-summary-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-
-.coverage-summary-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 1;
-  min-width: 220px;
-}
-
-.coverage-summary-label {
-  width: 56px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  flex-shrink: 0;
-}
-
-.coverage-summary-bar {
-  flex: 1;
-  min-width: 100px;
-}
-
-.coverage-summary-rate {
-  width: 48px;
-  text-align: right;
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.coverage-summary-empty {
-  font-size: 12px;
-  color: var(--text-tertiary);
 }
 
 .form-tip {
