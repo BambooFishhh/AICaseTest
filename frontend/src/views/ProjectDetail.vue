@@ -98,7 +98,7 @@
                 type="primary"
                 :icon="Aim"
                 :disabled="!canAnalyze"
-                :title="!hasSourcePath ? '未配置代码路径，可直接用 PRD 生成用例' : ''"
+                :title="analyzeBlockedReason"
                 @click="handleAnalyze"
               >
                 开始分析
@@ -324,7 +324,18 @@ const hasSourcePath = computed(() => {
 
 const canAnalyze = computed(() => {
   const s = project.value?.status
-  return hasSourcePath.value && (s === 'created' || s === 'failed')
+  // v5.13: 已分析/已完成也可重新分析，仅 analyzing/generating 拦截
+  return hasSourcePath.value && (
+    s === 'created' || s === 'failed' || s === 'analyzed' || s === 'completed'
+  )
+})
+
+const analyzeBlockedReason = computed(() => {
+  const s = project.value?.status
+  if (!hasSourcePath.value) return '未配置代码路径，可直接用 PRD 生成用例'
+  if (s === 'analyzing') return '正在分析中，请稍候'
+  if (s === 'generating') return '项目正在生成用例，请稍后再启动分析'
+  return ''
 })
 
 // v3.12: 生成前置预检——created 且无 PRD 时不可生成（无任何上下文）

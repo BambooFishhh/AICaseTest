@@ -213,7 +213,15 @@ public class ProjectService {
         Project project = projectRepository.findById(id)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + id));
         String status = project.getStatus();
-        if (!"created".equals(status) && !"failed".equals(status)) {
+        if ("analyzing".equals(status)) {
+            throw BusinessException.invalidState("正在分析中，请等待当前任务完成");
+        }
+        if ("generating".equals(status)) {
+            throw BusinessException.invalidState("项目正在生成用例，请稍后再启动分析");
+        }
+        // v5.13: 允许重复分析，created/failed/analyzed/completed 都可重新触发
+        if (!"created".equals(status) && !"failed".equals(status)
+                && !"analyzed".equals(status) && !"completed".equals(status)) {
             throw BusinessException.invalidState("项目当前状态不允许启动分析: " + status);
         }
         projectRepository.updateStatus(id, "analyzing");

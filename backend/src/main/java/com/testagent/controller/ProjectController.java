@@ -89,7 +89,10 @@ public class ProjectController {
         projectAccessService.assertOperateAccess(projectId);
         ProjectDTO project = projectService.getProject(projectId);
         String status = project.getStatus();
-        if (!"created".equals(status) && !"failed".equals(status)) {
+        // v5.13: 允许重复分析，仅 analyzing/generating 拦截
+        if ("analyzing".equals(status) || "generating".equals(status)
+                || (!"created".equals(status) && !"failed".equals(status)
+                && !"analyzed".equals(status) && !"completed".equals(status))) {
             SseEmitter err = new SseEmitter(0L);
             try {
                 err.send(SseEmitter.event().name("error").data(
