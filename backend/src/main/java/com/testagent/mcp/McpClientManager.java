@@ -50,6 +50,19 @@ public class McpClientManager {
     @Value("${mcp.servers.playwright.script-path:playwright-mcp-server/index.js}")
     private String playwrightScriptPath;
 
+    // v5.13: tools MCP Server（桥接语义检索/需求解析/状态机/AI评审/代码分析）
+    @Value("${mcp.servers.tools.node-path:node}")
+    private String toolsNodePath;
+
+    @Value("${mcp.servers.tools.script-path:tools-mcp-server/index.js}")
+    private String toolsScriptPath;
+
+    @Value("${app.mcp.bridge-url:http://127.0.0.1:8000}")
+    private String mcpBridgeUrl;
+
+    @Value("${app.mcp.bridge-token:aicasetest-mcp-local}")
+    private String mcpBridgeToken;
+
     // vT6: 测试环境可关闭 MCP 子进程启动
     @Value("${app.mcp.enabled:true}")
     private boolean mcpEnabled;
@@ -76,6 +89,14 @@ public class McpClientManager {
                 playwrightNodePath, playwrightScriptPath, null, new HashMap<>());
         playwrightConn.start();
         connections.put("playwright", playwrightConn);
+
+        // v5.13: 创建并启动 "tools" Server
+        Map<String, String> toolsEnv = new HashMap<>();
+        toolsEnv.put("MCP_BRIDGE_URL", mcpBridgeUrl);
+        toolsEnv.put("MCP_BRIDGE_TOKEN", mcpBridgeToken);
+        McpConnection toolsConn = new McpConnection("tools", toolsNodePath, toolsScriptPath, null, toolsEnv);
+        toolsConn.start();
+        connections.put("tools", toolsConn);
 
         log.info("McpClientManager 启动完成，已注册 {} 个 Server", connections.size());
     }

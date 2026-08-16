@@ -54,6 +54,12 @@
 | GET | `/api/projects/{id}/testcases/{tcId}/versions/{vId}` | 用例版本详情（含快照） |
 | POST | `/api/projects/{id}/testcases/{tcId}/versions/{vId}/rollback` | 回滚到指定版本 |
 | GET | `/api/projects/{id}/statemachines` | 状态机列表 |
+| POST | `/api/mcp/semantic-search` | 语义检索上下文（内部桥接，需 X-MCP-Token，v5.13） |
+| POST | `/api/mcp/analyze-requirement-docs` | 需求文档解析（内部桥接，需 X-MCP-Token，v5.13） |
+| POST | `/api/mcp/extract-state-machine` | 状态机提取（内部桥接，需 X-MCP-Token，v5.13） |
+| POST | `/api/mcp/review-test-cases` | 用例评审（内部桥接，需 X-MCP-Token，v5.13） |
+| POST | `/api/mcp/analyze-backend` | 后端代码分析（内部桥接，需 X-MCP-Token，v5.13） |
+| POST | `/api/mcp/analyze-frontend` | 前端代码分析（内部桥接，需 X-MCP-Token，v5.13） |
 | POST | `/api/projects/{id}/mindmap` | 生成脑图 |
 | GET | `/api/settings` | 获取设置 |
 | PUT | `/api/settings` | 更新设置 |

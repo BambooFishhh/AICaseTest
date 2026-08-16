@@ -344,7 +344,7 @@ const analyzeBlockedReason = computed(() => {
   return ''
 })
 
-// v3.12: 生成前置预检——created 且无 PRD 时不可生成（无任何上下文）
+// v5.13: 生成前置预检——生成必须基于 PRD，代码只作为辅助上下文
 const hasPrd = computed(() => {
   return !!project.value?.prdContent && project.value.prdContent.trim() !== ''
 })
@@ -352,14 +352,14 @@ const hasPrd = computed(() => {
 const canGenerate = computed(() => {
   const s = project.value?.status
   if (s === 'analyzing' || s === 'generating') return false
-  if (s === 'created' && !hasPrd.value) return false
+  if (!hasPrd.value) return false
   return true
 })
 
 const generateBlockedReason = computed(() => {
   const s = project.value?.status
   if (s === 'analyzing' || s === 'generating') return '正在处理中，请稍候'
-  if (s === 'created' && !hasPrd.value) return '请先提供 PRD 或完成代码分析后再生成用例'
+  if (!hasPrd.value) return '请先添加 PRD 文档'
   return ''
 })
 

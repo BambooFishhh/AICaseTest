@@ -20,4 +20,8 @@ public class EnumInfo {
     private List<EnumValue> values;
 
     private String file;
+
+    private String description;
+
+    private List<String> sources;
 }

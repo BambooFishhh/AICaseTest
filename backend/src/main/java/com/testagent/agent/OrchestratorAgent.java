@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.FrontendResult;
+import com.testagent.common.BusinessException;
 import com.testagent.dto.GenerationParams;
 import com.testagent.dto.PrdAnalysisResult;
 import com.testagent.entity.CodeAnalysis;
@@ -19,6 +20,7 @@ import com.testagent.repository.StateMachineRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -180,34 +182,38 @@ public class OrchestratorAgent {
             ragTextBuilder.append("\n\n").append(supplementary);
         }
 
-        if (!prdDocs.isEmpty() || !contextDocs.isEmpty() || !supplementary.isBlank()) {
-            if (progressCallback != null) {
-                progressCallback.update("正在解析需求资料（PRD/上下文文档/补充需求）...");
-            }
-            boolean prdPhase = telemetryService.beginPhaseIfActive("prd");
-            prdResult = prdAgent.analyze(prdDocs, contextDocs, supplementary);
-            if (prdPhase) {
-                telemetryService.endPhase();
-            }
-            // v5.4: 生成前 RAG 上下文检索（Milvus 未启用时返回空，不影响原流程）
-            String ragText = ragTextBuilder.toString();
-            if (!ragText.isBlank()) {
-                List<String> ragContexts = semanticService.retrieveContexts(projectId, ragText, 5);
-                prdResult.setRagContexts(ragContexts);
-                if (!ragContexts.isEmpty()) {
-                    log.info("RAG retrieved {} contexts for project {}", ragContexts.size(), projectId);
-                }
-            }
-            prdResult.setOtherContextInfo(supplementary);
-            prdResult.setContextDocs(contextDocs);
-            prdResult.setPrdDocs(prdDocs);
-            log.info("Requirement docs analyzed for project {}: prdDocs={}, contextDocs={}, modules={}, requirements={}",
-                    projectId, prdDocs.size(), contextDocs.size(),
-                    prdResult.getModules() == null ? 0 : prdResult.getModules().size(),
-                    prdResult.getRequirements() == null ? 0 : prdResult.getRequirements().size());
-        } else {
-            log.info("No requirement docs for project {}, fallback to code-driven generation", projectId);
+        // v5.13: 生成必须基于 PRD，代码只作为辅助上下文
+        if (prdDocs.isEmpty()) {
+            throw BusinessException.invalidParam("请先添加 PRD 文档");
         }
+        if (progressCallback != null) {
+            progressCallback.update("正在解析需求资料（PRD/上下文文档/补充需求）...");
+        }
+        boolean prdPhase = telemetryService.beginPhaseIfActive("prd");
+        prdResult = prdAgent.analyze(prdDocs, contextDocs, supplementary);
+        if (prdPhase) {
+            telemetryService.endPhase();
+        }
+        if (prdResult == null || prdResult.isEmpty()) {
+            throw new BusinessException(50015, "PRD 解析失败：未能从需求文档中提取有效需求",
+                    HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+        // v5.4: 生成前 RAG 上下文检索（Milvus 未启用时返回空，不影响原流程）
+        String ragText = ragTextBuilder.toString();
+        if (!ragText.isBlank()) {
+            List<String> ragContexts = semanticService.retrieveContexts(projectId, ragText, 5);
+            prdResult.setRagContexts(ragContexts);
+            if (!ragContexts.isEmpty()) {
+                log.info("RAG retrieved {} contexts for project {}", ragContexts.size(), projectId);
+            }
+        }
+        prdResult.setOtherContextInfo(supplementary);
+        prdResult.setContextDocs(contextDocs);
+        prdResult.setPrdDocs(prdDocs);
+        log.info("Requirement docs analyzed for project {}: prdDocs={}, contextDocs={}, modules={}, requirements={}",
+                projectId, prdDocs.size(), contextDocs.size(),
+                prdResult.getModules() == null ? 0 : prdResult.getModules().size(),
+                prdResult.getRequirements() == null ? 0 : prdResult.getRequirements().size());
 
         // 2. 代码侧（后端 + 前端）
         if (progressCallback != null) {

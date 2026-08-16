@@ -137,17 +137,37 @@ public class TestCaseService {
     @Autowired
     private UploadGuard uploadGuard;
 
+    private boolean hasPrd(Project project) {
+        if (project.getPrdContent() != null && !project.getPrdContent().isBlank()) {
+            return true;
+        }
+        try {
+            JsonNode settings = objectMapper.readTree(
+                    project.getSettings() == null ? "{}" : project.getSettings());
+            JsonNode reqDocs = settings.path("reqDocs");
+            if (reqDocs.isArray()) {
+                for (JsonNode doc : reqDocs) {
+                    if ("prd".equals(doc.path("docType").asText(""))
+                            && !doc.path("content").asText("").isBlank()) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to check project PRD docs: {}", e.getMessage());
+        }
+        return false;
+    }
+
     @Async("generationExecutor")
     public void runGenerate(String projectId, GenerateRequest req) {
         try {
-            // v3.0: 前置校验——PRD 和代码分析至少一项才能生成用例
+            // v5.13: 前置校验——生成必须基于 PRD
             Project project = projectRepository.findById(projectId)
                     .orElseThrow(() -> new IllegalArgumentException("项目不存在: " + projectId));
-            boolean hasPrd = project.getPrdContent() != null && !project.getPrdContent().isBlank();
-            CodeAnalysis analysis = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId).orElse(null);
-            boolean hasAnalysis = analysis != null && "completed".equals(analysis.getStatus());
-            if (!hasPrd && !hasAnalysis) {
-                throw new IllegalStateException("请先输入 PRD 或完成代码分析，至少需要一项才能生成用例");
+            boolean hasPrd = hasPrd(project);
+            if (!hasPrd) {
+                throw new IllegalStateException("请先添加 PRD 文档");
             }
 
             updateProjectStatus(projectId, "generating");
@@ -211,14 +231,12 @@ public class TestCaseService {
         cancellationFlags.put(projectId, cancelled);
 
         try {
-            // 前置校验（与 runGenerate 一致）
+            // v5.13: 前置校验——生成必须基于 PRD
             Project project = projectRepository.findById(projectId)
                     .orElseThrow(() -> new IllegalArgumentException("项目不存在: " + projectId));
-            boolean hasPrd = project.getPrdContent() != null && !project.getPrdContent().isBlank();
-            CodeAnalysis analysis = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId).orElse(null);
-            boolean hasAnalysis = analysis != null && "completed".equals(analysis.getStatus());
-            if (!hasPrd && !hasAnalysis) {
-                throw new IllegalStateException("请先输入 PRD 或完成代码分析，至少需要一项才能生成用例");
+            boolean hasPrd = hasPrd(project);
+            if (!hasPrd) {
+                throw new IllegalStateException("请先添加 PRD 文档");
             }
 
             updateProjectStatus(projectId, "generating");
@@ -306,14 +324,12 @@ public class TestCaseService {
         cancellationFlags.put(projectId, cancelled);
 
         try {
-            // 前置校验（与 runGenerateStream 一致）
+            // v5.13: 前置校验——生成必须基于 PRD
             Project project = projectRepository.findById(projectId)
                     .orElseThrow(() -> new IllegalArgumentException("项目不存在: " + projectId));
-            boolean hasPrd = project.getPrdContent() != null && !project.getPrdContent().isBlank();
-            CodeAnalysis analysis = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId).orElse(null);
-            boolean hasAnalysis = analysis != null && "completed".equals(analysis.getStatus());
-            if (!hasPrd && !hasAnalysis) {
-                throw new IllegalStateException("请先输入 PRD 或完成代码分析，至少需要一项才能生成用例");
+            boolean hasPrd = hasPrd(project);
+            if (!hasPrd) {
+                throw new IllegalStateException("请先添加 PRD 文档");
             }
 
             updateProjectStatus(projectId, "generating");
@@ -670,19 +686,15 @@ public class TestCaseService {
                         for (EndpointInfo ep : backendResult.getEndpoints()) {
                             Map<String, Object> item = new LinkedHashMap<>();
                             item.put("id", (ep.getMethod() == null ? "" : ep.getMethod().toUpperCase()) + " " + ep.getPath());
-                            item.put("method", ep.getMethod());
-                            item.put("path", ep.getPath());
-                            item.put("description", ep.getFunction());
+                            item.putAll(ep.toContextMap());
                             endpoints.add(item);
                         }
                     }
                     if (backendResult.getBusinessRules() != null) {
                         int i = 1;
                         for (BusinessRule br : backendResult.getBusinessRules()) {
-                            Map<String, Object> item = new LinkedHashMap<>();
+                            Map<String, Object> item = new LinkedHashMap<>(br.toContextMap());
                             item.put("id", "rule-" + i++);
-                            item.put("rule", br.getRule());
-                            item.put("ruleType", br.getRuleType());
                             rules.add(item);
                         }
                     }

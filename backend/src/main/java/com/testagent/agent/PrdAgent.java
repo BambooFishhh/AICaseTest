@@ -3,6 +3,7 @@ package com.testagent.agent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.dto.PrdAnalysisResult;
 import com.testagent.service.LlmService;
+import com.testagent.service.PromptSkillLoader;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
@@ -31,6 +32,9 @@ public class PrdAgent {
 
     @Autowired
     private LlmService llmService;
+
+    @Autowired
+    private PromptSkillLoader promptSkillLoader;
 
     // v1.10: PRD 文本最大长度（防止 LLM token 超限）
     private static final int MAX_PRD_LENGTH = 12000;
@@ -129,7 +133,7 @@ public class PrdAgent {
 
     private PrdAnalysisResult analyzeByLlm(String requirementText) throws Exception {
         log.info("[PRD] 开始 LLM 解析, 需求资料长度={}", requirementText.length());
-        String systemPrompt = """
+        String systemPrompt = promptSkillLoader.load("prd-analysis", """
                 你是需求分析专家。输入包含三类资料，必须区分对待：
                 - 【PRD 文档】是核心需求来源，作为模块/需求/验收标准的主要依据；
                 - 【上下文文档】是补充业务说明、接口文档、约束条件等辅助资料；
@@ -145,7 +149,7 @@ public class PrdAgent {
                 }
                 priority 取值：P0/P1/P2；ruleType 取值：validation/constraint/workflow。
                 只返回 JSON，不要其他文字。
-                """;
+                """);
         String userPrompt = "需求资料：\n" + requirementText;
         log.info("[PRD] 调用 LlmService.chat() ...");
         long start = System.currentTimeMillis();

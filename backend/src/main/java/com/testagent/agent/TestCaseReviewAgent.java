@@ -6,6 +6,7 @@ import com.testagent.dto.JsonHelper;
 import com.testagent.entity.TestCase;
 import com.testagent.service.LlmService;
 import com.testagent.service.AiReviewHistoryRecorder;
+import com.testagent.service.PromptSkillLoader;
 import com.testagent.service.TelemetryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +41,9 @@ public class TestCaseReviewAgent {
 
     @Autowired
     private TelemetryService telemetryService;
+
+    @Autowired
+    private PromptSkillLoader promptSkillLoader;
 
     public List<TestCase> review(List<TestCase> cases, Map<String, Object> coverage) {
         return review(cases, coverage, "generation");
@@ -106,7 +110,7 @@ public class TestCaseReviewAgent {
             brief.add(item);
         }
 
-        String systemPrompt = """
+        String systemPrompt = promptSkillLoader.load("ai-review", """
                 你是测试用例评审专家。逐条检查候选用例：
                 - status：pass（通过）/ fix（需修正）/ reject（应删除）
                 - issues：列出可执行性、覆盖率、预期可验证性、重复等具体问题
@@ -115,7 +119,7 @@ public class TestCaseReviewAgent {
                 - suggestedChanges：给出可自动采纳的修正（title/module/type/priority/coverageRefs），没有修正则填 null
                 返回 JSON 数组，不要修改用例正文，不要输出其他文字：
                 [{"index":0,"status":"fix","issues":["缺少 coverageRefs"],"confidence":0.8,"coverageRefs":{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]},"suggestedChanges":{"title":null,"module":null,"type":null,"priority":null,"coverageRefs":null}}]
-                """;
+                """);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("coverageChecklist", coverage == null ? Map.of() : coverage.get("checklist"));
         payload.put("coverageGaps", coverage == null ? Map.of() : coverage.get("gaps"));

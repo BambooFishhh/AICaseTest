@@ -44,6 +44,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/login", "/api/auth/register", "/api/health",
                                 "/actuator/health", "/actuator/prometheus", "/swagger-ui/**",
                                 "/v3/api-docs/**", "/h2-console/**").permitAll()
+                        .requestMatchers("/api/mcp/**").permitAll()
                         .requestMatchers("/api/settings/**", "/api/stats/**", "/api/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex.authenticationEntryPoint((req, res, e) -> {

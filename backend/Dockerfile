@@ -15,6 +15,7 @@ COPY backend/src ./src
 # MCP Server 源码（llm + playwright）
 COPY mcp-server ./mcp-server
 COPY playwright-mcp-server ./playwright-mcp-server
+COPY tools-mcp-server ./tools-mcp-server
 RUN mvn package -DskipTests -B
 
 # ========== 阶段2：运行 ==========
@@ -35,11 +36,13 @@ COPY --from=builder /build/target/*.jar app.jar
 # 复制 MCP Server 并安装依赖 + Playwright Chromium 浏览器
 COPY --from=builder /build/mcp-server ./mcp-server
 COPY --from=builder /build/playwright-mcp-server ./playwright-mcp-server
+COPY --from=builder /build/tools-mcp-server ./tools-mcp-server
 ENV PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright
 RUN cd playwright-mcp-server \
     && npm install --registry=https://registry.npmmirror.com \
     && npx playwright install --with-deps chromium
 RUN cd mcp-server && npm install --registry=https://registry.npmmirror.com
+RUN cd tools-mcp-server && npm install --registry=https://registry.npmmirror.com
 
 # 创建数据目录
 RUN mkdir -p /app/data /app/outputs /app/projects

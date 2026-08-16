@@ -4,6 +4,45 @@
 
 ---
 
+## v5.13 — 能力分层：MCP 工具化与 Prompt Skill 化
+**日期**: 2026-08-16
+**基线**: v5.12
+**主题**: 候选 Agent 能力拆分为 MCP 工具与 Skill 模板；同时收口后端 LLM 增强、状态机前端增强、生成必须基于 PRD
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `controller/McpBridgeController.java` | 新增 | 6 个 `/api/mcp/*` 桥接接口 |
+| `tools-mcp-server/` | 新增 | MCP 工具：semantic_search/analyze_requirement_docs/extract_state_machine/review_test_cases/analyze_backend/analyze_frontend |
+| `service/PromptSkillLoader.java` | 新增 | 从 classpath `skills/` 加载 Prompt 模板，缺失回退内嵌 Prompt |
+| `resources/skills/*.md` | 新增 | 8 个 Prompt Skill 模板 |
+| `mcp/McpClientManager.java` | 修改 | 注册并启动 `tools` MCP Server |
+| `security/SecurityConfig.java` | 修改 | 放行 `/api/mcp/**`，控制器内做令牌校验 |
+| `resources/application.yml` | 修改 | `mcp.servers.tools` 与 `app.mcp.bridge-url/bridge-token` |
+| `docker-compose.yml` / `backend/Dockerfile` | 修改 | 部署与复制 tools-mcp-server |
+| `analyzer/SpringAnalyzer.java` | 修改 | 后端规则提取 + LLM 增强，结果带 `sources` 来源标记 |
+| `agent/StateMachineAgent.java` | 修改 | 状态机提取接入前端 pageFlows/apiCalls/componentStates 旁证增强 |
+| `agent/OrchestratorAgent.java`、`agent/TestGeneratorAgent.java` | 修改 | 生成强制 PRD，PRD 失败不再回退代码驱动 |
+| `service/TestCaseService.java`、`service/ProjectService.java` | 修改 | 生成前置校验改为 PRD 必需 |
+| `agent/PrdAgent.java`、`StateMachineAgent.java`、`TestCaseReviewAgent.java`、`TestGeneratorAgent.java` | 修改 | Prompt 改为通过 PromptSkillLoader 加载 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `views/ProjectDetail.vue` | 修改 | 无 PRD 时禁用生成并提示“请先添加 PRD 文档” |
+| `components/PrdPanel.vue` | 修改 | 无 PRD 提示不再提及代码驱动回退 |
+
+### 验证结果
+
+- 后端 `mvn test`：通过
+- 前端 `npm run build`：通过
+- `node --check tools-mcp-server/index.js`：通过
+- tools MCP Server 注册 6 个工具
+
+---
+
 ## 功能记录 — Grafana 埋点面板与 Prometheus 抓取修复
 **日期**: 2026-08-16
 **主题**: 放行 `/actuator/prometheus`、Grafana 增加任务埋点面板与 MySQL 原始表面板

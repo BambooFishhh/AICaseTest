@@ -1,0 +1,12 @@
+{
+  "name": "aicasetest-tools-mcp-server",
+  "version": "1.0.0",
+  "description": "AICaseTest Tools MCP Server - 语义检索/需求解析/状态机/评审/代码分析桥接",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4"
+  }
+}

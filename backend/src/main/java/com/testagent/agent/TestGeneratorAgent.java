@@ -13,6 +13,7 @@ import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
 import com.testagent.runtime.CancellationSignal;
 import com.testagent.service.LlmService;
+import com.testagent.service.PromptSkillLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,7 +27,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import com.testagent.common.BusinessException;
 import com.testagent.common.GenerationCancelledException;
+import org.springframework.http.HttpStatus;
 
 @Component
 public class TestGeneratorAgent {
@@ -338,6 +341,9 @@ public class TestGeneratorAgent {
     @Autowired
     private TestCaseReviewAgent testCaseReviewAgent;
 
+    @Autowired
+    private PromptSkillLoader promptSkillLoader;
+
     // ==================== v3.4: 动态 prompt + temperature 参数化 ====================
 
     // v3.4: 根据 caseDensity 拼接状态机驱动的数量引导段
@@ -390,13 +396,17 @@ public class TestGeneratorAgent {
     // v3.4: 动态构建状态机驱动 system prompt（替换数量引导段）
     private String buildSystemPrompt(GenerationParams params) {
         String density = (params != null && params.getCaseDensity() != null) ? params.getCaseDensity() : "medium";
-        return SYSTEM_PROMPT_HEADER + buildQuantityGuide(density) + SYSTEM_PROMPT_FOOTER;
+        return promptSkillLoader.load("test-generation-code-header", SYSTEM_PROMPT_HEADER)
+                + buildQuantityGuide(density)
+                + promptSkillLoader.load("test-generation-code-footer", SYSTEM_PROMPT_FOOTER);
     }
 
     // v3.4: 动态构建 PRD 驱动 system prompt
     private String buildPrdDrivenPrompt(GenerationParams params) {
         String density = (params != null && params.getCaseDensity() != null) ? params.getCaseDensity() : "medium";
-        return SYSTEM_PROMPT_PRD_HEADER + buildPrdQuantityGuide(density) + SYSTEM_PROMPT_PRD_FOOTER;
+        return promptSkillLoader.load("test-generation-prd-header", SYSTEM_PROMPT_PRD_HEADER)
+                + buildPrdQuantityGuide(density)
+                + promptSkillLoader.load("test-generation-prd-footer", SYSTEM_PROMPT_PRD_FOOTER);
     }
 
     // v5.12: 构建覆盖清单与缺口（需求/转换/接口/规则），供生成与评审使用
@@ -438,9 +448,7 @@ public class TestGeneratorAgent {
             for (EndpointInfo ep : backendResult.getEndpoints()) {
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("id", (ep.getMethod() == null ? "" : ep.getMethod().toUpperCase()) + " " + ep.getPath());
-                item.put("method", ep.getMethod());
-                item.put("path", ep.getPath());
-                item.put("description", ep.getFunction());
+                item.putAll(ep.toContextMap());
                 endpoints.add(item);
             }
         }
@@ -449,10 +457,8 @@ public class TestGeneratorAgent {
         if (backendResult != null && backendResult.getBusinessRules() != null) {
             int i = 1;
             for (BusinessRule br : backendResult.getBusinessRules()) {
-                Map<String, Object> item = new LinkedHashMap<>();
+                Map<String, Object> item = new LinkedHashMap<>(br.toContextMap());
                 item.put("id", "rule-" + i++);
-                item.put("rule", br.getRule());
-                item.put("ruleType", br.getRuleType());
                 rules.add(item);
             }
         }
@@ -519,22 +525,23 @@ public class TestGeneratorAgent {
                                    ProgressCallback progressCallback, GenerationParams params) {
         List<TestCase> result = new ArrayList<>();
 
-        // v1.10: PRD 驱动分支
-        if (prdResult != null && !prdResult.isEmpty()) {
-            if (progressCallback != null) {
-                progressCallback.update("基于 PRD 生成用例...");
-            }
-            try {
-                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, null, null, params);
-            } catch (Exception e) {
-                log.warn("PRD-driven generation failed, fallback to code-driven: {}", e.getMessage());
-                result = new ArrayList<>();
-            }
+        // v5.13: 生成必须基于 PRD，代码只作为辅助上下文
+        if (prdResult == null || prdResult.isEmpty()) {
+            throw BusinessException.invalidParam("请先添加 PRD 文档");
         }
-
-        // 代码驱动分支（PRD 为空或 PRD 生成失败时）
-        if (result.isEmpty()) {
-            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, null, null, params);
+        if (progressCallback != null) {
+            progressCallback.update("基于 PRD 生成用例...");
+        }
+        try {
+            result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, null, null, params);
+        } catch (Exception e) {
+            log.error("PRD-driven generation failed: {}", e.getMessage());
+            throw new BusinessException(50016, "PRD 生成用例失败: " + e.getMessage(),
+                    HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+        if (result == null || result.isEmpty()) {
+            throw new BusinessException(50016, "PRD 生成用例失败：未生成任何用例",
+                    HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
         // v3.13: 聚焦类型过滤（focusTypes 非空时仅保留指定类型）
@@ -576,23 +583,27 @@ public class TestGeneratorAgent {
         // v3.13: 包装回调，仅透传聚焦类型（SSE 推送与落库一致）
         CaseCallback effectiveCb = wrapFocusFilter(params, caseCb);
 
-        if (prdResult != null && !prdResult.isEmpty()) {
-            checkCancelled(cancelled);  // v3.3: PRD 驱动分支前检查
-            if (progressCallback != null) {
-                progressCallback.update("基于 PRD 生成用例...");
-            }
-            try {
-                result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, effectiveCb, cancelled, params);
-            } catch (GenerationCancelledException e) {
-                throw e;  // v3.3: 取消异常向上传播，不触发 fallback
-            } catch (Exception e) {
-                log.warn("PRD-driven streaming generation failed, fallback to code-driven: {}", e.getMessage());
-                result = new ArrayList<>();
-            }
+        // v5.13: 生成必须基于 PRD，代码只作为辅助上下文
+        if (prdResult == null || prdResult.isEmpty()) {
+            throw BusinessException.invalidParam("请先添加 PRD 文档");
         }
-
-        if (result.isEmpty()) {
-            result = generateCodeDrivenCases(stateMachines, backendResult, frontendResult, progressCallback, effectiveCb, cancelled, params);
+        checkCancelled(cancelled);  // v3.3: PRD 驱动分支前检查
+        if (progressCallback != null) {
+            progressCallback.update("基于 PRD 生成用例...");
+        }
+        try {
+            result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult,
+                    effectiveCb, cancelled, params);
+        } catch (GenerationCancelledException e) {
+            throw e;  // v3.3: 取消异常向上传播，不触发 fallback
+        } catch (Exception e) {
+            log.error("PRD-driven streaming generation failed: {}", e.getMessage());
+            throw new BusinessException(50016, "PRD 生成用例失败: " + e.getMessage(),
+                    HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+        if (result == null || result.isEmpty()) {
+            throw new BusinessException(50016, "PRD 生成用例失败：未生成任何用例",
+                    HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
         // v3.13: 聚焦类型过滤
@@ -810,11 +821,7 @@ public class TestGeneratorAgent {
         List<Map<String, Object>> ruleList = new ArrayList<>();
         if (backendResult != null && backendResult.getBusinessRules() != null) {
             for (BusinessRule br : backendResult.getBusinessRules()) {
-                Map<String, Object> brMap = new LinkedHashMap<>();
-                brMap.put("function", br.getFunction());
-                brMap.put("rule", br.getRule());
-                brMap.put("ruleType", br.getRuleType());
-                ruleList.add(brMap);
+                ruleList.add(br.toContextMap());
             }
         }
         context.put("businessRules", ruleList);
@@ -908,11 +915,7 @@ public class TestGeneratorAgent {
         List<Map<String, Object>> epList = new ArrayList<>();
         if (backendResult != null && backendResult.getEndpoints() != null) {
             for (EndpointInfo ep : backendResult.getEndpoints()) {
-                Map<String, Object> epMap = new LinkedHashMap<>();
-                epMap.put("method", ep.getMethod());
-                epMap.put("path", ep.getPath());
-                epMap.put("description", ep.getFunction());
-                epList.add(epMap);
+                epList.add(ep.toContextMap());
             }
         }
         context.put("endpoints", epList);
@@ -920,11 +923,7 @@ public class TestGeneratorAgent {
         List<Map<String, Object>> ruleList = new ArrayList<>();
         if (backendResult != null && backendResult.getBusinessRules() != null) {
             for (BusinessRule br : backendResult.getBusinessRules()) {
-                Map<String, Object> brMap = new LinkedHashMap<>();
-                brMap.put("function", br.getFunction());
-                brMap.put("rule", br.getRule());
-                brMap.put("ruleType", br.getRuleType());
-                ruleList.add(brMap);
+                ruleList.add(br.toContextMap());
             }
         }
         context.put("businessRules", ruleList);
@@ -1114,7 +1113,15 @@ public class TestGeneratorAgent {
             Map<String, Object> ep = new LinkedHashMap<>();
             ep.put("method", endpoint.getMethod());
             ep.put("path", endpoint.getPath());
-            ep.put("description", endpoint.getFunction());
+            ep.put("description",
+                    endpoint.getDescription() != null && !endpoint.getDescription().isBlank()
+                            ? endpoint.getDescription() : endpoint.getFunction());
+            ep.put("parameters",
+                    endpoint.getParameters() == null ? List.of() : endpoint.getParameters());
+            ep.put("permissions",
+                    endpoint.getPermissions() == null ? List.of() : endpoint.getPermissions());
+            ep.put("validation",
+                    endpoint.getValidation() == null ? List.of() : endpoint.getValidation());
             eps.add(ep);
             tc.setApiEndpoints(toJson(eps));
 
@@ -1485,11 +1492,7 @@ public class TestGeneratorAgent {
             if (!keyword.isEmpty()
                     && (function.toLowerCase().contains(keyword.toLowerCase())
                     || path.toLowerCase().contains(keyword.toLowerCase()))) {
-                Map<String, Object> epMap = new LinkedHashMap<>();
-                epMap.put("method", ep.getMethod());
-                epMap.put("path", ep.getPath());
-                epMap.put("description", ep.getFunction());
-                matched.add(epMap);
+                matched.add(ep.toContextMap());
             }
         }
         return matched;

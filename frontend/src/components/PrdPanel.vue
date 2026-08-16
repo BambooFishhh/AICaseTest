@@ -13,7 +13,7 @@
 
     <el-alert
       v-if="!hasPrdDoc"
-      title="请至少添加一篇标记为 PRD 的文档；否则用例生成会退回代码驱动"
+      title="请先添加 PRD 文档，否则无法生成测试用例"
       type="warning"
       :closable="false"
       show-icon

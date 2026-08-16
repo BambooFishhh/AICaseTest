@@ -240,6 +240,12 @@ public class ProjectService {
         Project project = projectRepository.findById(id)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + id));
         String status = project.getStatus();
+        // v5.13: 生成必须基于 PRD，代码只作为辅助上下文
+        String joinedPrd = joinPrdDocs(loadReqDocs(project), project.getPrdContent());
+        boolean hasPrd = joinedPrd != null && !joinedPrd.isBlank();
+        if (!hasPrd) {
+            throw BusinessException.invalidParam("请先添加 PRD 文档");
+        }
         // v1.6: 针对 generating 给出明确的并发提示，避免用户重复触发
         if (!"analyzed".equals(status) && !"completed".equals(status)) {
             if ("generating".equals(status)) {

@@ -11,7 +11,7 @@
 | 运行态 | Redis 7（取消标志/心跳/并发配额/防爆破/缓存/任务队列） |
 | 语义层 | Milvus 2.4 + LLM Embedding（语义去重/RAG/搜索/失败经验库） |
 | 前端 | Vue 3、Vite、Element Plus、Pinia、ECharts、markmap |
-| AI/执行 | OpenAI 兼容协议 + MCP（LLM 对话/embedding/多模态/Playwright 浏览器） |
+| AI/执行 | OpenAI 兼容协议 + MCP（LLM 对话/embedding/多模态/Playwright 浏览器/tools 能力桥接） |
 | 部署 | Docker、docker-compose（MySQL + Redis + Milvus standalone） |
 
 ## 核心能力
@@ -166,8 +166,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v5.12（AI 评审闭环与覆盖引用收口）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v5.13（能力分层：MCP 工具化与 Prompt Skill 化）**，生产线基线为 vP5（压测与容量）。
 
+- v5.13 要点：语义检索/需求解析/状态机/评审/代码分析拆为 `tools-mcp-server` 工具；Agent Prompt 抽为 Skill 模板；生成强制基于 PRD，代码仅作辅助。
 - v5.12 要点：AI 评审历史独立落库；单条重评异步化，前端轮询不再 30s 超时；采纳真正应用建议并同步人工评审状态；覆盖率统一为计划引用 + 实际执行口径。
 - v5.11 要点：需求文档支持多篇 PRD/上下文文档与补充需求；生成链路注入覆盖清单并输出 `coverageRefs`；AI 评审 UI、代码分析统计、暗色主题与脑图 PNG 导出。
 - v5.10 要点：PRD 上下文支持“其他上下文信息”与多来源上下文文档；执行历史支持按用例过滤查看；Agent 元素定位增加滚动兜底。
@@ -191,6 +192,7 @@ AICaseTest/
 | v5.10 | PRD 上下文改版与用例级执行历史（其他上下文信息/多来源文档/按用例查看历史） | ✅ 完成 |
 | v5.11 | 生成链路 AI 评审与前端体验（需求文档合并/coverageRefs/评审操作/暗色主题/脑图导出） | ✅ 完成 |
 | v5.12 | AI 评审闭环与覆盖引用收口（历史落库/异步重评/采纳语义/覆盖率口径） | ✅ 完成 |
+| v5.13 | 能力分层：MCP 工具化与 Prompt Skill 化（tools-mcp-server/桥接接口/Skill 模板/PRD 必需） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

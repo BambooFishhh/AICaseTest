@@ -69,6 +69,8 @@ app:
   # vT6: 测试环境可关闭 MCP 子进程
   mcp:
     enabled: ${APP_MCP_ENABLED:true}
+    bridge-url: ${MCP_BRIDGE_URL:http://127.0.0.1:8000}
+    bridge-token: ${MCP_BRIDGE_TOKEN:aicasetest-mcp-local}
   # v5.8: 数据保留策略（0=关闭）
   retention:
     execution-days: ${RETENTION_EXECUTION_DAYS:0}
@@ -107,6 +109,9 @@ mcp:
     playwright:
       node-path: ${MCP_NODE_PATH:node}
       script-path: playwright-mcp-server/index.js
+    tools:
+      node-path: ${MCP_NODE_PATH:node}
+      script-path: tools-mcp-server/index.js
 logging:
   level:
     com.testagent: INFO

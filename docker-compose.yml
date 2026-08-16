@@ -169,6 +169,9 @@ services:
       - APP_ENFORCE_SECURITY=${APP_ENFORCE_SECURITY:-true}
       - APP_JWT_SECRET=${APP_JWT_SECRET:-}
       - APP_ADMIN_PASSWORD=${APP_ADMIN_PASSWORD:-}
+      # v5.13: tools MCP Server 访问后端桥接接口
+      - MCP_BRIDGE_URL=http://backend:8000
+      - MCP_BRIDGE_TOKEN=${MCP_BRIDGE_TOKEN:-aicasetest-mcp-local}
       - TZ=Asia/Shanghai
       - JAVA_OPTS=-Xms256m -Xmx2g -Dfile.encoding=UTF-8
     depends_on:

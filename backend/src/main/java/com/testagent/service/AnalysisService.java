@@ -196,7 +196,7 @@ public class AnalysisService {
             if (backendResult != null) {
                 stateMachineRepository.deleteAll(stateMachineRepository.findByProjectId(projectId));
                 telemetryService.beginPhaseIfActive("state_machine");
-                List<StateMachine> stateMachines = stateMachineAgent.extract(backendResult);
+                List<StateMachine> stateMachines = stateMachineAgent.extract(backendResult, frontendResult);
                 telemetryService.endPhase();
                 for (StateMachine sm : stateMachines) {
                     sm.setId(UUID.randomUUID().toString().substring(0, 8));
