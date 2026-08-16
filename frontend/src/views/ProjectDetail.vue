@@ -79,17 +79,6 @@
         </div>
       </section>
 
-      <!-- PRD 面板 -->
-      <PrdPanel :project-id="projectId" />
-
-      <!-- 轮询状态提示 -->
-      <Transition name="fade">
-        <div v-if="pollingMessage" class="polling-banner">
-          <el-icon class="is-loading"><Loading /></el-icon>
-          <span>{{ pollingMessage }}</span>
-        </div>
-      </Transition>
-
       <!-- v5.9: 操作区 -->
       <section class="actions-section">
         <div class="section-head">
@@ -173,6 +162,17 @@
           </div>
         </div>
       </section>
+
+      <!-- 轮询状态提示 -->
+      <Transition name="fade">
+        <div v-if="pollingMessage" class="polling-banner">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>{{ pollingMessage }}</span>
+        </div>
+      </Transition>
+
+      <!-- PRD 面板 -->
+      <PrdPanel :project-id="projectId" />
 
       <!-- v4.3: 只读提示 -->
       <el-alert
