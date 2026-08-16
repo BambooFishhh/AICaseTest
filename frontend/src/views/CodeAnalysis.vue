@@ -730,7 +730,7 @@ onMounted(loadData)
 
 .sm-visual {
   padding: 20px;
-  background: #fafbfc;
+  background: var(--bg-base);
   border-bottom: 1px solid var(--card-border-light);
 }
 
@@ -756,7 +756,7 @@ onMounted(loadData)
   font-size: 13px;
   font-weight: 600;
   color: var(--text-secondary);
-  background: #f8fafc;
+  background: var(--bg-base);
   border-bottom: 1px solid var(--card-border-light);
 
   .el-icon {

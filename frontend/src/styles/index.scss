@@ -419,4 +419,33 @@ html.dark {
       color: #e2e8f0;
     }
   }
+
+  /* ===== 覆盖组件内硬编码浅色背景 ===== */
+  .sm-visual,
+  .graph-body,
+  .coverage-card,
+  .chart-card,
+  .analysis-panel,
+  .doc-item,
+  .coverage-item,
+  .context-block,
+  .suite-item,
+  .stat-card,
+  .prd-summary,
+  .summary-preview,
+  .empty-guide,
+  .prd-editor,
+  .sub-title,
+  .summary-head,
+  .chart-legend,
+  .coverage-collapse :deep(.el-collapse-item__header),
+  .review-collapse :deep(.el-collapse-item__header) {
+    background: var(--bg-base) !important;
+    border-color: var(--card-border) !important;
+  }
+
+  .coverage-pill.is-uncovered,
+  .row-uncovered td.el-table__cell {
+    background: var(--color-danger-bg) !important;
+  }
 }

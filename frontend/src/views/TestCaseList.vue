@@ -369,7 +369,7 @@
         @selection-change="handleSelectionChange"
       >
         <el-table-column type="selection" width="40" />
-        <el-table-column prop="id" label="编号" width="100" show-overflow-tooltip>
+        <el-table-column prop="id" label="编号" width="100" class-name="case-id-cell">
           <template #default="{ row }">
             <span v-if="row.isModule"></span>
             <span v-else-if="streaming" class="text-muted">生成中</span>
@@ -555,7 +555,7 @@
           </div>
         </template>
         <el-table v-if="aiReviewRows.length" :data="aiReviewRows" size="small" stripe>
-          <el-table-column prop="id" label="编号" width="110" show-overflow-tooltip />
+          <el-table-column prop="id" label="编号" width="110" />
           <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
           <el-table-column label="评审状态" width="100">
             <template #default="{ row }">
@@ -2578,6 +2578,12 @@ onUnmounted(() => {
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+:deep(.case-id-cell .cell) {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 
 .case-title {

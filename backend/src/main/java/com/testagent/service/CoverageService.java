@@ -11,10 +11,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 @Service
 public class CoverageService {
@@ -60,10 +62,8 @@ public class CoverageService {
 
                 List<String> coveringIds = new ArrayList<>();
                 for (TestCase tc : testCases) {
-                    if (!isExecuted(tc)) {
-                        continue;
-                    }
-                    if (tc.getStateMachineRef() != null) {
+                    boolean covered = parseCoverageRefTransitions(tc).contains(from + "->" + to);
+                    if (!covered && isExecuted(tc) && tc.getStateMachineRef() != null) {
                         try {
                             Map<String, Object> ref = objectMapper.readValue(
                                     tc.getStateMachineRef(), Map.class);
@@ -74,7 +74,7 @@ public class CoverageService {
                                     String tcFrom = tcTran.get("from") != null ? tcTran.get("from").toString() : "";
                                     String tcTo = tcTran.get("to") != null ? tcTran.get("to").toString() : "";
                                     if (Objects.equals(tcFrom, from) && Objects.equals(tcTo, to)) {
-                                        coveringIds.add(tc.getId());
+                                        covered = true;
                                         break;
                                     }
                                 }
@@ -82,6 +82,9 @@ public class CoverageService {
                         } catch (Exception e) {
                             // skip
                         }
+                    }
+                    if (covered) {
+                        coveringIds.add(tc.getId());
                     }
                 }
 
@@ -103,6 +106,31 @@ public class CoverageService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("stateMachines", smList);
         result.put("summary", summary);
+        return result;
+    }
+
+    // v5.11: 读取 executionHints.coverageRefs.transitionIds 作为“计划覆盖”
+    private Set<String> parseCoverageRefTransitions(TestCase tc) {
+        Set<String> result = new HashSet<>();
+        if (tc.getExecutionHints() == null || tc.getExecutionHints().isBlank()) {
+            return result;
+        }
+        try {
+            Map<String, Object> hints = objectMapper.readValue(tc.getExecutionHints(), Map.class);
+            Object refs = hints.get("coverageRefs");
+            if (refs instanceof Map) {
+                Object ids = ((Map<?, ?>) refs).get("transitionIds");
+                if (ids instanceof List) {
+                    for (Object id : (List<?>) ids) {
+                        if (id != null) {
+                            result.add(String.valueOf(id));
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse coverageRefs for test case {}", tc.getId());
+        }
         return result;
     }
 

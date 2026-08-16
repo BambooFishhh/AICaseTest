@@ -194,11 +194,11 @@ const buildEdges = () => {
         show: true,
         formatter: label,
         fontSize: 11,
-        color: '#475569',
-        backgroundColor: '#ffffff',
+        color: cssColor('--text-secondary', '#475569'),
+        backgroundColor: cssColor('--bg-surface', '#ffffff'),
         padding: [3, 6],
         borderRadius: 4,
-        borderColor: '#e2e8f0',
+        borderColor: cssColor('--card-border', '#e2e8f0'),
         borderWidth: 1
       },
       rawLabel: rawLabel,
@@ -366,7 +366,7 @@ watch(
   gap: 12px 16px;
   padding: 10px 14px;
   margin-top: 8px;
-  background: #f8fafc;
+  background: var(--bg-base);
   border: 1px solid var(--card-border-light);
   border-radius: var(--radius-md);
 }
@@ -385,7 +385,7 @@ watch(
   height: 12px;
   border-radius: 50%;
   border: 2px solid;
-  background: #fff;
+  background: var(--bg-surface);
 
   &.dot-initial { border-color: #10b981; }
   &.dot-final { border-color: var(--color-danger); }

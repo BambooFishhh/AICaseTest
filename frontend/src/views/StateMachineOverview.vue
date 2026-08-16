@@ -337,7 +337,7 @@ onMounted(loadData)
 
 .graph-body {
   padding: 20px;
-  background: #fafbfc;
+  background: var(--bg-base);
 }
 
 /* ===== 覆盖统计 ===== */
@@ -356,7 +356,7 @@ onMounted(loadData)
   gap: 12px;
   padding: 14px 18px;
   border-radius: var(--radius-md);
-  background: #f8fafc;
+  background: var(--bg-base);
   border: 1px solid var(--card-border-light);
   transition: all var(--transition-normal);
 
