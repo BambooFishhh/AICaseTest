@@ -42,42 +42,40 @@
 
       <!-- 基本信息 -->
       <section class="info-section">
-        <div class="section-head">
-          <h2 class="section-title">基本信息</h2>
-        </div>
-        <div class="info-grid">
-          <div class="info-item">
-            <div class="info-label">项目名称</div>
-            <div class="info-value">{{ project.name }}</div>
-          </div>
-          <div class="info-item">
-            <div class="info-label">源码路径</div>
-            <div class="info-value mono">{{ project.sourcePath || '纯 PRD 模式' }}</div>
-          </div>
-          <div class="info-item">
-            <div class="info-label">创建时间</div>
-            <div class="info-value">{{ formatDate(project.createdAt) }}</div>
-          </div>
-          <div class="info-item tech-stack-item">
-            <div class="info-label">技术栈</div>
-            <div class="info-value">
-              <div v-if="techStackList.length" class="tech-tags">
-                <span v-for="tech in visibleTechStack" :key="tech.label + tech.value" class="tech-tag">
-                  {{ tech.value ? `${tech.label}: ${tech.value}` : tech.label }}
-                </span>
-                <el-button
-                  v-if="techStackList.length > MAX_TECH_VISIBLE"
-                  link
-                  size="small"
-                  class="tech-more"
-                  @click="techExpanded = !techExpanded"
-                >
-                  {{ techExpanded ? '收起' : `全部 ${techStackList.length} 个` }}
-                </el-button>
-              </div>
-              <span v-else class="text-muted">尚未分析</span>
-            </div>
-          </div>
+        <div class="info-meta">
+          <span class="meta-item">
+            <span class="meta-label">项目名称</span>
+            <strong>{{ project.name }}</strong>
+          </span>
+          <span class="meta-item">
+            <span class="meta-label">源码路径</span>
+            <code class="meta-mono">{{ project.sourcePath || '纯 PRD 模式' }}</code>
+          </span>
+          <span class="meta-item">
+            <span class="meta-label">创建时间</span>
+            {{ formatDate(project.createdAt) }}
+          </span>
+          <span v-if="techStackList.length" class="meta-item meta-tech">
+            <span class="meta-label">技术栈</span>
+            <span class="tech-tags">
+              <span v-for="tech in visibleTechStack" :key="tech.label + tech.value" class="tech-tag">
+                {{ tech.value ? `${tech.label}: ${tech.value}` : tech.label }}
+              </span>
+              <el-button
+                v-if="techStackList.length > MAX_TECH_VISIBLE"
+                link
+                size="small"
+                class="tech-more"
+                @click="techExpanded = !techExpanded"
+              >
+                {{ techExpanded ? '收起' : `全部 ${techStackList.length} 个` }}
+              </el-button>
+            </span>
+          </span>
+          <span v-else class="meta-item">
+            <span class="meta-label">技术栈</span>
+            <span class="text-muted">尚未分析</span>
+          </span>
         </div>
       </section>
 
@@ -681,8 +679,79 @@ onUnmounted(() => {
   }
 }
 
-/* ===== 信息区 ===== */
-.info-section, .actions-section {
+/* ===== 信息区（紧凑元信息行） ===== */
+.info-section {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  padding: 10px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-md);
+  box-shadow: var(--shadow-xs);
+}
+
+.info-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  min-width: 0;
+  width: 100%;
+}
+
+.meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.meta-label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.meta-mono {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.meta-tech {
+  max-width: 100%;
+}
+
+.tech-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.tech-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  background: var(--el-color-primary-light-9);
+  color: var(--brand-primary);
+  border-radius: var(--radius-full);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.tech-more {
+  padding: 0 4px;
+}
+
+/* ===== 操作区 ===== */
+.actions-section {
   background: var(--bg-surface);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-xl);
@@ -703,69 +772,6 @@ onUnmounted(() => {
     color: var(--text-primary);
     margin: 0;
   }
-}
-
-.info-grid {
-  display: grid;
-  /* 名称/路径/时间三框等分占满一行，技术栈独占整行 */
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--space-md);
-}
-
-.info-item {
-  padding: 12px 14px;
-  background: var(--bg-base);
-  border-radius: var(--radius-md);
-  min-width: 0;
-  overflow: hidden;
-
-  .info-label {
-    font-size: 12px;
-    color: var(--text-tertiary);
-    margin-bottom: 4px;
-  }
-
-  .info-value {
-    font-size: 14px;
-    color: var(--text-primary);
-    word-break: break-word;
-    overflow-wrap: break-word;
-
-    &.mono {
-      font-family: 'Consolas', 'Monaco', monospace;
-      font-size: 13px;
-      word-break: break-all;
-      overflow-wrap: break-word;
-      line-height: 1.5;
-    }
-  }
-}
-
-/* 技术栈独占整行，避免撑高其他格子造成留白 */
-.tech-stack-item {
-  grid-column: 1 / -1;
-}
-
-.tech-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-
-.tech-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 10px;
-  background: var(--el-color-primary-light-9);
-  color: var(--brand-primary);
-  border-radius: var(--radius-full);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.tech-more {
-  padding: 0 4px;
 }
 
 /* ===== 操作区 ===== */
@@ -904,10 +910,6 @@ onUnmounted(() => {
   .flow-step {
     width: 100%;
     .step-connector { display: none; }
-  }
-
-  .info-grid {
-    grid-template-columns: 1fr;
   }
 
   .action-grid {
