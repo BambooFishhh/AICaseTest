@@ -1,76 +1,80 @@
 <template>
-  <section class="coverage-matrix">
-    <div class="matrix-head">
-      <div class="matrix-head-text">
-        <h2 class="matrix-title">覆盖率矩阵</h2>
-        <p class="matrix-desc">展示状态机转换路径的测试覆盖情况</p>
-      </div>
-      <div v-if="matrix" class="matrix-summary">
-        <span class="summary-text">
-          {{ matrix.summary.coveredTransitions }} / {{ matrix.summary.totalTransitions }}
-        </span>
-        <el-progress
-          :percentage="Math.round(matrix.summary.rate * 100)"
-          :stroke-width="8"
-          :color="rateColor"
-          class="summary-progress"
-        />
-      </div>
-    </div>
+  <el-collapse v-model="expanded" class="coverage-matrix-collapse">
+    <el-collapse-item name="matrix">
+      <template #title>
+        <div class="matrix-head">
+          <div class="matrix-head-text">
+            <h2 class="matrix-title">覆盖率矩阵</h2>
+            <p class="matrix-desc">展示状态机转换路径的测试覆盖情况</p>
+          </div>
+          <div v-if="matrix" class="matrix-summary">
+            <span class="summary-text">
+              {{ matrix.summary.coveredTransitions }} / {{ matrix.summary.totalTransitions }}
+            </span>
+            <el-progress
+              :percentage="Math.round(matrix.summary.rate * 100)"
+              :stroke-width="8"
+              :color="rateColor"
+              class="summary-progress"
+            />
+          </div>
+        </div>
+      </template>
 
-    <el-empty v-if="allTransitions.length === 0" description="暂无状态机数据" />
+      <el-empty v-if="allTransitions.length === 0" description="暂无状态机数据" />
 
-    <el-table
-      v-else
-      :data="allTransitions"
-      stripe
-      size="small"
-      :row-class-name="rowClassName"
-    >
-      <el-table-column prop="smName" label="状态机" width="140" />
-      <el-table-column prop="from" label="From" width="120">
-        <template #default="{ row }">
-          <span class="state-name">{{ row.from }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="" width="40" align="center">
-        <template #default>
-          <el-icon class="arrow-icon"><Right /></el-icon>
-        </template>
-      </el-table-column>
-      <el-table-column prop="to" label="To" width="120">
-        <template #default="{ row }">
-          <span class="state-name">{{ row.to }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="trigger" label="Trigger" min-width="140" show-overflow-tooltip />
-      <el-table-column label="覆盖" width="110" align="center">
-        <template #default="{ row }">
-          <span
-            class="coverage-pill"
-            :class="row.covered ? 'is-covered' : 'is-uncovered'"
-          >
-            <i class="pill-dot"></i>
-            {{ row.covered ? '已覆盖' : '未覆盖' }}
-          </span>
-        </template>
-      </el-table-column>
-      <el-table-column label="关联用例" width="110" align="center">
-        <template #default="{ row }">
-          <el-button
-            v-if="row.testCaseIds.length > 0"
-            type="primary"
-            link
-            size="small"
-            @click="$emit('filter-by-ids', row.testCaseIds)"
-          >
-            {{ row.testCaseIds.length }} 条
-          </el-button>
-          <span v-else class="text-muted">—</span>
-        </template>
-      </el-table-column>
-    </el-table>
-  </section>
+      <el-table
+        v-else
+        :data="allTransitions"
+        stripe
+        size="small"
+        :row-class-name="rowClassName"
+      >
+        <el-table-column prop="smName" label="状态机" width="140" />
+        <el-table-column prop="from" label="From" width="120">
+          <template #default="{ row }">
+            <span class="state-name">{{ row.from }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="" width="40" align="center">
+          <template #default>
+            <el-icon class="arrow-icon"><Right /></el-icon>
+          </template>
+        </el-table-column>
+        <el-table-column prop="to" label="To" width="120">
+          <template #default="{ row }">
+            <span class="state-name">{{ row.to }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="trigger" label="Trigger" min-width="140" show-overflow-tooltip />
+        <el-table-column label="覆盖" width="110" align="center">
+          <template #default="{ row }">
+            <span
+              class="coverage-pill"
+              :class="row.covered ? 'is-covered' : 'is-uncovered'"
+            >
+              <i class="pill-dot"></i>
+              {{ row.covered ? '已覆盖' : '未覆盖' }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="关联用例" width="110" align="center">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.testCaseIds.length > 0"
+              type="primary"
+              link
+              size="small"
+              @click="$emit('filter-by-ids', row.testCaseIds)"
+            >
+              {{ row.testCaseIds.length }} 条
+            </el-button>
+            <span v-else class="text-muted">—</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-collapse-item>
+  </el-collapse>
 </template>
 
 <script setup>
@@ -79,14 +83,18 @@
  * 展示所有状态机的转换路径覆盖情况，
  * 支持点击"关联用例"按 ID 集合筛选用例。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Right } from '@element-plus/icons-vue'
 
 const props = defineProps({
-  matrix: { type: Object, default: null }
+  matrix: { type: Object, default: null },
+  // v5.13: 默认折叠，用户可按需展开
+  defaultExpanded: { type: Boolean, default: false }
 })
 
 defineEmits(['filter-by-ids'])
+
+const expanded = ref(props.defaultExpanded ? ['matrix'] : [])
 
 // 展平所有状态机的转换为一维数组
 const allTransitions = computed(() => {
@@ -116,20 +124,37 @@ const rateColor = computed(() => {
 </script>
 
 <style scoped>
-.coverage-matrix {
+.coverage-matrix-collapse {
   background: var(--bg-surface);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
-  padding: 20px;
+  overflow: hidden;
   box-shadow: var(--shadow-xs);
   margin-top: var(--space-md);
+}
+
+.coverage-matrix-collapse :deep(.el-collapse-item__header) {
+  padding: 16px 20px;
+  height: auto;
+  border-bottom: 1px solid var(--card-border);
+  background: transparent;
+}
+
+.coverage-matrix-collapse :deep(.el-collapse-item__wrap) {
+  border-bottom: none;
+}
+
+.coverage-matrix-collapse :deep(.el-collapse-item__content) {
+  padding: 4px 20px 20px;
 }
 
 .matrix-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--space-md);
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
   gap: var(--space-md);
   flex-wrap: wrap;
 }

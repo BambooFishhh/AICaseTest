@@ -86,6 +86,37 @@
       </div>
     </div>
 
+    <!-- v5.13: 覆盖率度量紧凑摘要（筛选上方） -->
+    <section class="coverage-summary">
+      <div class="coverage-summary-head">
+        <el-icon :size="16"><DataAnalysis /></el-icon>
+        <span>覆盖率度量</span>
+      </div>
+      <template v-if="coverage">
+        <div class="coverage-summary-item">
+          <span class="coverage-summary-label">状态机</span>
+          <el-progress
+            :percentage="Math.round(coverage.stateTransition.rate * 100)"
+            :color="coverageColor(coverage.stateTransition.rate)"
+            :stroke-width="10"
+            class="coverage-summary-bar"
+          />
+          <span class="coverage-summary-rate">{{ Math.round(coverage.stateTransition.rate * 100) }}%</span>
+        </div>
+        <div class="coverage-summary-item">
+          <span class="coverage-summary-label">接口</span>
+          <el-progress
+            :percentage="Math.round(coverage.apiEndpoint.rate * 100)"
+            :color="coverageColor(coverage.apiEndpoint.rate)"
+            :stroke-width="10"
+            class="coverage-summary-bar"
+          />
+          <span class="coverage-summary-rate">{{ Math.round(coverage.apiEndpoint.rate * 100) }}%</span>
+        </div>
+      </template>
+      <div v-else class="coverage-summary-empty">暂无覆盖率数据，完成代码分析与用例生成后展示</div>
+    </section>
+
     <!-- 筛选卡片 -->
     <section class="filter-section">
       <div class="filter-grid">
@@ -482,70 +513,12 @@
       </el-table>
     </section>
 
-    <!-- 覆盖率面板 -->
-    <el-collapse v-model="coverageExpanded" class="coverage-collapse">
-      <el-collapse-item name="coverage">
-        <template #title>
-          <div class="coverage-title">
-            <el-icon :size="16"><DataAnalysis /></el-icon>
-            <span>覆盖率度量</span>
-            <el-tag
-              v-if="coverage"
-              :type="overallCoverageTag"
-              size="small"
-              effect="light"
-              class="coverage-title-tag"
-            >
-              状态机 {{ Math.round(coverage.stateTransition.rate * 100) }}% / 接口 {{ Math.round(coverage.apiEndpoint.rate * 100) }}%
-            </el-tag>
-          </div>
-        </template>
-        <div v-if="coverage" class="coverage-grid">
-          <div class="coverage-item">
-            <div class="coverage-head">
-              <span class="coverage-label">状态转换覆盖率</span>
-              <span class="coverage-rate">{{ Math.round(coverage.stateTransition.rate * 100) }}%</span>
-            </div>
-            <el-progress
-              :percentage="Math.round(coverage.stateTransition.rate * 100)"
-              :color="coverageColor(coverage.stateTransition.rate)"
-              :stroke-width="14"
-            />
-            <div class="coverage-detail">
-              已覆盖 {{ coverage.stateTransition.covered }} / {{ coverage.stateTransition.total }} 条转换
-            </div>
-          </div>
-          <div class="coverage-item">
-            <div class="coverage-head">
-              <span class="coverage-label">接口覆盖率</span>
-              <span class="coverage-rate">{{ Math.round(coverage.apiEndpoint.rate * 100) }}%</span>
-            </div>
-            <el-progress
-              :percentage="Math.round(coverage.apiEndpoint.rate * 100)"
-              :color="coverageColor(coverage.apiEndpoint.rate)"
-              :stroke-width="14"
-            />
-            <div class="coverage-detail">
-              已覆盖 {{ coverage.apiEndpoint.covered }} / {{ coverage.apiEndpoint.total }} 个接口
-            </div>
-          </div>
-        </div>
-        <el-empty
-          v-else
-          description="暂无覆盖率数据。运行代码分析并生成用例后，这里会显示状态机和接口的测试覆盖情况。"
-          :image-size="80"
-        />
-      </el-collapse-item>
-    </el-collapse>
-
-    <CoverageMatrix
-      v-if="coverageMatrix"
-      :matrix="coverageMatrix"
-      @filter-by-ids="handleFilterByIds"
-    />
-
     <!-- v5.12: AI 评审结果表 -->
-    <el-collapse v-model="aiReviewExpanded" class="review-collapse">
+    <el-collapse
+      v-model="aiReviewExpanded"
+      class="review-collapse"
+      @change="aiReviewAutoExpanded = true"
+    >
       <el-collapse-item name="review">
         <template #title>
           <div class="review-collapse-title">
@@ -589,6 +562,13 @@
         <el-empty v-else description="暂无 AI 评审结果" :image-size="70" />
       </el-collapse-item>
     </el-collapse>
+
+    <CoverageMatrix
+      v-if="coverageMatrix"
+      :matrix="coverageMatrix"
+      :default-expanded="false"
+      @filter-by-ids="handleFilterByIds"
+    />
 
     <!-- v3.17: 用例详情/编辑抽屉 -->
     <el-drawer
@@ -1030,8 +1010,8 @@ const streamingAlertTitle = computed(() => {
 const testCases = ref([])
 const allTestCases = ref([])
 const coverage = ref(null)
-const coverageExpanded = ref(['coverage'])
 const aiReviewExpanded = ref([])
+let aiReviewAutoExpanded = false
 const reviewingId = ref('')
 
 const aiReviewRows = computed(() =>
@@ -1054,6 +1034,13 @@ const aiReviewRows = computed(() =>
     })
     .filter(Boolean)
 )
+
+function maybeAutoExpandAiReview() {
+  if (!aiReviewAutoExpanded && aiReviewRows.value.length > 0) {
+    aiReviewExpanded.value = ['review']
+    aiReviewAutoExpanded = true
+  }
+}
 
 const total = ref(0)
 const page = ref(1)
@@ -1352,18 +1339,6 @@ function coverageColor(rate) {
   return '#ef4444'
 }
 
-// 总体覆盖率徽章颜色（取两个覆盖率的较低值）
-const overallCoverageTag = computed(() => {
-  if (!coverage.value) return 'info'
-  const minRate = Math.min(
-    coverage.value.stateTransition.rate,
-    coverage.value.apiEndpoint.rate
-  )
-  if (minRate >= 0.8) return 'success'
-  if (minRate >= 0.5) return 'warning'
-  return 'danger'
-})
-
 function qualityColor(score) {
   if (score >= 80) return '#10b981'
   if (score >= 50) return '#f59e0b'
@@ -1388,12 +1363,14 @@ async function loadList() {
     coverage.value = data.coverage || null
   } finally {
     loading.value = false
+    maybeAutoExpandAiReview()
   }
 }
 
 async function loadAllForStats() {
   const res = await listTestCases(projectId, { page: 1, pageSize: 9999 })
   allTestCases.value = res.data?.testCases || []
+  maybeAutoExpandAiReview()
 }
 
 function handleFilter() {
@@ -2675,87 +2652,61 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-/* ===== 覆盖率 ===== */
-.coverage-collapse {
+/* ===== 覆盖率度量紧凑摘要（v5.13） ===== */
+.coverage-summary {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
   margin-top: var(--space-md);
+  padding: 12px 16px;
   background: var(--bg-surface);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
-  overflow: hidden;
 }
 
-/* 折叠面板标题区 */
-.coverage-collapse :deep(.el-collapse-item__header) {
-  padding: 0 16px;
-  height: 52px;
-  font-size: 15px;
-  font-weight: 600;
-  border-bottom: 1px solid var(--card-border);
-}
-
-.coverage-collapse :deep(.el-collapse-item__wrap) {
-  border-bottom: none;
-}
-
-.coverage-collapse :deep(.el-collapse-item__content) {
-  padding: 16px;
-}
-
-/* 标题行：图标 + 文字 + 徽章 */
-.coverage-title {
+.coverage-summary-head {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
   color: var(--text-primary);
+  white-space: nowrap;
 }
 
-.coverage-title-tag {
-  margin-left: 4px;
-  font-weight: 500;
+.coverage-summary-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 220px;
 }
 
-/* 网格布局：两列覆盖率卡 */
-.coverage-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 14px;
+.coverage-summary-label {
+  width: 56px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
-/* 单个覆盖率卡 */
-.coverage-item {
-  background: var(--bg-base);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-md);
-  padding: 14px 16px;
-  min-width: 0;
-  overflow: hidden;
+.coverage-summary-bar {
+  flex: 1;
+  min-width: 100px;
+}
 
-  .coverage-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
+.coverage-summary-rate {
+  width: 48px;
+  text-align: right;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
 
-  .coverage-label {
-    font-size: 13px;
-    color: var(--text-secondary);
-    font-weight: 500;
-  }
-
-  .coverage-rate {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--text-primary);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .coverage-detail {
-    font-size: 12px;
-    color: var(--text-tertiary);
-    margin-top: 6px;
-  }
+.coverage-summary-empty {
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .form-tip {
