@@ -98,13 +98,25 @@ public class ExecutionAgent {
             // 步骤 2: 截图（操作前）
             screenshotBefore = playwrightSkill.takeScreenshot(sessionId);
 
-            // 步骤 3: 调 MCP 多模态识别（异常时退化为未找到，由 LLM 决策走 DOM 兜底）
-            LocateResult locateResult;
-            try {
-                locateResult = mcpBridgeService.multimodalElementLocate(screenshotBefore, elementDesc);
-            } catch (Exception e) {
-                log.warn("MCP multimodal locate exception, treat as not found: {}", e.getMessage());
-                locateResult = LocateResult.fail("MCP 调用异常: " + e.getMessage());
+            // 步骤 3: 多模态识别；找不到时上下滚动页面重试，避免元素在首屏之外
+            LocateResult locateResult = null;
+            String[] scrollSequence = {"", "down", "down", "up", "up"};
+            for (int attempt = 0; attempt < scrollSequence.length; attempt++) {
+                if (!scrollSequence[attempt].isEmpty()) {
+                    playwrightSkill.scroll(sessionId, scrollSequence[attempt], 600);
+                    screenshotBefore = playwrightSkill.takeScreenshot(sessionId);
+                    log.info("Element not found, scrolled {} and retry locate (attempt {})",
+                            scrollSequence[attempt], attempt);
+                }
+                try {
+                    locateResult = mcpBridgeService.multimodalElementLocate(screenshotBefore, elementDesc);
+                } catch (Exception e) {
+                    log.warn("MCP multimodal locate exception, treat as not found: {}", e.getMessage());
+                    locateResult = LocateResult.fail("MCP 调用异常: " + e.getMessage());
+                }
+                if (locateResult != null && locateResult.isFound()) {
+                    break;
+                }
             }
 
             // 步骤 4: LLM 决策执行策略

@@ -248,6 +248,22 @@ public class ProjectController {
         return ApiResponse.success(projectService.updateProjectContext(projectId, payload));
     }
 
+    // v5.10: 上下文文档解析（md/txt/PDF，返回解析结果由前端随上下文保存）
+    @PostMapping(value = "/{projectId}/context/docs/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<Map<String, Object>> uploadContextDoc(
+            @PathVariable String projectId,
+            @RequestParam("file") MultipartFile file) {
+        return ApiResponse.success(projectService.parseContextDoc(projectId, file));
+    }
+
+    // v5.10: 上下文文档在线链接抓取
+    @PostMapping("/{projectId}/context/docs/fetch")
+    public ApiResponse<Map<String, Object>> fetchContextDoc(
+            @PathVariable String projectId,
+            @RequestBody Map<String, String> req) {
+        return ApiResponse.success(projectService.fetchContextDoc(projectId, req.get("url")));
+    }
+
     // v1.10: 查询 PRD
     @GetMapping("/{projectId}/prd")
     public ApiResponse<Map<String, Object>> getPrd(@PathVariable String projectId) {

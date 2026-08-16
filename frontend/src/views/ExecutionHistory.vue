@@ -5,14 +5,25 @@
       <div class="page-header-main">
         <el-button text :icon="ArrowLeft" @click="goBack">返回</el-button>
         <div class="title-block">
-          <h1 class="page-title">执行历史</h1>
-          <p class="page-subtitle">项目内所有用例执行记录与结果总览</p>
+          <h1 class="page-title">{{ isFiltered ? '用例执行历史' : '执行历史' }}</h1>
+          <p class="page-subtitle">{{ pageSubtitle }}</p>
         </div>
       </div>
       <div class="page-actions">
         <el-button :icon="RefreshRight" @click="loadExecutions">刷新</el-button>
       </div>
     </header>
+
+    <el-alert
+      v-if="isFiltered"
+      :title="filterTitle"
+      type="info"
+      :closable="false"
+      show-icon
+      class="filter-banner"
+    >
+      <el-button link type="primary" @click="clearTestCaseFilter">查看全部</el-button>
+    </el-alert>
 
     <!-- 统计卡 -->
     <div class="stats-grid">
@@ -196,6 +207,17 @@ const trendData = ref([])
 const trendChartRef = ref(null)
 let trendChart = null
 
+// v5.10: 按用例维度过滤
+const filteredTestCaseId = computed(() => (route.query.testCaseId ? String(route.query.testCaseId) : ''))
+const filteredTestCaseTitle = computed(() => (route.query.testCaseTitle ? String(route.query.testCaseTitle) : ''))
+const isFiltered = computed(() => Boolean(filteredTestCaseId.value))
+const pageSubtitle = computed(() =>
+  isFiltered.value ? '仅展示该用例的执行记录、统计与趋势' : '项目内所有用例执行记录与结果总览'
+)
+const filterTitle = computed(() =>
+  `当前仅展示「${filteredTestCaseTitle.value || filteredTestCaseId.value}」的执行记录`
+)
+
 const passRateText = computed(() => {
   const completed = stats.value.passed + stats.value.failed
   if (completed === 0) return '—'
@@ -292,7 +314,9 @@ const formatTime = (time) => {
 async function loadExecutions() {
   loading.value = true
   try {
-    const res = await getExecutions(projectId, { page: page.value, pageSize: pageSize.value })
+    const params = { page: page.value, pageSize: pageSize.value }
+    if (filteredTestCaseId.value) params.testCaseId = filteredTestCaseId.value
+    const res = await getExecutions(projectId, params)
     const data = res.data
     // 兼容新旧后端：v5.7 返回 {items,total,stats,trend}，旧后端直接返回执行记录数组
     const list = Array.isArray(data) ? data : (data?.items || data?.executions || data?.records || [])
@@ -342,6 +366,11 @@ watch(trendData, () => {
   nextTick(renderTrendChart)
 })
 
+watch(() => route.query.testCaseId, () => {
+  page.value = 1
+  loadExecutions()
+})
+
 function goToDetail(row) {
   if (row.id) {
     router.push(`/projects/${projectId}/executions/${row.id}`)
@@ -357,7 +386,11 @@ function goTestcases() {
 }
 
 function goBack() {
-  router.push(`/projects/${projectId}`)
+  router.push(`/projects/${projectId}/testcases`)
+}
+
+function clearTestCaseFilter() {
+  router.replace({ path: `/projects/${projectId}/executions`, query: {} })
 }
 
 function handlePageShow(e) {
@@ -408,6 +441,10 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: var(--text-tertiary);
   margin: 0;
+}
+
+.filter-banner {
+  margin-bottom: var(--space-lg);
 }
 
 /* ===== 统计卡 ===== */

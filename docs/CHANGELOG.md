@@ -4,6 +4,49 @@
 
 ---
 
+## v5.10 — PRD 上下文改版与用例级执行历史
+**日期**: 2026-08-16
+**基线**: v5.9 / vP5
+**主题**: “额外 Prompt”更名“其他上下文信息”、上下文文档支持 PRD 式多来源录入、执行历史可按用例维度查看
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| service/ProjectService.java | context 字段兼容 + 文档解析 | `otherContextInfo` 落库、旧键 `extraPrompt` 回退；新增 md/txt/PDF 解析与链接抓取 |
+| controller/ProjectController.java | 新增 2 个接口 | `context/docs/upload`、`context/docs/fetch` |
+| dto/PrdAnalysisResult.java | 字段更名 | `extraPrompt` → `otherContextInfo` |
+| agent/OrchestratorAgent.java | 读取兼容 | 新键优先、旧键兜底 |
+| agent/TestGeneratorAgent.java | LLM context 更名 | 注入 `otherContextInfo` |
+| controller/ExecutionController.java | 新增参数 | 执行历史支持 `testCaseId` 过滤 |
+| service/ExecutionService.java | 过滤后统计 | items/stats/trend 基于过滤后记录计算 |
+| skill/PlaywrightRecordSkill.java | 新增 scroll | 元素定位滚动兜底 |
+| agent/ExecutionAgent.java | 滚动重试 | 多模态找不到时 down/up 重试 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| components/PrdPanel.vue | 上下文改版 | “额外 Prompt”更名“其他上下文信息”；文档支持文本/md/PDF/链接四来源 |
+| api/project.js | 新增 API 封装 | `uploadContextDoc` / `fetchContextDocUrl` |
+| views/TestCaseList.vue | 操作列入口 | 新增用例级“执行历史”按钮 |
+| views/ExecutionHistory.vue | 按用例过滤 | `testCaseId` 参数 + 提示条 + 查看全部 |
+| components/TestCaseCard.vue | 执行记录弹窗 | 仅展示该用例最近执行记录 |
+
+### MCP 服务变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| playwright-mcp-server/index.js | 新增工具 | `browser_scroll` 上下滚动当前页面 |
+
+### 验证结果
+
+- `mvn clean compile`：BUILD SUCCESS（144 源文件）
+- `npm run build`：成功（13.74s）
+- `node --check playwright-mcp-server/index.js`：通过
+
+---
+
 ## v5.9 — 项目上下文与操作体验优化
 **日期**: 2026-08-16
 **基线**: v5.8 / vP5

@@ -455,7 +455,7 @@
           </template>
         </el-table-column>
         <!-- 操作列：单条执行 + 手动标记状态 -->
-        <el-table-column label="操作" width="110" fixed="right">
+        <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
             <div v-if="!row.isModule && canOperate" class="row-actions">
               <el-tooltip content="执行" placement="top">
@@ -473,6 +473,9 @@
                     </el-dropdown-menu>
                   </template>
                 </el-dropdown>
+              </el-tooltip>
+              <el-tooltip content="执行历史" placement="top">
+                <el-button link :icon="Clock" @click.stop="goTestCaseExecutions(row)" />
               </el-tooltip>
             </div>
           </template>
@@ -1712,6 +1715,14 @@ function clearCoverageFilter() {
 // v3.11: 跳转执行历史
 function goExecutions() {
   router.push(`/projects/${projectId}/executions`)
+}
+
+// v5.10: 单条用例执行历史
+function goTestCaseExecutions(row) {
+  router.push({
+    path: `/projects/${projectId}/executions`,
+    query: { testCaseId: row.id, testCaseTitle: row.title || '' }
+  })
 }
 
 const versionDrawerVisible = ref(false)

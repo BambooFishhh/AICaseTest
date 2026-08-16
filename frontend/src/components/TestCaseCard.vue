@@ -657,6 +657,9 @@
           <el-button v-if="editable" type="primary" :icon="EditPen" @click="enterEditMode">
             编辑
           </el-button>
+          <el-button v-if="testCase && testCase.id" text :icon="Clock" @click="openExecutions">
+            执行记录
+          </el-button>
           <el-button type="success" :icon="VideoPlay" @click="openExecuteDialog">执行</el-button>
           <el-button type="danger" plain :icon="Delete" @click="handleDelete">删除</el-button>
         </div>
@@ -709,6 +712,39 @@
       </el-button>
     </template>
   </el-dialog>
+
+  <!-- v5.10: 单条用例执行记录 -->
+  <el-dialog v-model="executionsVisible" title="执行记录" width="780px" append-to-body>
+    <el-table
+      v-loading="loadingExecutions"
+      :data="caseExecutions"
+      empty-text="该用例暂无执行记录"
+      @row-click="goExecution"
+    >
+      <el-table-column label="状态" width="110">
+        <template #default="{ row }">
+          <el-tag :type="executionStatusType(row.status)" size="small" effect="light">
+            {{ executionStatusLabel(row.status) }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="模式" width="100">
+        <template #default="{ row }">{{ row.mode === 'agent' ? 'Agent' : '程序化' }}</template>
+      </el-table-column>
+      <el-table-column label="耗时" width="100">
+        <template #default="{ row }">{{ execDuration(row) }}</template>
+      </el-table-column>
+      <el-table-column label="开始时间" width="180">
+        <template #default="{ row }">{{ formatExecTime(row.startTime) }}</template>
+      </el-table-column>
+      <el-table-column label="摘要" min-width="200" show-overflow-tooltip prop="summary" />
+      <el-table-column label="操作" width="100" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="primary" @click.stop="goExecution(row)">查看详情</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+  </el-dialog>
 </template>
 
 <script setup>
@@ -729,7 +765,7 @@ import {
   Coin, Share, ArrowLeft, ArrowRight
 } from '@element-plus/icons-vue'
 import StateMachineViewer from './StateMachineViewer.vue'
-import { executeTestCase } from '@/api/execution'
+import { executeTestCase, getExecutions } from '@/api/execution'
 
 const props = defineProps({
   testCase: { type: Object, default: () => ({}) },
@@ -759,6 +795,10 @@ const executeDialogVisible = ref(false)
 const targetUrl = ref('http://localhost:5173')
 const executing = ref(false)
 const executeMode = ref('agent')
+// v5.9: 单条用例执行记录
+const executionsVisible = ref(false)
+const caseExecutions = ref([])
+const loadingExecutions = ref(false)
 
 // 表单数据
 const formData = reactive({
@@ -982,6 +1022,51 @@ const confirmExecute = async () => {
   } finally {
     executing.value = false
   }
+}
+
+async function openExecutions() {
+  if (!props.testCase?.id) return
+  executionsVisible.value = true
+  loadingExecutions.value = true
+  try {
+    const res = await getExecutions(projectId, { page: 1, pageSize: 20, testCaseId: props.testCase.id })
+    caseExecutions.value = res.data?.items || res.data?.executions || res.data?.records || res.data || []
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    loadingExecutions.value = false
+  }
+}
+
+function goExecution(row) {
+  if (row?.id) router.push(`/projects/${projectId}/executions/${row.id}`)
+}
+
+function executionStatusType(status) {
+  return { passed: 'success', failed: 'danger', running: 'warning', pending: 'info', cancelled: 'info' }[status] || 'info'
+}
+
+function executionStatusLabel(status) {
+  return { passed: '通过', failed: '失败', running: '执行中', pending: '排队中', cancelled: '已取消' }[status] || status || '-'
+}
+
+function formatExecTime(time) {
+  if (!time) return '-'
+  const d = new Date(time)
+  if (isNaN(d.getTime())) return '-'
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function execDuration(row) {
+  if (!row?.startTime) return '-'
+  const start = new Date(row.startTime)
+  const end = row.endTime ? new Date(row.endTime) : new Date()
+  const diff = end - start
+  if (isNaN(diff) || diff < 0) return '-'
+  const seconds = Math.floor(diff / 1000)
+  if (seconds < 60) return `${seconds} 秒`
+  return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
 }
 
 // 保存

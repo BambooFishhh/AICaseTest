@@ -111,9 +111,12 @@ public class OrchestratorAgent {
             try {
                 JsonNode settings = objectMapper.readTree(
                         project.getSettings() != null ? project.getSettings() : "{}");
-                String extraPrompt = settings.path("extraPrompt").asText("");
-                if (!extraPrompt.isBlank()) {
-                    prdResult.setExtraPrompt(extraPrompt);
+                String otherContextInfo = settings.path("otherContextInfo").asText("");
+                if (otherContextInfo.isBlank()) {
+                    otherContextInfo = settings.path("extraPrompt").asText("");
+                }
+                if (!otherContextInfo.isBlank()) {
+                    prdResult.setOtherContextInfo(otherContextInfo);
                 }
                 JsonNode docsNode = settings.path("contextDocs");
                 if (docsNode.isArray()) {

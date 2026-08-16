@@ -30,8 +30,10 @@
 | PUT | `/api/projects/{id}/prd` | 更新文本 PRD |
 | POST | `/api/projects/{id}/prd/upload` | 上传 PDF（PDFBox 解析） |
 | POST | `/api/projects/{id}/prd/fetch` | 抓取在线链接 PRD（Jsoup） |
-| GET | `/api/projects/{id}/context` | 获取项目上下文（v5.9：PRD + 额外 Prompt + 上下文文档） |
-| PUT | `/api/projects/{id}/context` | 更新项目上下文（v5.9：额外 Prompt + 上下文文档） |
+| GET | `/api/projects/{id}/context` | 获取项目上下文（v5.10：PRD + 其他上下文信息 + 多来源上下文文档） |
+| PUT | `/api/projects/{id}/context` | 更新项目上下文（v5.10：其他上下文信息 + 上下文文档） |
+| POST | `/api/projects/{id}/context/docs/upload` | 上传解析上下文文档（md/txt/PDF，v5.10） |
+| POST | `/api/projects/{id}/context/docs/fetch` | 抓取在线链接上下文文档（v5.10） |
 | GET | `/api/projects/{id}/execution-cookies` | 获取执行 Cookie（v5.9） |
 | PUT | `/api/projects/{id}/execution-cookies` | 更新执行 Cookie（v5.9） |
 | GET | `/api/projects/{id}/generation-params` | 获取生成参数（v3.4，v3.12 含 defaultTargetUrl） |
@@ -56,7 +58,7 @@
 | PUT | `/api/settings` | 更新设置 |
 | POST | `/api/projects/{pid}/testcases/{caseId}/execute?mode=agent` | 触发用例执行（v2.0，v2.1 加 Agent 模式） |
 | GET | `/api/executions/{eid}` | 查询执行结果（v2.0） |
-| GET | `/api/projects/{pid}/executions` | 执行历史列表（v2.0，v3.11 前端接入执行历史页） |
+| GET | `/api/projects/{pid}/executions` | 执行历史列表（v2.0，v3.11 前端接入执行历史页，v5.10 支持 `testCaseId` 过滤） |
 | GET | `/api/executions/{eid}/steps` | 执行步骤详情（v2.0） |
 | GET | `/api/executions/{eid}/video` | 下载执行录屏视频 WebM（v2.8） |
 | GET | `/api/executions/{eid}/report` | 执行报告 HTML（v2.4，v3.13 默认 inline 预览，`?download=1` 下载） |

@@ -3,7 +3,7 @@
     <div class="prd-head">
       <div class="prd-head-text">
         <h2 class="section-title">PRD 需求文档</h2>
-        <p class="section-desc">主 PRD 必填，可补充 Prompt 与上下文文档</p>
+        <p class="section-desc">主 PRD 必填，可补充其他上下文信息与多篇文档</p>
       </div>
       <div class="prd-head-meta">
         <el-tag v-if="sourceType" size="small" :type="sourceTagType" effect="light">
@@ -120,20 +120,20 @@
       </div>
     </Transition>
 
-    <!-- 额外 Prompt -->
+    <!-- 其他上下文信息 -->
     <div class="context-block">
       <div class="context-head">
-        <span>额外 Prompt</span>
+        <span>其他上下文信息</span>
         <span class="context-hint">可选</span>
       </div>
       <el-input
-        v-model="extraPrompt"
+        v-model="otherContextInfo"
         type="textarea"
         :rows="3"
         placeholder="例如：请重点覆盖支付失败、库存不足等异常场景"
       />
       <div class="pane-actions">
-        <el-button :loading="savingContext" :icon="Check" @click="saveContext">保存额外 Prompt</el-button>
+        <el-button :loading="savingContext" :icon="Check" @click="saveContext">保存上下文信息</el-button>
       </div>
     </div>
 
@@ -147,6 +147,9 @@
         <div v-for="doc in contextDocs" :key="doc.id" class="doc-item">
           <div class="doc-info">
             <div class="doc-title">{{ doc.title || '未命名文档' }}</div>
+            <el-tag v-if="doc.sourceType" size="small" effect="plain" class="doc-source">
+              {{ docSourceText(doc.sourceType) }}
+            </el-tag>
             <div class="doc-preview">{{ doc.content }}</div>
           </div>
           <div class="doc-actions">
@@ -168,14 +171,71 @@
     <el-dialog
       v-model="docDialogVisible"
       :title="docForm.id ? '编辑上下文文档' : '新增上下文文档'"
-      width="640px"
+      width="700px"
     >
       <el-form label-width="70px">
         <el-form-item label="标题">
           <el-input v-model="docForm.title" placeholder="如：接口文档 / 业务说明" />
         </el-form-item>
-        <el-form-item label="内容">
-          <el-input v-model="docForm.content" type="textarea" :rows="10" placeholder="粘贴文档内容" />
+        <el-form-item label="来源">
+          <el-radio-group v-model="docActiveTab" size="default">
+            <el-radio-button value="text">文本 / Markdown</el-radio-button>
+            <el-radio-button value="md">md / txt 上传</el-radio-button>
+            <el-radio-button value="pdf">PDF 上传</el-radio-button>
+            <el-radio-button value="link">在线链接</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-show="docActiveTab === 'text'" label="内容">
+          <el-input v-model="docForm.content" type="textarea" :rows="10" placeholder="粘贴文档内容，支持 Markdown" />
+        </el-form-item>
+        <el-form-item v-show="docActiveTab === 'md'" label="上传">
+          <el-upload
+            drag
+            accept=".md,.markdown,.txt"
+            :auto-upload="true"
+            :show-file-list="false"
+            :http-request="handleDocMdUpload"
+            class="prd-uploader"
+          >
+            <div class="uploader-icon">
+              <el-icon :size="28"><UploadFilled /></el-icon>
+            </div>
+            <div class="uploader-text">拖拽 .md / .txt 文件到此处，或 <em>点击上传</em></div>
+            <template #tip>
+              <div class="uploader-tip">支持 Markdown 和纯文本，限 5MB 以内</div>
+            </template>
+          </el-upload>
+        </el-form-item>
+        <el-form-item v-show="docActiveTab === 'pdf'" label="上传">
+          <el-upload
+            drag
+            accept=".pdf"
+            :auto-upload="true"
+            :show-file-list="false"
+            :http-request="handleDocPdfUpload"
+            class="prd-uploader"
+          >
+            <div class="uploader-icon">
+              <el-icon :size="28"><UploadFilled /></el-icon>
+            </div>
+            <div class="uploader-text">拖拽 PDF 到此处，或 <em>点击上传</em></div>
+            <template #tip>
+              <div class="uploader-tip">仅支持文本型 PDF；扫描件需先 OCR 转文本</div>
+            </template>
+          </el-upload>
+        </el-form-item>
+        <el-form-item v-show="docActiveTab === 'link'" label="链接">
+          <el-input v-model="docLinkUrl" placeholder="https://example.com/doc.md" clearable>
+            <template #prepend>
+              <span class="url-prefix">URL</span>
+            </template>
+          </el-input>
+          <div class="pane-actions">
+            <el-button :loading="docFetching" :icon="Download" @click="fetchDocLink">
+              抓取内容
+            </el-button>
+          </div>
+          <el-alert v-if="docLinkError" :title="docLinkError" type="error" :closable="false" show-icon />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -199,7 +259,8 @@ import {
   UploadFilled, Check, View, Download, Document, MagicStick, EditPen, Plus, Delete
 } from '@element-plus/icons-vue'
 import {
-  getProjectContext, updatePrd, uploadPrdPdf, fetchPrdUrl, updateProjectContext
+  getProjectContext, updatePrd, uploadPrdPdf, fetchPrdUrl, updateProjectContext,
+  uploadContextDoc, fetchContextDocUrl
 } from '@/api/project'
 import samplePrd from '@/assets/samples/order-prd.md?raw'
 import { marked } from 'marked'
@@ -221,12 +282,16 @@ const textForm = ref({ content: '' })
 const linkForm = ref({ url: '' })
 const linkError = ref('')
 
-// v5.9: 额外 Prompt 与上下文文档
-const extraPrompt = ref('')
+// v5.9/v5.10: 其他上下文信息与上下文文档
+const otherContextInfo = ref('')
 const contextDocs = ref([])
 const savingContext = ref(false)
 const docDialogVisible = ref(false)
-const docForm = ref({ id: '', title: '', content: '' })
+const docForm = ref({ id: '', title: '', content: '', sourceType: 'text', sourceRef: '' })
+const docActiveTab = ref('text')
+const docLinkUrl = ref('')
+const docLinkError = ref('')
+const docFetching = ref(false)
 
 const prdPreview = computed(() => {
   if (!prdContent.value) return ''
@@ -254,11 +319,13 @@ async function loadPrd() {
     sourceType.value = res.data?.prdSourceType || ''
     sourceRef.value = res.data?.prdSourceRef || ''
     textForm.value.content = prdContent.value
-    extraPrompt.value = res.data?.extraPrompt || ''
+    otherContextInfo.value = res.data?.otherContextInfo ?? res.data?.extraPrompt ?? ''
     contextDocs.value = (res.data?.contextDocs || []).map((doc) => ({
       id: doc.id || `doc-${Math.random().toString(36).slice(2, 8)}`,
       title: doc.title || '',
-      content: doc.content || ''
+      content: doc.content || '',
+      sourceType: doc.sourceType || 'text',
+      sourceRef: doc.sourceRef || ''
     }))
     editorVisible.value = false
     if (sourceType.value === 'md') activeTab.value = 'md'
@@ -363,8 +430,10 @@ async function persistContext(showMessage) {
   savingContext.value = true
   try {
     await updateProjectContext(props.projectId, {
-      extraPrompt: extraPrompt.value,
-      contextDocs: contextDocs.value.map(({ id, title, content }) => ({ id, title, content }))
+      otherContextInfo: otherContextInfo.value,
+      contextDocs: contextDocs.value.map(({ id, title, content, sourceType, sourceRef }) => ({
+        id, title, content, sourceType, sourceRef
+      }))
     })
     if (showMessage) ElMessage.success('项目上下文已保存')
   } finally {
@@ -377,7 +446,12 @@ async function saveContext() {
 }
 
 function openDocDialog(doc) {
-  docForm.value = doc ? { ...doc } : { id: '', title: '', content: '' }
+  docForm.value = doc
+    ? { ...doc }
+    : { id: '', title: '', content: '', sourceType: 'text', sourceRef: '' }
+  docActiveTab.value = ['md', 'pdf', 'link'].includes(doc?.sourceType) ? doc.sourceType : 'text'
+  docLinkUrl.value = doc?.sourceType === 'link' ? (doc.sourceRef || '') : ''
+  docLinkError.value = ''
   docDialogVisible.value = true
 }
 
@@ -386,15 +460,18 @@ async function saveDoc() {
     ElMessage.warning('请填写文档标题')
     return
   }
+  const docPayload = {
+    id: docForm.value.id || `doc-${Date.now()}`,
+    title: docForm.value.title.trim(),
+    content: docForm.value.content,
+    sourceType: docForm.value.sourceType || docActiveTab.value,
+    sourceRef: docForm.value.sourceRef || (docActiveTab.value === 'link' ? docLinkUrl.value : '')
+  }
   if (docForm.value.id) {
     const idx = contextDocs.value.findIndex((d) => d.id === docForm.value.id)
-    if (idx >= 0) contextDocs.value[idx] = { ...docForm.value }
+    if (idx >= 0) contextDocs.value[idx] = docPayload
   } else {
-    contextDocs.value.push({
-      id: `doc-${Date.now()}`,
-      title: docForm.value.title.trim(),
-      content: docForm.value.content
-    })
+    contextDocs.value.push(docPayload)
   }
   docDialogVisible.value = false
   await persistContext(false)
@@ -405,6 +482,80 @@ async function removeDoc(id) {
   contextDocs.value = contextDocs.value.filter((d) => d.id !== id)
   await persistContext(false)
   ElMessage.success('上下文文档已删除')
+}
+
+async function handleDocMdUpload(option) {
+  const file = option.file
+  if (file.size > 5 * 1024 * 1024) {
+    ElMessage.warning('文件过大，请控制在 5MB 以内')
+    option.onError(new Error('文件过大'))
+    return
+  }
+  const reader = new FileReader()
+  reader.onload = () => {
+    try {
+      docForm.value.content = reader.result
+      docForm.value.sourceType = 'md'
+      docForm.value.sourceRef = file.name
+      if (!docForm.value.title) {
+        docForm.value.title = file.name.replace(/\.(md|markdown|txt)$/i, '')
+      }
+      ElMessage.success(`${file.name} 已读取`)
+      option.onSuccess(reader.result)
+    } catch (e) {
+      option.onError(e)
+    }
+  }
+  reader.onerror = () => {
+    ElMessage.error('文件读取失败')
+    option.onError(new Error('文件读取失败'))
+  }
+  reader.readAsText(file, 'UTF-8')
+}
+
+async function handleDocPdfUpload(option) {
+  try {
+    const res = await uploadContextDoc(props.projectId, option.file)
+    const doc = res.data || {}
+    docForm.value.content = doc.content || ''
+    docForm.value.sourceType = 'pdf'
+    docForm.value.sourceRef = doc.sourceRef || option.file.name
+    if (!docForm.value.title) {
+      docForm.value.title = doc.title || option.file.name
+    }
+    ElMessage.success('PDF 解析成功')
+    option.onSuccess(res)
+  } catch (e) {
+    option.onError(e)
+  }
+}
+
+async function fetchDocLink() {
+  docLinkError.value = ''
+  if (!docLinkUrl.value) {
+    docLinkError.value = '请输入 URL'
+    return
+  }
+  docFetching.value = true
+  try {
+    const res = await fetchContextDocUrl(props.projectId, docLinkUrl.value)
+    const doc = res.data || {}
+    docForm.value.content = doc.content || ''
+    docForm.value.sourceType = 'link'
+    docForm.value.sourceRef = doc.sourceRef || docLinkUrl.value
+    if (!docForm.value.title) {
+      docForm.value.title = doc.title || docLinkUrl.value
+    }
+    ElMessage.success('链接内容已抓取')
+  } catch (e) {
+    docLinkError.value = e.message || '抓取失败（可能是 SPA 或需认证页面）'
+  } finally {
+    docFetching.value = false
+  }
+}
+
+function docSourceText(type) {
+  return { text: '文本', md: 'md/txt', pdf: 'PDF', link: '链接' }[type] || '文本'
 }
 </script>
 
@@ -632,9 +783,15 @@ async function removeDoc(id) {
 }
 
 .doc-title {
+  display: inline-flex;
+  align-items: center;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.doc-source {
+  margin-left: 8px;
 }
 
 .doc-preview {

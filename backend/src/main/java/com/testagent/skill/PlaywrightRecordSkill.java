@@ -181,6 +181,22 @@ public class PlaywrightRecordSkill {
         }
     }
 
+    /** 上下滚动页面（找不到元素时由 Agent 兜底使用） */
+    public void scroll(String sessionId, String direction, Integer amount) {
+        try {
+            Map<String, Object> args = new HashMap<>();
+            args.put("direction", direction == null ? "down" : direction);
+            if (amount != null && amount > 0) {
+                args.put("amount", amount);
+            }
+            mcpClientManager.callTool("playwright", "browser_scroll", args);
+            log.info("页面滚动完成: direction={}, amount={}", direction, amount);
+        } catch (Exception e) {
+            log.error("页面滚动失败: direction={}, error={}", direction, e.getMessage());
+            throw new RuntimeException("页面滚动失败", e);
+        }
+    }
+
     /** 注入登录 Cookie，跳过登录界面 */
     public void addCookies(String sessionId, List<Map<String, Object>> cookies) {
         try {

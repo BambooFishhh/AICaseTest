@@ -40,13 +40,27 @@ export function fetchPrdUrl(projectId, url) {
   return request.post(`/projects/${projectId}/prd/fetch`, { url })
 }
 
-// v5.9: 项目上下文（额外 Prompt + 上下文文档）
+// v5.9/v5.10: 项目上下文（其他上下文信息 + 上下文文档）
 export function getProjectContext(projectId) {
   return request.get(`/projects/${projectId}/context`)
 }
 
 export function updateProjectContext(projectId, payload) {
   return request.put(`/projects/${projectId}/context`, payload)
+}
+
+// v5.10: 上下文文档解析（md/txt/PDF，返回文档对象供保存）
+export function uploadContextDoc(projectId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  return request.post(`/projects/${projectId}/context/docs/upload`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
+// v5.10: 上下文文档在线链接抓取
+export function fetchContextDocUrl(projectId, url) {
+  return request.post(`/projects/${projectId}/context/docs/fetch`, { url })
 }
 
 // v5.9: 执行 Cookie 读写

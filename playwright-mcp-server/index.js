@@ -147,6 +147,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'browser_scroll',
+      description: '上下滚动当前页面。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          direction: { type: 'string', enum: ['down', 'up', 'top', 'bottom'] },
+          amount: { type: 'integer', description: '滚动像素，默认 600' },
+        },
+        required: ['direction'],
+      },
+    },
+    {
       name: 'browser_add_cookies',
       description: '向浏览器上下文注入登录 Cookie。',
       inputSchema: {
@@ -259,6 +271,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await page.keyboard.press(args.key);
         await page.waitForTimeout(800);
         return { content: [{ type: 'text', text: `pressed ${args.key}` }] };
+      }
+
+      case 'browser_scroll': {
+        const amount = args.amount || 600;
+        if (args.direction === 'down') {
+          await page.mouse.wheel(0, amount);
+        } else if (args.direction === 'up') {
+          await page.mouse.wheel(0, -amount);
+        } else if (args.direction === 'top') {
+          await page.evaluate(() => window.scrollTo(0, 0));
+        } else if (args.direction === 'bottom') {
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        }
+        await page.waitForTimeout(600);
+        return { content: [{ type: 'text', text: `scrolled ${args.direction}` }] };
       }
 
       case 'browser_add_cookies': {

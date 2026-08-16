@@ -38,9 +38,11 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -331,11 +333,16 @@ public class ProjectService {
         projectAccessService.assertViewAccess(projectId);
         Project p = projectRepository.findById(projectId)
                 .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        String otherContextInfo = readSettingsField(p.getSettings(), "otherContextInfo");
+        if (otherContextInfo.isBlank()) {
+            otherContextInfo = readSettingsField(p.getSettings(), "extraPrompt");
+        }
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("prdContent", p.getPrdContent());
         r.put("prdSourceType", p.getPrdSourceType());
         r.put("prdSourceRef", p.getPrdSourceRef());
-        r.put("extraPrompt", readSettingsField(p.getSettings(), "extraPrompt"));
+        r.put("otherContextInfo", otherContextInfo);
+        r.put("extraPrompt", otherContextInfo); // 兼容旧客户端
         r.put("contextDocs", parseSettingsArray(p.getSettings(), "contextDocs"));
         return r;
     }
@@ -348,9 +355,12 @@ public class ProjectService {
         try {
             ObjectNode settings = (ObjectNode) objectMapper.readTree(
                     p.getSettings() != null ? p.getSettings() : "{}");
-            String extraPrompt = payload == null ? null : (String) payload.get("extraPrompt");
-            if (extraPrompt != null) {
-                settings.put("extraPrompt", extraPrompt);
+            Object otherRaw = payload == null ? null : payload.get("otherContextInfo");
+            if (!(otherRaw instanceof String) && payload != null) {
+                otherRaw = payload.get("extraPrompt");
+            }
+            if (otherRaw instanceof String otherContextInfo) {
+                settings.put("otherContextInfo", otherContextInfo);
             }
             Object contextDocs = payload == null ? null : payload.get("contextDocs");
             if (contextDocs != null) {
@@ -359,12 +369,77 @@ public class ProjectService {
             p.setSettings(objectMapper.writeValueAsString(settings));
             projectRepository.save(p);
             Map<String, Object> r = new LinkedHashMap<>();
-            r.put("extraPrompt", extraPrompt == null ? readSettingsField(p.getSettings(), "extraPrompt") : extraPrompt);
+            String saved = readSettingsField(p.getSettings(), "otherContextInfo");
+            if (saved.isBlank()) {
+                saved = readSettingsField(p.getSettings(), "extraPrompt");
+            }
+            r.put("otherContextInfo", saved);
+            r.put("extraPrompt", saved);
             r.put("contextDocs", parseSettingsArray(p.getSettings(), "contextDocs"));
             return r;
         } catch (Exception e) {
             throw new BusinessException(50012, "保存项目上下文失败: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    // v5.10: 上下文文档解析（md/txt/PDF），不直接落库，由前端随整体上下文保存
+    public Map<String, Object> parseContextDoc(String projectId, MultipartFile file) {
+        projectAccessService.assertOperateAccess(projectId);
+        uploadGuard.assertSize(file, "上下文文档");
+        String name = file.getOriginalFilename() == null ? "未命名文档" : file.getOriginalFilename();
+        String lower = name.toLowerCase(Locale.ROOT);
+        String content;
+        String sourceType;
+        try {
+            if (lower.endsWith(".pdf")) {
+                content = prdAgent.parsePdf(file);
+                sourceType = "pdf";
+            } else {
+                content = new String(file.getBytes(), StandardCharsets.UTF_8);
+                sourceType = "md";
+            }
+        } catch (Exception e) {
+            throw BusinessException.invalidParam("文档解析失败: " + e.getMessage());
+        }
+        if (content == null || content.isBlank()) {
+            throw BusinessException.invalidParam("文档内容为空");
+        }
+        String title = lower.endsWith(".pdf") ? name.substring(0, name.length() - 4) : name;
+        int dot = title.lastIndexOf('.');
+        if (dot > 0) {
+            title = title.substring(0, dot);
+        }
+        Map<String, Object> doc = new LinkedHashMap<>();
+        doc.put("id", "doc-" + UUID.randomUUID());
+        doc.put("title", title);
+        doc.put("content", content);
+        doc.put("sourceType", sourceType);
+        doc.put("sourceRef", name);
+        return doc;
+    }
+
+    // v5.10: 上下文文档在线链接抓取
+    public Map<String, Object> fetchContextDoc(String projectId, String url) {
+        projectAccessService.assertOperateAccess(projectId);
+        if (url == null || url.isBlank()) {
+            throw BusinessException.invalidParam("url 不能为空");
+        }
+        String content;
+        try {
+            content = prdAgent.fetchUrl(url);
+        } catch (Exception e) {
+            throw BusinessException.invalidParam("URL 抓取失败: " + e.getMessage());
+        }
+        if (content == null || content.isBlank()) {
+            throw BusinessException.invalidParam("URL 内容为空（可能是 SPA 或需认证）");
+        }
+        Map<String, Object> doc = new LinkedHashMap<>();
+        doc.put("id", "doc-" + UUID.randomUUID());
+        doc.put("title", url);
+        doc.put("content", content);
+        doc.put("sourceType", "link");
+        doc.put("sourceRef", url);
+        return doc;
     }
 
     private String readSettingsField(String settingsJson, String field) {

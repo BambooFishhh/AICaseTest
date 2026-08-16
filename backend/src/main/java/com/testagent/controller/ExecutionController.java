@@ -65,8 +65,10 @@ public class ExecutionController {
     public ApiResponse<Map<String, Object>> getExecutions(
             @PathVariable String projectId,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int pageSize) {
-        return ApiResponse.success(executionService.getExecutionsByProject(projectId, page, pageSize));
+            @RequestParam(defaultValue = "20") int pageSize,
+            @RequestParam(required = false) String testCaseId) {
+        return ApiResponse.success(
+                executionService.getExecutionsByProject(projectId, page, pageSize, testCaseId));
     }
 
     /** 执行步骤详情 */

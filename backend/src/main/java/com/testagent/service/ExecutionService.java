@@ -783,8 +783,17 @@ public class ExecutionService {
 
     // v5.7: 执行历史分页 + 全量统计/趋势
     public Map<String, Object> getExecutionsByProject(String projectId, int page, int pageSize) {
+        return getExecutionsByProject(projectId, page, pageSize, null);
+    }
+
+    // v5.10: 支持按用例过滤执行历史
+    public Map<String, Object> getExecutionsByProject(String projectId, int page, int pageSize, String testCaseId) {
         projectAccessService.assertViewAccess(projectId);
-        List<ExecutionRecord> all = executionRecordRepository.findByProjectIdOrderByStartTimeDesc(projectId);
+        List<ExecutionRecord> all = new ArrayList<>(
+                executionRecordRepository.findByProjectIdOrderByStartTimeDesc(projectId));
+        if (testCaseId != null && !testCaseId.isBlank()) {
+            all.removeIf(r -> !testCaseId.equals(r.getTestCaseId()));
+        }
         int safePage = Math.max(1, page);
         int safeSize = Math.min(Math.max(1, pageSize), 200);
         int from = (safePage - 1) * safeSize;
