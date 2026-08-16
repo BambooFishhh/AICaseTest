@@ -390,6 +390,7 @@ public class ExecutionService {
                         ExecutionStep step = executionAgent.executeStep(sessionId, stepNode, testCaseContext, i + 1, executionId);
                         steps.add(step);
                         executionStepRepository.save(step);
+                        pauseForRecording();
                         switch (step.getResult()) {
                             case "passed" -> passed++;
                             case "failed" -> failed++;
@@ -595,6 +596,7 @@ public class ExecutionService {
                         // 截图（操作前）
                         String screenshotBefore = playwrightSkill.takeScreenshot(sessionId);
                         stepBuilder.screenshotBefore(screenshotBefore);
+                        int stepClickX = 0, stepClickY = 0;
 
                         switch (type) {
                             case "ui_action":
@@ -602,7 +604,11 @@ public class ExecutionService {
                                 if (selectorNode.has("type") && selectorNode.has("value")) {
                                     String selType = selectorNode.path("type").asText();
                                     String selValue = selectorNode.path("value").asText();
-                                    playwrightSkill.domClick(sessionId, selType, selValue);
+                                    int[] clickPos = playwrightSkill.domClick(sessionId, selType, selValue);
+                                    if (clickPos != null) {
+                                        stepClickX = clickPos[0];
+                                        stepClickY = clickPos[1];
+                                    }
                                     stepBuilder.strategy("dom");
                                     stepBuilder.result("passed");
                                     passed++;
@@ -618,11 +624,18 @@ public class ExecutionService {
                                 JsonNode inputSelector = node.path("uiSelector");
                                 String inputValue = node.path("inputValue").asText(node.path("value").asText(""));
                                 if (inputSelector.has("type") && inputSelector.has("value") && !inputValue.isBlank()) {
-                                    playwrightSkill.fillInput(
+                                    int[] inputPos = playwrightSkill.fillInput(
                                             sessionId,
                                             inputSelector.path("type").asText(),
                                             inputSelector.path("value").asText(),
                                             inputValue);
+                                    if (inputPos != null) {
+                                        stepClickX = inputPos[0];
+                                        stepClickY = inputPos[1];
+                                    }
+                                    if (node.path("enter").asBoolean(false) || node.path("submit").asBoolean(false)) {
+                                        playwrightSkill.pressKey(sessionId, "Enter");
+                                    }
                                     stepBuilder.strategy("dom");
                                     stepBuilder.result("passed");
                                     passed++;
@@ -659,8 +672,8 @@ public class ExecutionService {
                         // 截图（操作后）— v2.5: 带标注版本
                         String screenshotAfter = playwrightSkill.takeScreenshotWithMarker(
                                 sessionId,
-                                node.path("clickX").asInt(0),
-                                node.path("clickY").asInt(0));
+                                stepClickX,
+                                stepClickY);
                         stepBuilder.screenshotAfter(screenshotAfter);
 
                     } catch (Exception e) {
@@ -674,6 +687,7 @@ public class ExecutionService {
                     ExecutionStep step = stepBuilder.build();
                     steps.add(step);
                     executionStepRepository.save(step);
+                    pauseForRecording();
                 }
             }
 
@@ -846,6 +860,15 @@ public class ExecutionService {
             }
         } catch (Exception e) {
             log.warn("Failed to inject cookies for project {}", projectId, e);
+        }
+    }
+
+    // 录屏节奏：步骤之间留出停顿，避免回放看起来一闪而过
+    private void pauseForRecording() {
+        try {
+            Thread.sleep(800);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

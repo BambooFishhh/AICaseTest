@@ -30,6 +30,10 @@
 | PUT | `/api/projects/{id}/prd` | 更新文本 PRD |
 | POST | `/api/projects/{id}/prd/upload` | 上传 PDF（PDFBox 解析） |
 | POST | `/api/projects/{id}/prd/fetch` | 抓取在线链接 PRD（Jsoup） |
+| GET | `/api/projects/{id}/context` | 获取项目上下文（v5.9：PRD + 额外 Prompt + 上下文文档） |
+| PUT | `/api/projects/{id}/context` | 更新项目上下文（v5.9：额外 Prompt + 上下文文档） |
+| GET | `/api/projects/{id}/execution-cookies` | 获取执行 Cookie（v5.9） |
+| PUT | `/api/projects/{id}/execution-cookies` | 更新执行 Cookie（v5.9） |
 | GET | `/api/projects/{id}/generation-params` | 获取生成参数（v3.4，v3.12 含 defaultTargetUrl） |
 | PUT | `/api/projects/{id}/generation-params` | 更新生成参数（v3.4，v3.12 含 defaultTargetUrl） |
 | GET | `/api/projects/{id}/testcases` | 用例列表（分页+筛选+覆盖率，v3.12 支持 executionStatus 筛选） |

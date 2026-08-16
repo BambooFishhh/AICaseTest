@@ -360,16 +360,24 @@ function goBack() {
   router.push(`/projects/${projectId}`)
 }
 
+function handlePageShow(e) {
+  if (e.persisted) {
+    loadExecutions()
+  }
+}
+
 onMounted(async () => {
   await loadExecutions()
   if (trendData.value.length > 0) {
     nextTick(renderTrendChart)
   }
   window.addEventListener('resize', handleResize)
+  window.addEventListener('pageshow', handlePageShow)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
+  window.removeEventListener('pageshow', handlePageShow)
   if (trendChart) {
     trendChart.dispose()
     trendChart = null

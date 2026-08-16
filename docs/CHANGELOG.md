@@ -4,6 +4,42 @@
 
 ---
 
+## v5.9 — 项目上下文与操作体验优化
+**日期**: 2026-08-16
+**基线**: v5.8 / vP5
+**主题**: 创建后 Cookie 可编辑、项目详情操作区上移、PRD 面板改版并支持额外 Prompt 与多上下文文档
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| controller/ProjectController.java | 新增 4 个接口 | execution-cookies 读写 + context 聚合读写 |
+| service/ProjectService.java | 新增 Cookie/Context 服务方法 | 存于 Project.settings JSON，兼容旧数据 |
+| agent/OrchestratorAgent.java | 读取额外上下文 | extraPrompt/contextDocs 注入 PrdAnalysisResult |
+| agent/TestGeneratorAgent.java | LLM context 扩展 | 生成时携带额外 Prompt 与上下文文档 |
+| dto/PrdAnalysisResult.java | 新增字段 | extraPrompt/contextDocs |
+| service/ExecutionService.java | 执行链路增强 | 步骤间停顿、点击坐标、MCP 失败不再吞错 |
+| skill/PlaywrightRecordSkill.java | 点击/输入坐标回传 | 截图标注与录屏标记一致 |
+| agent/ExecutionAgent.java | 输入后回车支持 | 配合搜索等表单流程 |
+| mcp/McpConnection.java | MCP isError 抛错 | 避免浏览器操作失败被误判通过 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| views/ProjectDetail.vue | 操作区上移 + Cookie 配置弹窗 | 高频操作不再需要滚到底部 |
+| components/PrdPanel.vue | 紧凑改版 | 有 PRD 默认摘要；新增额外 Prompt 与上下文文档 |
+| api/project.js | 新增 API 封装 | context / execution-cookies |
+| views/ExecutionResult.vue | 结果页布局优化 | 录屏上移到步骤前、快照合并进概览 |
+| views/TestCaseList.vue | 执行状态本地刷新 | 返回列表自动刷新状态 |
+
+### 验证结果
+
+- `mvn compile`：BUILD SUCCESS
+- `npm run build`：成功
+
+---
+
 ## 修复记录 — 安全基线误报
 **日期**: 2026-08-14
 **主题**: 修正 `.env.example` 占位符与 ProductionGuard 默认值误报为密钥

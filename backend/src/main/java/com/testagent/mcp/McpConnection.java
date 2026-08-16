@@ -139,7 +139,13 @@ public class McpConnection {
             throw new RuntimeException("MCP [" + name + "] 错误: " + response.get("error"));
         }
 
-        JsonNode content = response.path("result").path("content");
+        JsonNode result = response.path("result");
+        if (result.path("isError").asBoolean(false)) {
+            String errText = result.path("content").path(0).path("text").asText("MCP 执行失败");
+            throw new RuntimeException("MCP [" + name + "] 执行失败: " + errText);
+        }
+
+        JsonNode content = result.path("content");
         if (content.isArray() && !content.isEmpty()) {
             String text = content.get(0).path("text").asText("");
             log.info("MCP [{}] callTool 返回, 长度={}", name, text.length());
@@ -209,7 +215,12 @@ public class McpConnection {
                 if (msg.has("error")) {
                     throw new RuntimeException("MCP [" + name + "] 错误: " + msg.get("error"));
                 }
-                JsonNode content = msg.path("result").path("content");
+                JsonNode result = msg.path("result");
+                if (result.path("isError").asBoolean(false)) {
+                    String errText = result.path("content").path(0).path("text").asText("MCP 执行失败");
+                    throw new RuntimeException("MCP [" + name + "] 执行失败: " + errText);
+                }
+                JsonNode content = result.path("content");
                 if (content.isArray() && !content.isEmpty()) {
                     String text = content.get(0).path("text").asText("");
                     log.info("MCP [{}] callToolStreaming 完成, id={}, 长度={}", name, id, text.length());

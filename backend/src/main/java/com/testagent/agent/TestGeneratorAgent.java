@@ -765,6 +765,13 @@ public class TestGeneratorAgent {
         // v5.4: RAG 语义检索上下文
         context.put("ragContexts",
                 prdResult.getRagContexts() == null ? List.of() : prdResult.getRagContexts());
+        // v5.9: 用户额外 Prompt 与上下文文档
+        if (prdResult.getExtraPrompt() != null && !prdResult.getExtraPrompt().isBlank()) {
+            context.put("extraPrompt", prdResult.getExtraPrompt());
+        }
+        if (prdResult.getContextDocs() != null && !prdResult.getContextDocs().isEmpty()) {
+            context.put("contextDocs", prdResult.getContextDocs());
+        }
 
         // 代码侧为辅（精简，避免 token 超限）
         List<Map<String, Object>> smList = new ArrayList<>();

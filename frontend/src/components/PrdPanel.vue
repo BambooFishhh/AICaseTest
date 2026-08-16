@@ -3,104 +3,113 @@
     <div class="prd-head">
       <div class="prd-head-text">
         <h2 class="section-title">PRD 需求文档</h2>
-        <p class="section-desc">提供 PRD 作为用例生成的主上下文</p>
+        <p class="section-desc">主 PRD 必填，可补充 Prompt 与上下文文档</p>
       </div>
       <div class="prd-head-meta">
         <el-tag v-if="sourceType" size="small" :type="sourceTagType" effect="light">
           {{ sourceText }}
         </el-tag>
         <span v-if="prdContent" class="word-count">{{ prdContent.length }} 字</span>
-      </div>
-    </div>
-
-    <!-- 来源切换 -->
-    <el-radio-group v-model="activeTab" size="default" class="prd-tabs">
-      <el-radio-button value="text">文本 / Markdown</el-radio-button>
-      <el-radio-button value="md">md / txt 上传</el-radio-button>
-      <el-radio-button value="pdf">PDF 上传</el-radio-button>
-      <el-radio-button value="link">在线链接</el-radio-button>
-    </el-radio-group>
-
-    <!-- 文本编辑 -->
-    <div v-show="activeTab === 'text'" class="prd-pane">
-      <el-input
-        v-model="textForm.content"
-        type="textarea"
-        :autosize="{ minRows: 10, maxRows: 20 }"
-        placeholder="粘贴或编辑 PRD 内容（支持 Markdown）。生成用例时 PRD 作为主上下文，代码作为辅助上下文。"
-      />
-      <div class="pane-actions">
-        <el-button type="primary" :loading="saving" :icon="Check" @click="saveText">保存 PRD</el-button>
-        <!-- v3.14: 载入示例 PRD -->
-        <el-button :icon="MagicStick" @click="useSample">使用示例</el-button>
-        <el-button v-if="prdContent" :icon="View" @click="previewVisible = true">预览完整</el-button>
-      </div>
-    </div>
-
-    <!-- md/txt 上传 -->
-    <div v-show="activeTab === 'md'" class="prd-pane">
-      <el-upload
-        drag
-        accept=".md,.markdown,.txt"
-        :auto-upload="true"
-        :show-file-list="false"
-        :http-request="handleMdUpload"
-        class="prd-uploader"
-      >
-        <div class="uploader-icon">
-          <el-icon :size="32"><UploadFilled /></el-icon>
-        </div>
-        <div class="uploader-text">拖拽 .md / .txt 文件到此处，或<em>点击上传</em></div>
-        <template #tip>
-          <div class="uploader-tip">支持 Markdown 和纯文本文件，限 5MB 以内</div>
-        </template>
-      </el-upload>
-    </div>
-
-    <!-- PDF 上传 -->
-    <div v-show="activeTab === 'pdf'" class="prd-pane">
-      <el-upload
-        drag
-        accept=".pdf"
-        :auto-upload="true"
-        :show-file-list="false"
-        :http-request="handlePdfUpload"
-        class="prd-uploader"
-      >
-        <div class="uploader-icon">
-          <el-icon :size="32"><UploadFilled /></el-icon>
-        </div>
-        <div class="uploader-text">拖拽 PDF 到此处，或<em>点击上传</em></div>
-        <template #tip>
-          <div class="uploader-tip">仅支持文本型 PDF；扫描件需先用 OCR 转文本</div>
-        </template>
-      </el-upload>
-    </div>
-
-    <!-- 在线链接 -->
-    <div v-show="activeTab === 'link'" class="prd-pane">
-      <el-input v-model="linkForm.url" placeholder="https://example.com/prd.md" clearable size="large">
-        <template #prepend>
-          <span class="url-prefix">URL</span>
-        </template>
-      </el-input>
-      <div class="pane-actions">
-        <el-button type="primary" :loading="fetching" :icon="Download" @click="fetchLink">
-          抓取内容
+        <el-button
+          v-if="prdContent && !editorVisible"
+          size="small"
+          :icon="EditPen"
+          @click="editorVisible = true"
+        >
+          编辑 PRD
         </el-button>
+        <el-button v-if="editorVisible" size="small" @click="editorVisible = false">收起</el-button>
       </div>
-      <el-alert
-        v-if="linkError"
-        :title="linkError"
-        type="error"
-        :closable="false"
-        show-icon
-      />
     </div>
 
-    <!-- 当前 PRD 概要 -->
+    <el-alert
+      v-if="!prdContent"
+      title="请先填写主 PRD，用例生成需要主 PRD 作为核心上下文"
+      type="info"
+      :closable="false"
+      show-icon
+      class="prd-empty-alert"
+    />
+
+    <!-- PRD 编辑区：无 PRD 时默认展开，有 PRD 时点击编辑再展开 -->
+    <div v-show="editorVisible || !prdContent" class="prd-editor">
+      <el-radio-group v-model="activeTab" size="default" class="prd-tabs">
+        <el-radio-button value="text">文本 / Markdown</el-radio-button>
+        <el-radio-button value="md">md / txt 上传</el-radio-button>
+        <el-radio-button value="pdf">PDF 上传</el-radio-button>
+        <el-radio-button value="link">在线链接</el-radio-button>
+      </el-radio-group>
+
+      <div v-show="activeTab === 'text'" class="prd-pane">
+        <el-input
+          v-model="textForm.content"
+          type="textarea"
+          :autosize="{ minRows: 4, maxRows: 10 }"
+          placeholder="粘贴或编辑 PRD 内容（支持 Markdown）。生成用例时 PRD 作为主上下文，代码作为辅助上下文。"
+        />
+        <div class="pane-actions">
+          <el-button type="primary" :loading="saving" :icon="Check" @click="saveText">保存 PRD</el-button>
+          <el-button :icon="MagicStick" @click="useSample">使用示例</el-button>
+          <el-button v-if="prdContent" :icon="View" @click="previewVisible = true">预览完整</el-button>
+        </div>
+      </div>
+
+      <div v-show="activeTab === 'md'" class="prd-pane">
+        <el-upload
+          drag
+          accept=".md,.markdown,.txt"
+          :auto-upload="true"
+          :show-file-list="false"
+          :http-request="handleMdUpload"
+          class="prd-uploader"
+        >
+          <div class="uploader-icon">
+            <el-icon :size="32"><UploadFilled /></el-icon>
+          </div>
+          <div class="uploader-text">拖拽 .md / .txt 文件到此处，或<em>点击上传</em></div>
+          <template #tip>
+            <div class="uploader-tip">支持 Markdown 和纯文本文件，限 5MB 以内</div>
+          </template>
+        </el-upload>
+      </div>
+
+      <div v-show="activeTab === 'pdf'" class="prd-pane">
+        <el-upload
+          drag
+          accept=".pdf"
+          :auto-upload="true"
+          :show-file-list="false"
+          :http-request="handlePdfUpload"
+          class="prd-uploader"
+        >
+          <div class="uploader-icon">
+            <el-icon :size="32"><UploadFilled /></el-icon>
+          </div>
+          <div class="uploader-text">拖拽 PDF 到此处，或<em>点击上传</em></div>
+          <template #tip>
+            <div class="uploader-tip">仅支持文本型 PDF；扫描件需先用 OCR 转文本</div>
+          </template>
+        </el-upload>
+      </div>
+
+      <div v-show="activeTab === 'link'" class="prd-pane">
+        <el-input v-model="linkForm.url" placeholder="https://example.com/prd.md" clearable size="large">
+          <template #prepend>
+            <span class="url-prefix">URL</span>
+          </template>
+        </el-input>
+        <div class="pane-actions">
+          <el-button type="primary" :loading="fetching" :icon="Download" @click="fetchLink">
+            抓取内容
+          </el-button>
+        </div>
+        <el-alert v-if="linkError" :title="linkError" type="error" :closable="false" show-icon />
+      </div>
+    </div>
+
+    <!-- 当前 PRD 摘要 -->
     <Transition name="slide-down">
-      <div v-if="prdContent" class="prd-summary">
+      <div v-if="prdContent && !editorVisible" class="prd-summary">
         <div class="summary-head">
           <span class="summary-label">
             <el-icon :size="14"><Document /></el-icon>当前 PRD
@@ -111,9 +120,68 @@
       </div>
     </Transition>
 
+    <!-- 额外 Prompt -->
+    <div class="context-block">
+      <div class="context-head">
+        <span>额外 Prompt</span>
+        <span class="context-hint">可选</span>
+      </div>
+      <el-input
+        v-model="extraPrompt"
+        type="textarea"
+        :rows="3"
+        placeholder="例如：请重点覆盖支付失败、库存不足等异常场景"
+      />
+      <div class="pane-actions">
+        <el-button :loading="savingContext" :icon="Check" @click="saveContext">保存额外 Prompt</el-button>
+      </div>
+    </div>
+
+    <!-- 上下文文档 -->
+    <div class="context-block">
+      <div class="context-head">
+        <span>上下文文档</span>
+        <span class="context-hint">可选，可多篇</span>
+      </div>
+      <div v-if="contextDocs.length" class="doc-list">
+        <div v-for="doc in contextDocs" :key="doc.id" class="doc-item">
+          <div class="doc-info">
+            <div class="doc-title">{{ doc.title || '未命名文档' }}</div>
+            <div class="doc-preview">{{ doc.content }}</div>
+          </div>
+          <div class="doc-actions">
+            <el-button link :icon="EditPen" @click="openDocDialog(doc)">编辑</el-button>
+            <el-button link type="danger" :icon="Delete" @click="removeDoc(doc.id)">删除</el-button>
+          </div>
+        </div>
+      </div>
+      <el-empty v-else description="暂无上下文文档" :image-size="50" />
+      <el-button size="small" :icon="Plus" @click="openDocDialog()">新增文档</el-button>
+    </div>
+
     <!-- 预览对话框 -->
     <el-dialog v-model="previewVisible" title="PRD 预览" width="760px">
       <div class="prd-full-text md-body" v-html="renderedPrd"></div>
+    </el-dialog>
+
+    <!-- 上下文文档编辑对话框 -->
+    <el-dialog
+      v-model="docDialogVisible"
+      :title="docForm.id ? '编辑上下文文档' : '新增上下文文档'"
+      width="640px"
+    >
+      <el-form label-width="70px">
+        <el-form-item label="标题">
+          <el-input v-model="docForm.title" placeholder="如：接口文档 / 业务说明" />
+        </el-form-item>
+        <el-form-item label="内容">
+          <el-input v-model="docForm.content" type="textarea" :rows="10" placeholder="粘贴文档内容" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="docDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveDoc">保存</el-button>
+      </template>
     </el-dialog>
   </section>
 </template>
@@ -121,22 +189,19 @@
 <script setup>
 /**
  * PRD 面板组件
- * 支持四种来源输入 PRD：
- * - 文本/Markdown：直接编辑
- * - md/txt 上传：浏览器端读取后保存
- * - PDF 上传：后端解析
- * - 在线链接：后端抓取
- * 显示当前 PRD 概要，支持预览完整内容。
+ * v5.9 改版为紧凑模式：
+ * - 有 PRD 时默认只展示摘要，点击"编辑 PRD"再展开编辑器
+ * - 新增额外 Prompt 与多篇上下文文档
  */
 import { ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  UploadFilled, Check, View, Download, Document, MagicStick
+  UploadFilled, Check, View, Download, Document, MagicStick, EditPen, Plus, Delete
 } from '@element-plus/icons-vue'
-import { getPrd, updatePrd, uploadPrdPdf, fetchPrdUrl } from '@/api/project'
-// v3.14: 内置示例 PRD（快速体验 PRD 驱动生成）
+import {
+  getProjectContext, updatePrd, uploadPrdPdf, fetchPrdUrl, updateProjectContext
+} from '@/api/project'
 import samplePrd from '@/assets/samples/order-prd.md?raw'
-// v4.5: Markdown 渲染（marked + DOMPurify 防 XSS）
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
@@ -146,6 +211,7 @@ const activeTab = ref('text')
 const saving = ref(false)
 const fetching = ref(false)
 const previewVisible = ref(false)
+const editorVisible = ref(false)
 
 const prdContent = ref('')
 const sourceType = ref('')
@@ -155,9 +221,15 @@ const textForm = ref({ content: '' })
 const linkForm = ref({ url: '' })
 const linkError = ref('')
 
+// v5.9: 额外 Prompt 与上下文文档
+const extraPrompt = ref('')
+const contextDocs = ref([])
+const savingContext = ref(false)
+const docDialogVisible = ref(false)
+const docForm = ref({ id: '', title: '', content: '' })
+
 const prdPreview = computed(() => {
   if (!prdContent.value) return ''
-  // 渲染完整 Markdown，视觉上用 max-height 截断，保证 HTML 完整不破版
   return renderedPrd.value
 })
 
@@ -177,12 +249,18 @@ watch(() => props.projectId, (id) => { if (id) loadPrd() }, { immediate: true })
 
 async function loadPrd() {
   try {
-    const res = await getPrd(props.projectId)
+    const res = await getProjectContext(props.projectId)
     prdContent.value = res.data?.prdContent || ''
     sourceType.value = res.data?.prdSourceType || ''
     sourceRef.value = res.data?.prdSourceRef || ''
     textForm.value.content = prdContent.value
-    // 切到已有来源对应的 tab
+    extraPrompt.value = res.data?.extraPrompt || ''
+    contextDocs.value = (res.data?.contextDocs || []).map((doc) => ({
+      id: doc.id || `doc-${Math.random().toString(36).slice(2, 8)}`,
+      title: doc.title || '',
+      content: doc.content || ''
+    }))
+    editorVisible.value = false
     if (sourceType.value === 'md') activeTab.value = 'md'
     else if (sourceType.value === 'pdf') activeTab.value = 'pdf'
     else if (sourceType.value === 'link') {
@@ -203,20 +281,19 @@ async function saveText() {
     prdContent.value = res.data?.prdContent || textForm.value.content
     sourceType.value = 'text'
     sourceRef.value = ''
+    editorVisible.value = false
     ElMessage.success('PRD 已保存')
   } finally {
     saving.value = false
   }
 }
 
-// v3.14: 载入内置示例 PRD 到编辑器（不自动保存，用户确认后保存生效）
 function useSample() {
   textForm.value.content = samplePrd
   activeTab.value = 'text'
   ElMessage.info('已载入示例 PRD（电商订单系统），点击"保存 PRD"后即可生成用例')
 }
 
-// md/txt 上传：浏览器端 FileReader 读取文本，再调用 updatePrd 保存
 async function handleMdUpload(option) {
   const file = option.file
   if (file.size > 5 * 1024 * 1024) {
@@ -233,6 +310,7 @@ async function handleMdUpload(option) {
       sourceType.value = 'md'
       sourceRef.value = file.name
       textForm.value.content = content
+      editorVisible.value = false
       ElMessage.success(`${file.name} 导入成功`)
       option.onSuccess(res)
     } catch (e) {
@@ -252,6 +330,7 @@ async function handlePdfUpload(option) {
     prdContent.value = res.data?.prdContent || ''
     sourceType.value = 'pdf'
     sourceRef.value = res.data?.prdSourceRef || option.file.name
+    editorVisible.value = false
     ElMessage.success('PDF 解析成功')
     option.onSuccess(res)
   } catch (e) {
@@ -271,12 +350,61 @@ async function fetchLink() {
     prdContent.value = res.data?.prdContent || ''
     sourceType.value = 'link'
     sourceRef.value = linkForm.value.url
+    editorVisible.value = false
     ElMessage.success('链接内容已抓取')
   } catch (e) {
     linkError.value = e.message || '抓取失败（可能是 SPA 或需认证页面）'
   } finally {
     fetching.value = false
   }
+}
+
+async function persistContext(showMessage) {
+  savingContext.value = true
+  try {
+    await updateProjectContext(props.projectId, {
+      extraPrompt: extraPrompt.value,
+      contextDocs: contextDocs.value.map(({ id, title, content }) => ({ id, title, content }))
+    })
+    if (showMessage) ElMessage.success('项目上下文已保存')
+  } finally {
+    savingContext.value = false
+  }
+}
+
+async function saveContext() {
+  await persistContext(true)
+}
+
+function openDocDialog(doc) {
+  docForm.value = doc ? { ...doc } : { id: '', title: '', content: '' }
+  docDialogVisible.value = true
+}
+
+async function saveDoc() {
+  if (!docForm.value.title || !docForm.value.title.trim()) {
+    ElMessage.warning('请填写文档标题')
+    return
+  }
+  if (docForm.value.id) {
+    const idx = contextDocs.value.findIndex((d) => d.id === docForm.value.id)
+    if (idx >= 0) contextDocs.value[idx] = { ...docForm.value }
+  } else {
+    contextDocs.value.push({
+      id: `doc-${Date.now()}`,
+      title: docForm.value.title.trim(),
+      content: docForm.value.content
+    })
+  }
+  docDialogVisible.value = false
+  await persistContext(false)
+  ElMessage.success('上下文文档已保存')
+}
+
+async function removeDoc(id) {
+  contextDocs.value = contextDocs.value.filter((d) => d.id !== id)
+  await persistContext(false)
+  ElMessage.success('上下文文档已删除')
 }
 </script>
 
@@ -285,7 +413,7 @@ async function fetchLink() {
   background: var(--bg-surface);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
-  padding: 20px;
+  padding: 16px;
   box-shadow: var(--shadow-xs);
   margin-bottom: var(--space-lg);
 }
@@ -294,7 +422,7 @@ async function fetchLink() {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: var(--space-md);
+  margin-bottom: 12px;
   gap: var(--space-md);
   flex-wrap: wrap;
 }
@@ -332,14 +460,22 @@ async function fetchLink() {
   font-family: 'Consolas', 'Monaco', monospace;
 }
 
+.prd-empty-alert {
+  margin-bottom: 12px;
+}
+
+.prd-editor {
+  margin-bottom: 12px;
+}
+
 .prd-tabs {
-  margin-bottom: var(--space-md);
+  margin-bottom: 12px;
 }
 
 .prd-pane {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: 12px;
 }
 
 .pane-actions {
@@ -348,13 +484,12 @@ async function fetchLink() {
   flex-wrap: wrap;
 }
 
-/* 上传区 */
 .prd-uploader {
   width: 100%;
 
   :deep(.el-upload-dragger) {
     width: 100%;
-    padding: 28px 20px;
+    padding: 20px;
     border: 2px dashed var(--card-border);
     border-radius: var(--radius-lg);
     background: var(--bg-base);
@@ -395,19 +530,19 @@ async function fetchLink() {
   font-weight: 600;
 }
 
-/* PRD 概要 */
 .prd-summary {
   border: 1px solid var(--card-border-light);
   border-radius: var(--radius-md);
   background: #f8fafc;
   overflow: hidden;
+  margin-bottom: 12px;
 }
 
 .summary-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--card-border-light);
   flex-wrap: wrap;
   gap: 8px;
@@ -419,84 +554,107 @@ async function fetchLink() {
   gap: 4px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-secondary);
-
-  .el-icon {
-    color: var(--brand-primary);
-  }
+  color: var(--text-primary);
 }
 
 .summary-ref {
   font-size: 12px;
   color: var(--text-tertiary);
-  font-family: 'Consolas', 'Monaco', monospace;
 }
 
 .summary-preview {
-  padding: 12px 14px;
+  padding: 10px 14px;
+  max-height: 180px;
+  overflow: hidden;
+  position: relative;
+
+  &::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 28px;
+    background: linear-gradient(180deg, transparent, #f8fafc);
+  }
+}
+
+.md-body {
   font-size: 13px;
-  color: var(--text-secondary);
   line-height: 1.7;
-  word-break: break-all;
-  max-height: 140px;
-  overflow-y: auto;
+  color: var(--text-secondary);
+}
+
+.context-block {
+  border: 1px solid var(--card-border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.context-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.context-hint {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+
+.doc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.doc-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+}
+
+.doc-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.doc-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.doc-preview {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doc-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .prd-full-text {
-  max-height: 60vh;
-  overflow: auto;
-  word-break: break-all;
-  font-size: 13px;
-  background: var(--bg-surface);
-  padding: 14px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--card-border-light);
-  font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
-}
-
-/* ===== Markdown 渲染排版 ===== */
-.md-body {
-  line-height: 1.7;
-  color: var(--text-primary);
-
-  h1, h2, h3, h4, h5 {
-    margin: 12px 0 8px;
-    line-height: 1.4;
-    color: var(--text-primary);
-  }
-  h1 { font-size: 20px; }
-  h2 { font-size: 18px; }
-  h3 { font-size: 16px; }
-  p { margin: 6px 0; }
-  ul, ol { padding-left: 20px; margin: 6px 0; }
-  ul { list-style: disc; }
-  ol { list-style: decimal; }
-  li { margin: 2px 0; }
-  code {
-    background: var(--bg-base);
-    padding: 1px 6px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-family: 'Consolas', 'Monaco', monospace;
-  }
-  pre {
-    background: var(--bg-base);
-    padding: 12px;
-    border-radius: 8px;
-    overflow: auto;
-    margin: 8px 0;
-    code { background: transparent; padding: 0; }
-  }
-  table { border-collapse: collapse; margin: 8px 0; width: 100%; }
-  th, td { border: 1px solid var(--card-border); padding: 6px 10px; font-size: 13px; }
-  th { background: var(--bg-base); font-weight: 600; }
-  blockquote {
-    border-left: 3px solid var(--brand-primary-lightest);
-    padding-left: 12px;
-    color: var(--text-secondary);
-    margin: 8px 0;
-  }
-  a { color: var(--brand-primary); }
-  img { max-width: 100%; }
+  max-height: 70vh;
+  overflow-y: auto;
 }
 </style>

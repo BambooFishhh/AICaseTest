@@ -26,6 +26,43 @@ let browser = null;
 let context = null;
 let page = null;
 
+async function clearClickMarker() {
+  if (!page) return
+  await page.evaluate(() => {
+    document.querySelectorAll('[data-agent-marker]').forEach((el) => el.remove())
+  }).catch(() => {})
+}
+
+async function markPoint(x, y) {
+  if (!page) return
+  await page.evaluate(({ x, y }) => {
+    const style = 'position:fixed;pointer-events:none;z-index:999999;background:#ef4444;'
+    const circle = document.createElement('div')
+    circle.setAttribute('data-agent-marker', '1')
+    circle.style.cssText = `${style}left:${x - 24}px;top:${y - 24}px;width:48px;height:48px;border:3px solid #ef4444;border-radius:50%;background:rgba(239,68,68,.12);box-shadow:0 0 0 2px rgba(255,255,255,.85);`
+    const h = document.createElement('div')
+    h.setAttribute('data-agent-marker', '1')
+    h.style.cssText = `${style}left:${x - 40}px;top:${y - 2}px;width:80px;height:4px;`
+    const v = document.createElement('div')
+    v.setAttribute('data-agent-marker', '1')
+    v.style.cssText = `${style}left:${x - 2}px;top:${y - 40}px;width:4px;height:80px;`
+    document.body.appendChild(circle)
+    document.body.appendChild(h)
+    document.body.appendChild(v)
+  }, { x, y })
+}
+
+async function markSelector(selector) {
+  await clearClickMarker()
+  if (!page) return null
+  const box = await page.locator(selector).first().boundingBox().catch(() => null)
+  if (!box) return null
+  const x = Math.round(box.x + box.width / 2)
+  const y = Math.round(box.y + box.height / 2)
+  await markPoint(x, y)
+  return { x, y }
+}
+
 const server = new Server(
   { name: 'aicasetest-playwright-mcp', version: '1.0.0' },
   { capabilities: { tools: {} } }
@@ -99,6 +136,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'browser_key_press',
+      description: '向当前聚焦元素发送键盘按键。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', description: '按键名，例如 Enter' },
+        },
+        required: ['key'],
+      },
+    },
+    {
       name: 'browser_add_cookies',
       description: '向浏览器上下文注入登录 Cookie。',
       inputSchema: {
@@ -164,7 +212,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'browser_navigate': {
+        await clearClickMarker()
         await page.goto(args.url, { waitUntil: 'load', timeout: 30000 });
+        await page.waitForTimeout(1200);
         return { content: [{ type: 'text', text: page.url() }] };
       }
 
@@ -179,18 +229,36 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'browser_visual_click': {
+        await clearClickMarker()
+        await markPoint(args.x, args.y)
+        await page.waitForTimeout(600)
         await page.mouse.click(args.x, args.y);
+        await page.waitForTimeout(1200);
         return { content: [{ type: 'text', text: `clicked (${args.x},${args.y})` }] };
       }
 
       case 'browser_dom_click': {
+        const pos = await markSelector(args.selector)
+        await page.waitForTimeout(600)
         await page.click(args.selector, { timeout: 10000 });
-        return { content: [{ type: 'text', text: `clicked ${args.selector}` }] };
+        await page.waitForTimeout(1200);
+        const clicked = pos || { x: 0, y: 0 };
+        return { content: [{ type: 'text', text: JSON.stringify({ clicked: args.selector, x: clicked.x, y: clicked.y }) }] };
       }
 
       case 'browser_fill': {
+        const fillPos = await markSelector(args.selector)
+        await page.waitForTimeout(600)
         await page.fill(args.selector, args.value);
-        return { content: [{ type: 'text', text: `filled ${args.selector}` }] };
+        await page.waitForTimeout(800);
+        const filled = fillPos || { x: 0, y: 0 };
+        return { content: [{ type: 'text', text: JSON.stringify({ filled: args.selector, x: filled.x, y: filled.y }) }] };
+      }
+
+      case 'browser_key_press': {
+        await page.keyboard.press(args.key);
+        await page.waitForTimeout(1200);
+        return { content: [{ type: 'text', text: `pressed ${args.key}` }] };
       }
 
       case 'browser_add_cookies': {

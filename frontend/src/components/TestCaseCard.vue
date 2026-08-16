@@ -742,7 +742,7 @@ const props = defineProps({
   mode: { type: String, default: 'view' }
 })
 
-const emit = defineEmits(['save', 'close', 'delete', 'prev', 'next', 'versions', 'create'])
+const emit = defineEmits(['save', 'close', 'delete', 'prev', 'next', 'versions', 'create', 'executed'])
 
 const route = useRoute()
 const router = useRouter()
@@ -956,7 +956,7 @@ const goNext = () => emit('next')
 
 // 执行测试用例
 const openExecuteDialog = () => {
-  targetUrl.value = props.defaultTargetUrl || 'http://localhost:5173'
+  targetUrl.value = props.testCase?.executionHints?.targetUrl || props.defaultTargetUrl || 'http://localhost:5173'
   executeMode.value = 'agent'
   executeDialogVisible.value = true
 }
@@ -974,6 +974,7 @@ const confirmExecute = async () => {
   try {
     const res = await executeTestCase(projectId, props.testCase.id, targetUrl.value.trim(), executeMode.value)
     const eid = res.data?.executionId
+    emit('executed', props.testCase.id)
     executeDialogVisible.value = false
     if (eid) router.push(`/projects/${projectId}/executions/${eid}`)
   } catch {

@@ -301,6 +301,95 @@ public class ProjectService {
         return ProjectDTO.from(p);
     }
 
+    // ==================== v5.9: 执行 Cookie 与项目上下文 ====================
+
+    public List<Map<String, Object>> getExecutionCookies(String projectId) {
+        projectAccessService.assertViewAccess(projectId);
+        Project p = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        return parseSettingsArray(p.getSettings(), "executionCookies");
+    }
+
+    @Transactional
+    public List<Map<String, Object>> updateExecutionCookies(String projectId, List<Map<String, Object>> cookies) {
+        projectAccessService.assertOperateAccess(projectId);
+        Project p = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        try {
+            ObjectNode settings = (ObjectNode) objectMapper.readTree(
+                    p.getSettings() != null ? p.getSettings() : "{}");
+            settings.set("executionCookies", objectMapper.valueToTree(cookies == null ? List.of() : cookies));
+            p.setSettings(objectMapper.writeValueAsString(settings));
+            projectRepository.save(p);
+            return cookies == null ? List.of() : cookies;
+        } catch (Exception e) {
+            throw new BusinessException(50011, "保存执行 Cookie 失败: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    public Map<String, Object> getProjectContext(String projectId) {
+        projectAccessService.assertViewAccess(projectId);
+        Project p = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("prdContent", p.getPrdContent());
+        r.put("prdSourceType", p.getPrdSourceType());
+        r.put("prdSourceRef", p.getPrdSourceRef());
+        r.put("extraPrompt", readSettingsField(p.getSettings(), "extraPrompt"));
+        r.put("contextDocs", parseSettingsArray(p.getSettings(), "contextDocs"));
+        return r;
+    }
+
+    @Transactional
+    public Map<String, Object> updateProjectContext(String projectId, Map<String, Object> payload) {
+        projectAccessService.assertOperateAccess(projectId);
+        Project p = projectRepository.findById(projectId)
+                .orElseThrow(() -> BusinessException.notFound("项目不存在: " + projectId));
+        try {
+            ObjectNode settings = (ObjectNode) objectMapper.readTree(
+                    p.getSettings() != null ? p.getSettings() : "{}");
+            String extraPrompt = payload == null ? null : (String) payload.get("extraPrompt");
+            if (extraPrompt != null) {
+                settings.put("extraPrompt", extraPrompt);
+            }
+            Object contextDocs = payload == null ? null : payload.get("contextDocs");
+            if (contextDocs != null) {
+                settings.set("contextDocs", objectMapper.valueToTree(contextDocs));
+            }
+            p.setSettings(objectMapper.writeValueAsString(settings));
+            projectRepository.save(p);
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("extraPrompt", extraPrompt == null ? readSettingsField(p.getSettings(), "extraPrompt") : extraPrompt);
+            r.put("contextDocs", parseSettingsArray(p.getSettings(), "contextDocs"));
+            return r;
+        } catch (Exception e) {
+            throw new BusinessException(50012, "保存项目上下文失败: " + e.getMessage(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private String readSettingsField(String settingsJson, String field) {
+        try {
+            JsonNode settings = objectMapper.readTree(settingsJson != null ? settingsJson : "{}");
+            return settings.path(field).asText("");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private List<Map<String, Object>> parseSettingsArray(String settingsJson, String field) {
+        try {
+            JsonNode settings = objectMapper.readTree(settingsJson != null ? settingsJson : "{}");
+            JsonNode node = settings.path(field);
+            if (node.isArray()) {
+                return objectMapper.convertValue(node,
+                        new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+            }
+        } catch (Exception ignored) {
+            // 保持空列表
+        }
+        return new ArrayList<>();
+    }
+
     // ==================== v3.4: 生成参数 ====================
 
     // v3.4: 获取生成参数（从 Project.settings JSON 解析，失败降级默认值）
@@ -397,8 +486,6 @@ public class ProjectService {
                 ObjectNode gp = (ObjectNode) gpNode;
                 if (!activeUrl.isBlank()) {
                     gp.put("defaultTargetUrl", activeUrl);
-                } else {
-                    gp.remove("defaultTargetUrl");
                 }
             }
             project.setSettings(objectMapper.writeValueAsString(settings));
@@ -421,17 +508,46 @@ public class ProjectService {
         try {
             JsonNode settings = objectMapper.readTree(settingsJson);
             JsonNode gpNode = settings.path("generationParams");
+            GenerationParams params;
             if (gpNode.isMissingNode() || gpNode.isNull()) {
-                return GenerationParams.defaults();
+                params = GenerationParams.defaults();
+            } else {
+                params = objectMapper.treeToValue(gpNode, GenerationParams.class);
+                if (params.getCaseDensity() == null) params.setCaseDensity("medium");
+                if (params.getTemperature() == null) params.setTemperature(0.4);
+                if (params.getFocusTypes() == null) params.setFocusTypes(List.of());
             }
-            GenerationParams params = objectMapper.treeToValue(gpNode, GenerationParams.class);
-            if (params.getCaseDensity() == null) params.setCaseDensity("medium");
-            if (params.getTemperature() == null) params.setTemperature(0.4);
-            if (params.getFocusTypes() == null) params.setFocusTypes(List.of());
+            // 默认执行 URL 为空时，优先从项目登录 Cookie / 激活环境推导，避免录屏打开错误目标
+            if (params.getDefaultTargetUrl() == null || params.getDefaultTargetUrl().isBlank()) {
+                params.setDefaultTargetUrl(resolveDefaultTargetUrl(settings));
+            }
             return params;
         } catch (Exception e) {
             log.warn("Failed to parse generation params, using defaults", e);
             return GenerationParams.defaults();
         }
+    }
+
+    private String resolveDefaultTargetUrl(JsonNode settings) {
+        JsonNode cookies = settings.path("executionCookies");
+        if (cookies.isArray()) {
+            for (JsonNode cookie : cookies) {
+                String url = cookie.path("url").asText("");
+                if (!url.isBlank()) {
+                    return url;
+                }
+            }
+        }
+        JsonNode envNode = settings.path("executionEnvironments");
+        String active = envNode.path("active").asText("");
+        JsonNode envs = envNode.path("environments");
+        if (envs.isArray()) {
+            for (JsonNode env : envs) {
+                if (active.equals(env.path("name").asText("")) && !env.path("url").asText("").isBlank()) {
+                    return env.path("url").asText("");
+                }
+            }
+        }
+        return null;
     }
 }

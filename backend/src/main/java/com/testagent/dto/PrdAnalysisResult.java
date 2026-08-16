@@ -18,6 +18,10 @@ public class PrdAnalysisResult {
     // v5.4: RAG 检索到的相似上下文（代码分析/PRD 语义片段）
     private List<String> ragContexts;
 
+    // v5.9: 用户额外 Prompt 与多篇上下文文档（注入 LLM 生成上下文）
+    private String extraPrompt;
+    private List<Map<String, Object>> contextDocs;
+
     public boolean isEmpty() {
         return (modules == null || modules.isEmpty())
                 && (requirements == null || requirements.isEmpty())

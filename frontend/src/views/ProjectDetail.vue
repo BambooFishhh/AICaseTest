@@ -81,18 +81,7 @@
         </div>
       </section>
 
-      <!-- PRD 面板 -->
-      <PrdPanel :project-id="projectId" />
-
-      <!-- 轮询状态提示 -->
-      <Transition name="fade">
-        <div v-if="pollingMessage" class="polling-banner">
-          <el-icon class="is-loading"><Loading /></el-icon>
-          <span>{{ pollingMessage }}</span>
-        </div>
-      </Transition>
-
-      <!-- 操作面板 -->
+      <!-- v5.9: 操作区上移到 PRD 上方 -->
       <section class="actions-section">
         <div class="section-head">
           <h2 class="section-title">操作</h2>
@@ -159,8 +148,18 @@
                 查看用例
               </el-button>
               <el-button :icon="Share" :disabled="!canViewMindmap" @click="goMindmap">脑图预览</el-button>
-              <!-- v3.11: 执行历史入口 -->
               <el-button :icon="Clock" :disabled="!canViewExecutions" @click="goExecutions">执行历史</el-button>
+            </div>
+          </div>
+
+          <!-- v5.9: 执行配置 -->
+          <div v-if="canOperate" class="action-card">
+            <div class="action-card-head">
+              <el-icon :size="18"><Connection /></el-icon>
+              <span class="action-card-title">执行配置</span>
+            </div>
+            <div class="action-buttons">
+              <el-button :icon="Setting" @click="openCookieDialog">Cookie 配置</el-button>
             </div>
           </div>
         </div>
@@ -176,7 +175,36 @@
         class="readonly-alert"
       />
 
+      <!-- PRD 面板 -->
+      <PrdPanel :project-id="projectId" />
+
+      <!-- 轮询状态提示 -->
+      <Transition name="fade">
+        <div v-if="pollingMessage" class="polling-banner">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>{{ pollingMessage }}</span>
+        </div>
+      </Transition>
+
     </template>
+
+    <!-- v5.9: 执行 Cookie 配置弹窗 -->
+    <el-dialog v-model="cookieDialogVisible" title="执行 Cookie 配置" width="680px">
+      <div class="cookie-config-tip">name 是 Cookie 名称，value 是对应的值；domain 填目标站点域名或 URL</div>
+      <div v-for="(cookie, idx) in cookieForm" :key="idx" class="cookie-row">
+        <el-input v-model="cookie.name" placeholder="名称，如 JSESSIONID" />
+        <el-input v-model="cookie.value" placeholder="值" />
+        <el-input v-model="cookie.domain" placeholder="域名/URL，如 host.docker.internal" />
+        <el-button :icon="Delete" text type="danger" @click="removeCookie(idx)" />
+      </div>
+      <div class="cookie-actions">
+        <el-button size="small" :icon="Plus" @click="addCookie">添加 Cookie</el-button>
+      </div>
+      <template #footer>
+        <el-button @click="cookieDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingCookies" @click="saveCookies">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -186,9 +214,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   ArrowLeft, Aim, MagicStick, Share, Download,
-  DataAnalysis, Document, Loading, Check, View, Operation, Clock
+  DataAnalysis, Document, Loading, Check, View, Operation, Clock,
+  Connection, Setting, Delete, Plus
 } from '@element-plus/icons-vue'
-import { getProject } from '@/api/project'
+import { getProject, getExecutionCookies, updateExecutionCookies } from '@/api/project'
 import PrdPanel from '@/components/PrdPanel.vue'
 import { generateMindmap, downloadMindmapUrl } from '@/api/mindmap'
 import { downloadAuth } from '@/utils/download'
@@ -418,6 +447,64 @@ function goExecutions() {
 // v3.16: 项目导出备份（ZIP）
 function exportProject() {
   downloadAuth(`/api/projects/${projectId}/export`, `project_${projectId}_backup.zip`)
+}
+
+// v5.9: 执行 Cookie 配置
+const cookieDialogVisible = ref(false)
+const cookieForm = ref([])
+const savingCookies = ref(false)
+
+async function openCookieDialog() {
+  try {
+    const res = await getExecutionCookies(projectId)
+    cookieForm.value = (res.data || []).map((c) => ({
+      name: c.name || '',
+      value: c.value || '',
+      domain: c.url || c.domain || ''
+    }))
+    cookieDialogVisible.value = true
+  } catch {
+    // 错误已由响应拦截器统一提示
+  }
+}
+
+function addCookie() {
+  cookieForm.value.push({ name: '', value: '', domain: '' })
+}
+
+function removeCookie(idx) {
+  cookieForm.value.splice(idx, 1)
+}
+
+async function saveCookies() {
+  const missing = cookieForm.value.find(
+    (c) => !c.name?.trim() || !c.value?.trim() || !c.domain?.trim()
+  )
+  if (missing) {
+    ElMessage.error('请填写完整的 Cookie 名称、值和域名')
+    return
+  }
+  savingCookies.value = true
+  try {
+    const cookies = cookieForm.value.map((c) => {
+      const base = { name: c.name.trim(), value: c.value.trim() }
+      const domain = c.domain.trim()
+      if (domain.startsWith('http://') || domain.startsWith('https://')) {
+        base.url = domain
+      } else {
+        base.domain = domain
+      }
+      return base
+    })
+    await updateExecutionCookies(projectId, cookies)
+    ElMessage.success('执行 Cookie 已保存')
+    cookieDialogVisible.value = false
+    await refreshProject()
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    savingCookies.value = false
+  }
 }
 
 onMounted(async () => {
@@ -764,6 +851,26 @@ onUnmounted(() => {
   transform: translateY(-8px);
 }
 
+/* ===== v5.9: Cookie 配置弹窗 ===== */
+.cookie-config-tip {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-bottom: 10px;
+}
+
+.cookie-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 32px;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+
+.cookie-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* ===== 响应式 ===== */
 @media (max-width: 1100px) {
   .flow-step {
@@ -793,6 +900,10 @@ onUnmounted(() => {
   }
 
   .action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cookie-row {
     grid-template-columns: 1fr;
   }
 }

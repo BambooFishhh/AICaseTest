@@ -69,10 +69,17 @@ public class ExecutionAgent {
                 if (selValue.isBlank() || inputValue.isBlank()) {
                     throw new RuntimeException("输入步骤缺少 uiSelector.value 或 inputValue");
                 }
-                playwrightSkill.fillInput(sessionId, selType, selValue, inputValue);
+                int[] inputPos = playwrightSkill.fillInput(sessionId, selType, selValue, inputValue);
+                if (inputPos != null) {
+                    clickX = inputPos[0];
+                    clickY = inputPos[1];
+                }
+                if (step.path("enter").asBoolean(false) || step.path("submit").asBoolean(false)) {
+                    playwrightSkill.pressKey(sessionId, "Enter");
+                }
                 strategy = "dom";
                 result = "passed";
-                screenshotAfter = playwrightSkill.takeScreenshotWithMarker(sessionId, 0, 0);
+                screenshotAfter = playwrightSkill.takeScreenshotWithMarker(sessionId, clickX, clickY);
                 return ExecutionStep.builder()
                         .id(UUID.randomUUID().toString().substring(0, 8))
                         .executionId(executionId)
@@ -124,7 +131,11 @@ public class ExecutionAgent {
                     String selType = selector.path("type").asText("css");
                     String selValue = selector.path("value").asText("");
                     if (!selValue.isEmpty()) {
-                        playwrightSkill.domClick(sessionId, selType, selValue);
+                        int[] clickPos = playwrightSkill.domClick(sessionId, selType, selValue);
+                        if (clickPos != null) {
+                            clickX = clickPos[0];
+                            clickY = clickPos[1];
+                        }
                         result = "passed";
                     } else {
                         // 无可用选择器，降级为跳过
@@ -155,7 +166,11 @@ public class ExecutionAgent {
                         String selType = selector.path("type").asText("css");
                         String selValue = selector.path("value").asText("");
                         if (!selValue.isEmpty()) {
-                            playwrightSkill.domClick(sessionId, selType, selValue);
+                            int[] clickPos = playwrightSkill.domClick(sessionId, selType, selValue);
+                            if (clickPos != null) {
+                                clickX = clickPos[0];
+                                clickY = clickPos[1];
+                            }
                             strategy = strategy + "+dom_fallback";
                             // 兜底重试后保留 passed（最佳努力重试）
                         } else {

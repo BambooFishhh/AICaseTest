@@ -1,6 +1,7 @@
 package com.testagent.skill;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.testagent.mcp.McpClientManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -137,12 +138,15 @@ public class PlaywrightRecordSkill {
      * @param selectorType   选择器类型（兼容 BrowserSkill，内部统一转 CSS）
      * @param selectorValue  选择器值
      */
-    public void domClick(String sessionId, String selectorType, String selectorValue) {
+    public int[] domClick(String sessionId, String selectorType, String selectorValue) {
         String cssSelector = buildCssSelector(selectorType, selectorValue);
         try {
-            mcpClientManager.callTool("playwright", "browser_dom_click",
+            String response = mcpClientManager.callTool("playwright", "browser_dom_click",
                     Map.of("selector", cssSelector));
-            log.info("DOM 点击完成: {}={}", selectorType, selectorValue);
+            int[] position = parseClickPosition(response);
+            log.info("DOM 点击完成: {}={}, position={}", selectorType, selectorValue,
+                    position == null ? "unknown" : position[0] + "," + position[1]);
+            return position;
         } catch (Exception e) {
             log.error("DOM 点击失败: {}={}, error={}", selectorType, selectorValue, e.getMessage());
             throw new RuntimeException("DOM 点击失败", e);
@@ -150,15 +154,30 @@ public class PlaywrightRecordSkill {
     }
 
     /** 输入框填充 */
-    public void fillInput(String sessionId, String selectorType, String selectorValue, String value) {
+    public int[] fillInput(String sessionId, String selectorType, String selectorValue, String value) {
         String cssSelector = buildCssSelector(selectorType, selectorValue);
         try {
-            mcpClientManager.callTool("playwright", "browser_fill",
+            String response = mcpClientManager.callTool("playwright", "browser_fill",
                     Map.of("selector", cssSelector, "value", value == null ? "" : value));
-            log.info("输入完成: {}={}", selectorType, selectorValue);
+            int[] position = parseClickPosition(response);
+            log.info("输入完成: {}={}, position={}", selectorType, selectorValue,
+                    position == null ? "unknown" : position[0] + "," + position[1]);
+            return position;
         } catch (Exception e) {
             log.error("输入失败: {}={}, error={}", selectorType, selectorValue, e.getMessage());
             throw new RuntimeException("输入失败", e);
+        }
+    }
+
+    /** 发送键盘按键（如 Enter，用于提交搜索等操作） */
+    public void pressKey(String sessionId, String key) {
+        try {
+            mcpClientManager.callTool("playwright", "browser_key_press",
+                    Map.of("key", key == null ? "Enter" : key));
+            log.info("按键完成: {}", key);
+        } catch (Exception e) {
+            log.error("按键失败: key={}, error={}", key, e.getMessage());
+            throw new RuntimeException("按键失败", e);
         }
     }
 
@@ -227,6 +246,21 @@ public class PlaywrightRecordSkill {
             normalized = normalized.substring(prefix.length());
         }
         return baseDir.resolve(normalized).normalize().toString();
+    }
+
+    private int[] parseClickPosition(String response) {
+        if (response == null || response.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(response);
+            if (node.isObject() && node.hasNonNull("x") && node.hasNonNull("y")) {
+                return new int[]{node.path("x").asInt(0), node.path("y").asInt(0)};
+            }
+        } catch (Exception e) {
+            log.debug("点击坐标解析失败: {}", e.getMessage());
+        }
+        return null;
     }
 
     /**

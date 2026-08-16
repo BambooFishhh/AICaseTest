@@ -219,6 +219,35 @@ public class ProjectController {
                 .body(resource);
     }
 
+    // v5.9: 执行 Cookie 读写
+    @GetMapping("/{projectId}/execution-cookies")
+    public ApiResponse<List<Map<String, Object>>> getExecutionCookies(@PathVariable String projectId) {
+        return ApiResponse.success(projectService.getExecutionCookies(projectId));
+    }
+
+    @PutMapping("/{projectId}/execution-cookies")
+    public ApiResponse<List<Map<String, Object>>> updateExecutionCookies(
+            @PathVariable String projectId,
+            @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> cookies =
+                (List<Map<String, Object>>) body.getOrDefault("cookies", List.of());
+        return ApiResponse.success(projectService.updateExecutionCookies(projectId, cookies));
+    }
+
+    // v5.9: 项目上下文（额外 Prompt + 上下文文档）
+    @GetMapping("/{projectId}/context")
+    public ApiResponse<Map<String, Object>> getProjectContext(@PathVariable String projectId) {
+        return ApiResponse.success(projectService.getProjectContext(projectId));
+    }
+
+    @PutMapping("/{projectId}/context")
+    public ApiResponse<Map<String, Object>> updateProjectContext(
+            @PathVariable String projectId,
+            @RequestBody Map<String, Object> payload) {
+        return ApiResponse.success(projectService.updateProjectContext(projectId, payload));
+    }
+
     // v1.10: 查询 PRD
     @GetMapping("/{projectId}/prd")
     public ApiResponse<Map<String, Object>> getPrd(@PathVariable String projectId) {

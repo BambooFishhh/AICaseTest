@@ -562,6 +562,7 @@
         @prev="handlePrev"
         @next="handleNext"
         @versions="handleOpenVersions"
+        @executed="handleExecuted"
       />
     </el-drawer>
 
@@ -1722,11 +1723,28 @@ const batchExecuteDialogVisible = ref(false)
 const batchTargetUrl = ref('http://localhost:5173')
 const batchExecuting = ref(false)
 
-function openBatchExecuteDialog() {
+// v3.12: 执行启动后本地先置 running，避免返回列表/浏览器回退时仍显示旧状态
+function markTestCasesRunning(ids) {
+  const idSet = new Set(ids)
+  for (const list of [testCases.value, allTestCases.value]) {
+    if (!Array.isArray(list)) continue
+    for (const tc of list) {
+      if (!tc.isModule && idSet.has(tc.id)) {
+        tc.executionStatus = 'running'
+      }
+    }
+  }
+  if (currentTestCase.value && idSet.has(currentTestCase.value.id)) {
+    currentTestCase.value.executionStatus = 'running'
+  }
+}
+
+async function openBatchExecuteDialog() {
   if (selectedRows.value.length === 0) {
     ElMessage.warning('请先选择要执行的用例')
     return
   }
+  await loadDefaultTargetUrl()
   batchTargetUrl.value = defaultTargetUrl.value || 'http://localhost:5173'
   batchExecuteDialogVisible.value = true
 }
@@ -1744,6 +1762,7 @@ async function confirmBatchExecute() {
   try {
     const caseIds = selectedRows.value.map((tc) => tc.id)
     const res = await executeBatch(projectId, caseIds, batchTargetUrl.value.trim())
+    markTestCasesRunning(caseIds)
     const batchId = res.data?.batchId
     batchExecuteDialogVisible.value = false
     ElMessage.success(`已启动批量执行，共 ${caseIds.length} 条用例`)
@@ -1764,9 +1783,10 @@ const rowExecuteUrl = ref('')
 const rowExecuteMode = ref('agent')
 const rowExecuting = ref(false)
 
-function openRowExecute(row) {
+async function openRowExecute(row) {
+  await loadDefaultTargetUrl()
   rowExecuteCase.value = row
-  rowExecuteUrl.value = defaultTargetUrl.value || 'http://localhost:5173'
+  rowExecuteUrl.value = row.executionHints?.targetUrl || defaultTargetUrl.value || 'http://localhost:5173'
   rowExecuteMode.value = 'agent'
   rowExecuteDialogVisible.value = true
 }
@@ -1786,6 +1806,7 @@ async function confirmRowExecute() {
       rowExecuteMode.value
     )
     const eid = res.data?.executionId
+    markTestCasesRunning([rowExecuteCase.value.id])
     rowExecuteDialogVisible.value = false
     if (eid) {
       router.push(`/projects/${projectId}/executions/${eid}`)
@@ -1803,14 +1824,19 @@ const copyExecuteUrl = ref('')
 const copyExecuteMode = ref('agent')
 const copyExecuting = ref(false)
 
-function openCopyExecuteDialog() {
+async function openCopyExecuteDialog() {
   if (selectedRows.value.length === 0) {
     ElMessage.warning('请先选择要复制执行的用例')
     return
   }
+  await loadDefaultTargetUrl()
   copyExecuteUrl.value = defaultTargetUrl.value || 'http://localhost:5173'
   copyExecuteMode.value = 'agent'
   copyExecuteDialogVisible.value = true
+}
+
+function handleExecuted(testcaseId) {
+  markTestCasesRunning([testcaseId])
 }
 
 async function confirmCopyExecute() {
@@ -2095,11 +2121,20 @@ function goBack() {
   router.push(`/projects/${projectId}`)
 }
 
+function handlePageShow(e) {
+  // 浏览器回退/前进可能从 bfcache 恢复页面，此时不会重新执行 onMounted
+  if (e.persisted) {
+    loadList()
+    loadAllForStats()
+  }
+}
+
 onMounted(async () => {
   loadFilters()
   await Promise.all([
     loadList(), loadAllForStats(), loadCoverageMatrix(), loadDefaultTargetUrl(), loadAccessLevel()
   ])
+  window.addEventListener('pageshow', handlePageShow)
   if (route.query.generate === '1') {
     router.replace({ path: route.path })
     try {
@@ -2115,6 +2150,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   projectStore.stopPolling()
+  window.removeEventListener('pageshow', handlePageShow)
   if (streamEs) {
     streamEs.close()
     streamEs = null

@@ -40,6 +40,24 @@ export function fetchPrdUrl(projectId, url) {
   return request.post(`/projects/${projectId}/prd/fetch`, { url })
 }
 
+// v5.9: 项目上下文（额外 Prompt + 上下文文档）
+export function getProjectContext(projectId) {
+  return request.get(`/projects/${projectId}/context`)
+}
+
+export function updateProjectContext(projectId, payload) {
+  return request.put(`/projects/${projectId}/context`, payload)
+}
+
+// v5.9: 执行 Cookie 读写
+export function getExecutionCookies(projectId) {
+  return request.get(`/projects/${projectId}/execution-cookies`)
+}
+
+export function updateExecutionCookies(projectId, cookies) {
+  return request.put(`/projects/${projectId}/execution-cookies`, { cookies })
+}
+
 // v3.4: 获取生成参数
 export function getGenerationParams(projectId) {
   return request.get(`/projects/${projectId}/generation-params`)

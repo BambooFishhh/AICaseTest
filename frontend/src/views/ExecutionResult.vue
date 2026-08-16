@@ -28,7 +28,12 @@
 
     <!-- 空状态 -->
     <section v-if="!loading && !execution" class="empty-section">
-      <el-empty description="未找到执行记录" :image-size="120" />
+      <el-empty
+        :description="loadError ? '执行结果加载失败，请稍后重试' : '未找到执行记录'"
+        :image-size="120"
+      >
+        <el-button v-if="loadError" type="primary" @click="reload">重新加载</el-button>
+      </el-empty>
     </section>
 
     <template v-if="execution">
@@ -57,11 +62,23 @@
         <div class="overview-grid">
           <div class="overview-item">
             <div class="overview-label">用例标题</div>
-            <div class="overview-value">{{ execution.testCaseTitle || '-' }}</div>
+            <div class="overview-value">{{ executionSnapshot?.title || execution.testCaseTitle || '-' }}</div>
           </div>
           <div class="overview-item">
             <div class="overview-label">耗时</div>
             <div class="overview-value mono">{{ duration }}</div>
+          </div>
+          <div class="overview-item">
+            <div class="overview-label">模块</div>
+            <div class="overview-value">{{ executionSnapshot?.module || '-' }}</div>
+          </div>
+          <div class="overview-item">
+            <div class="overview-label">类型</div>
+            <div class="overview-value">{{ snapshotTypeLabel(executionSnapshot?.type) }}</div>
+          </div>
+          <div class="overview-item">
+            <div class="overview-label">优先级</div>
+            <div class="overview-value">{{ snapshotPriorityLabel(executionSnapshot?.priority) }}</div>
           </div>
           <div class="overview-item overview-item-full">
             <div class="overview-label">摘要</div>
@@ -90,36 +107,68 @@
         </Transition>
       </section>
 
-      <!-- v3.16: 执行时用例快照 -->
-      <section v-if="executionSnapshot" class="snapshot-section">
-        <el-collapse>
-          <el-collapse-item name="snapshot">
-            <template #title>
-              <div class="snapshot-title">
-                <el-icon :size="16"><Document /></el-icon>
-                <span>执行时用例快照</span>
-              </div>
-            </template>
-            <div class="snapshot-grid">
-              <div class="snapshot-item">
-                <div class="snapshot-label">标题</div>
-                <div class="snapshot-value">{{ executionSnapshot.title || '-' }}</div>
-              </div>
-              <div class="snapshot-item">
-                <div class="snapshot-label">模块</div>
-                <div class="snapshot-value">{{ executionSnapshot.module || '-' }}</div>
-              </div>
-              <div class="snapshot-item">
-                <div class="snapshot-label">类型</div>
-                <div class="snapshot-value">{{ executionSnapshot.type || '-' }}</div>
-              </div>
-              <div class="snapshot-item">
-                <div class="snapshot-label">优先级</div>
-                <div class="snapshot-value">{{ executionSnapshot.priority || '-' }}</div>
-              </div>
+      <!-- 录屏回放：放在执行步骤前面，先看录屏再看截图 -->
+      <section v-if="hasRecording" class="recording-section">
+        <div class="section-head">
+          <div class="section-head-text">
+            <h2 class="section-title">录屏回放</h2>
+            <p class="section-desc">
+              {{ recordingVideoUrl ? 'WebM 视频格式' : '图片帧序列格式' }}
+            </p>
+          </div>
+          <el-tag
+            :type="recordingVideoUrl ? 'success' : 'info'"
+            effect="light"
+          >
+            {{ recordingVideoUrl ? '视频' : '图片帧' }}
+          </el-tag>
+        </div>
+
+        <!-- 视频模式 -->
+        <div v-if="recordingVideoUrl" class="video-player">
+          <video
+            :src="recordingVideoUrl"
+            controls
+            autoplay
+            class="video-element"
+            @error="videoError = true"
+          />
+          <div class="video-controls">
+            <el-button :icon="Download" @click="downloadVideo">下载视频</el-button>
+          </div>
+        </div>
+
+        <!-- 图片帧轮播 -->
+        <div v-else class="frame-player">
+          <div class="frame-display">
+            <img
+              v-if="currentFrameUrl"
+              :src="currentFrameUrl"
+              :alt="`帧 ${currentFrameIndex + 1}`"
+              class="frame-image"
+            />
+            <div v-else class="frame-empty">
+              <el-icon :size="32"><Picture /></el-icon>
             </div>
-          </el-collapse-item>
-        </el-collapse>
+          </div>
+          <div class="player-controls">
+            <el-button
+              :icon="isPlaying ? VideoPause : VideoPlay"
+              circle
+              type="primary"
+              @click="togglePlay"
+            />
+            <el-slider
+              v-model="currentFrameIndex"
+              :max="Math.max(0, recordingFrames.length - 1)"
+              :show-tooltip="false"
+              class="frame-slider"
+            />
+            <span class="frame-counter mono">
+              {{ currentFrameIndex + 1 }} / {{ recordingFrames.length }}
+            </span>
+          </div>
+        </div>
       </section>
 
       <!-- 步骤列表 -->
@@ -216,69 +265,6 @@
         <el-empty description="暂无步骤数据" :image-size="100" />
       </section>
 
-      <!-- 录屏回放 -->
-      <section v-if="hasRecording" class="recording-section">
-        <div class="section-head">
-          <div class="section-head-text">
-            <h2 class="section-title">录屏回放</h2>
-            <p class="section-desc">
-              {{ recordingVideoUrl ? 'WebM 视频格式' : '图片帧序列格式' }}
-            </p>
-          </div>
-          <el-tag
-            :type="recordingVideoUrl ? 'success' : 'info'"
-            effect="light"
-          >
-            {{ recordingVideoUrl ? '视频' : '图片帧' }}
-          </el-tag>
-        </div>
-
-        <!-- 视频模式 -->
-        <div v-if="recordingVideoUrl" class="video-player">
-          <video
-            :src="recordingVideoUrl"
-            controls
-            autoplay
-            class="video-element"
-            @error="videoError = true"
-          />
-          <div class="video-controls">
-            <el-button :icon="Download" @click="downloadVideo">下载视频</el-button>
-          </div>
-        </div>
-
-        <!-- 图片帧轮播 -->
-        <div v-else class="frame-player">
-          <div class="frame-display">
-            <img
-              v-if="currentFrameUrl"
-              :src="currentFrameUrl"
-              :alt="`帧 ${currentFrameIndex + 1}`"
-              class="frame-image"
-            />
-            <div v-else class="frame-empty">
-              <el-icon :size="32"><Picture /></el-icon>
-            </div>
-          </div>
-          <div class="player-controls">
-            <el-button
-              :icon="isPlaying ? VideoPause : VideoPlay"
-              circle
-              type="primary"
-              @click="togglePlay"
-            />
-            <el-slider
-              v-model="currentFrameIndex"
-              :max="Math.max(0, recordingFrames.length - 1)"
-              :show-tooltip="false"
-              class="frame-slider"
-            />
-            <span class="frame-counter mono">
-              {{ currentFrameIndex + 1 }} / {{ recordingFrames.length }}
-            </span>
-          </div>
-        </div>
-      </section>
     </template>
   </div>
 </template>
@@ -287,9 +273,9 @@
 /**
  * 执行结果页
  * 展示单次用例执行的：
- * - 概览（标题、状态、耗时、摘要、错误信息）
- * - 步骤列表（动作、目标、坐标、策略、结果、截图）
+ * - 概览（标题、模块、类型、优先级、状态、耗时、摘要）
  * - 录屏回放（优先 WebM 视频，回退图片帧轮播）
+ * - 步骤列表（动作、目标、坐标、策略、结果、截图）
  * 执行中状态会每 3 秒自动轮询刷新。
  */
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
@@ -312,6 +298,8 @@ const steps = ref([])
 let pollTimer = null
 const cancelling = ref(false)
 const videoError = ref(false)
+const loadError = ref('')
+let initialRetryTimer = null
 
 // v3.16: 执行时用例快照（JSON 字符串 → 对象）
 const executionSnapshot = computed(() => {
@@ -488,6 +476,14 @@ const statusLabel = (status) => {
   return map[status] || status || '-'
 }
 
+// 执行时快照合并进概览后的展示辅助
+const snapshotTypeLabel = (type) => {
+  return { positive: '正向', negative: '异常', boundary: '边界', data: '数据' }[type] || type || '-'
+}
+const snapshotPriorityLabel = (priority) => {
+  return priority || '-'
+}
+
 // 步骤卡片样式（根据结果）
 function stepResultClass(result) {
   if (!result) return ''
@@ -552,12 +548,13 @@ async function loadExecution() {
   try {
     const res = await getExecution(executionId)
     execution.value = res.data
+    loadError.value = ''
     // 如果仍在执行中，启动轮询
     if (execution.value && execution.value.status === 'running') {
       schedulePoll()
     }
   } catch (e) {
-    // 错误已由响应拦截器统一提示
+    loadError.value = e?.message || '加载失败'
   }
 }
 
@@ -566,8 +563,15 @@ async function loadSteps() {
     const res = await getExecutionSteps(executionId)
     steps.value = res.data || []
   } catch (e) {
-    // 错误已由响应拦截器统一提示
+    loadError.value = loadError.value || e?.message || '加载失败'
   }
+}
+
+async function reload() {
+  loadError.value = ''
+  loading.value = true
+  await Promise.all([loadExecution(), loadSteps()])
+  loading.value = false
 }
 
 // 每 3 秒轮询一次，直到 status != running
@@ -602,9 +606,19 @@ onMounted(async () => {
   loading.value = true
   await Promise.all([loadExecution(), loadSteps()])
   loading.value = false
+  // 执行记录刚创建时可能短暂不可见，做一次兜底重试，避免结果页空白
+  if (!execution.value && !loadError.value) {
+    initialRetryTimer = setTimeout(() => {
+      reload()
+    }, 1000)
+  }
 })
 
 onUnmounted(() => {
+  if (initialRetryTimer) {
+    clearTimeout(initialRetryTimer)
+    initialRetryTimer = null
+  }
   stopPoll()
   pausePlay()
 })
@@ -654,16 +668,24 @@ onUnmounted(() => {
   background: var(--bg-surface);
   border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
-  padding: 20px;
+  padding: 14px 16px;
   box-shadow: var(--shadow-xs);
-  margin-bottom: var(--space-lg);
+  margin-bottom: var(--space-md);
+}
+
+.overview-section .section-title {
+  font-size: 15px;
+}
+
+.overview-section .section-desc {
+  font-size: 12px;
 }
 
 .overview-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: var(--space-md);
+  margin-bottom: 10px;
   gap: var(--space-md);
   flex-wrap: wrap;
 }
@@ -709,12 +731,12 @@ onUnmounted(() => {
 
 .overview-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: var(--space-md);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
 }
 
 .overview-item {
-  padding: 12px 14px;
+  padding: 8px 10px;
   background: #f8fafc;
   border: 1px solid var(--card-border-light);
   border-radius: var(--radius-md);
@@ -725,13 +747,13 @@ onUnmounted(() => {
 }
 
 .overview-label {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-tertiary);
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .overview-value {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
   word-break: break-word;
@@ -742,64 +764,20 @@ onUnmounted(() => {
 }
 
 .error-alert {
-  margin-top: var(--space-md);
+  margin-top: 10px;
 }
 
 .running-banner {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: var(--space-md);
-  padding: 10px 14px;
+  margin-top: 10px;
+  padding: 8px 12px;
   background: var(--color-warning-bg);
   color: var(--color-warning);
   border-radius: var(--radius-md);
   font-size: 13px;
   font-weight: 500;
-}
-
-/* ===== v3.16: 执行时用例快照 ===== */
-.snapshot-section {
-  background: var(--bg-surface);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-lg);
-  padding: 8px 16px;
-  box-shadow: var(--shadow-xs);
-  margin-bottom: var(--space-lg);
-}
-
-.snapshot-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-primary);
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.snapshot-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 10px;
-}
-
-.snapshot-item {
-  padding: 10px 12px;
-  background: var(--bg-base);
-  border-radius: var(--radius-md);
-  min-width: 0;
-
-  .snapshot-label {
-    font-size: 12px;
-    color: var(--text-tertiary);
-    margin-bottom: 4px;
-  }
-
-  .snapshot-value {
-    font-size: 13px;
-    color: var(--text-primary);
-    word-break: break-all;
-  }
 }
 
 /* ===== 步骤列表 ===== */

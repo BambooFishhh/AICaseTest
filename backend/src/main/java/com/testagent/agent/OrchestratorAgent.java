@@ -21,6 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -105,6 +106,22 @@ public class OrchestratorAgent {
             prdResult.setRagContexts(ragContexts);
             if (!ragContexts.isEmpty()) {
                 log.info("RAG retrieved {} contexts for project {}", ragContexts.size(), projectId);
+            }
+            // v5.9: 注入用户额外 Prompt 与多篇上下文文档
+            try {
+                JsonNode settings = objectMapper.readTree(
+                        project.getSettings() != null ? project.getSettings() : "{}");
+                String extraPrompt = settings.path("extraPrompt").asText("");
+                if (!extraPrompt.isBlank()) {
+                    prdResult.setExtraPrompt(extraPrompt);
+                }
+                JsonNode docsNode = settings.path("contextDocs");
+                if (docsNode.isArray()) {
+                    prdResult.setContextDocs(objectMapper.convertValue(docsNode,
+                            new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {}));
+                }
+            } catch (Exception e) {
+                log.warn("Failed to load project extra context for {}: {}", projectId, e.getMessage());
             }
             log.info("PRD analyzed for project {}: modules={}, requirements={}",
                     projectId,
