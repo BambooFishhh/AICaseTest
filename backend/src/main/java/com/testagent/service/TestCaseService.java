@@ -144,6 +144,9 @@ public class TestCaseService {
     @Autowired
     private McpClientManager mcpClientManager;
 
+    @Autowired
+    private LlmService llmService;
+
     private boolean hasPrd(Project project) {
         if (project.getPrdContent() != null && !project.getPrdContent().isBlank()) {
             return true;
@@ -490,7 +493,9 @@ public class TestCaseService {
         RuntimeFlag flag = cancellationFlags.get(projectId);
         if (flag != null) {
             flag.cancel();
-            // v5.14: 立即中断流式 MCP 连接，避免等待当前 LLM 调用跑完
+            // v6.0: 立即中断 Spring AI 流式订阅，避免等待当前 LLM 调用跑完
+            llmService.cancelStreaming();
+            // 保留对旧 MCP 流式连接的中断（vision/其他流兼容）
             mcpClientManager.cancelStreaming("llm-stream");
             return true;
         }

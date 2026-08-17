@@ -29,7 +29,7 @@ class StateMachineAgentTest {
     @Test
     void frontendEnhancementAppendsValidTransitionsAndMarksSources() {
         LlmService llmService = mock(LlmService.class);
-        when(llmService.chat(anyString(), anyString(), anyDouble()))
+        when(llmService.chatWithAnalysis(anyString(), anyString(), anyDouble()))
                 .thenReturn(extractionJson(), enhancementJson());
         StateMachineAgent agent = new StateMachineAgent();
         ReflectionTestUtils.setField(agent, "llmService", llmService);
@@ -51,13 +51,13 @@ class StateMachineAgentTest {
                 .anyMatch(t -> "refund".equals(t.get("trigger"))));
         assertFalse(transitions.stream()
                 .anyMatch(t -> "UNKNOWN".equals(t.get("to"))));
-        verify(llmService, times(2)).chat(anyString(), anyString(), anyDouble());
+        verify(llmService, times(2)).chatWithAnalysis(anyString(), anyString(), anyDouble());
     }
 
     @Test
     void frontendEnhancementSkippedWhenNoEvidence() {
         LlmService llmService = mock(LlmService.class);
-        when(llmService.chat(anyString(), anyString(), anyDouble())).thenReturn(extractionJson());
+        when(llmService.chatWithAnalysis(anyString(), anyString(), anyDouble())).thenReturn(extractionJson());
         StateMachineAgent agent = new StateMachineAgent();
         ReflectionTestUtils.setField(agent, "llmService", llmService);
         ReflectionTestUtils.setField(agent, "promptSkillLoader", new PromptSkillLoader());
@@ -73,7 +73,7 @@ class StateMachineAgentTest {
         StateMachine sm = result.get(0);
         assertEquals(1, JsonHelper.parseListMap(sm.getTransitions()).size());
         assertEquals(List.of("llm"), JsonHelper.parseListString(sm.getSources()));
-        verify(llmService).chat(anyString(), anyString(), anyDouble());
+        verify(llmService).chatWithAnalysis(anyString(), anyString(), anyDouble());
     }
 
     private BackendResult backendResult() {

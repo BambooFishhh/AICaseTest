@@ -148,6 +148,7 @@ services:
       - "8000:8000"
     environment:
       - SPRING_PROFILES_ACTIVE=prod
+      # v6.0: LLM_* 同时注入 Spring AI（chat/stream/embedding）与保留的 vision MCP
       - LLM_PROVIDER=${LLM_PROVIDER:-bailian}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_MODEL=${LLM_MODEL:-qwen3.7-max}

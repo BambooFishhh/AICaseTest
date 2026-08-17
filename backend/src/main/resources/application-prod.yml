@@ -11,6 +11,21 @@ app:
   # vP1: 生产强制校验自定义 JWT Secret / 管理员密码，失败直接阻断启动
   security:
     enforce: ${APP_ENFORCE_SECURITY:true}
+# v6.0: 生产 Spring AI 配置（保留原有 LLM_* 环境变量映射）
+spring:
+  ai:
+    openai:
+      api-key: ${LLM_API_KEY:}
+      base-url: ${LLM_BASE_URL:https://api.xiaomimimo.com/v1}
+      # v6.0fix: 与 application.yml 一致，覆盖端点路径避免 /v1/v1 重复
+      chat:
+        completions-path: /chat/completions
+        options:
+          model: ${LLM_MODEL:mimo-v2.5-pro}
+      embedding:
+        embeddings-path: /embeddings
+        options:
+          model: ${LLM_EMBEDDING_MODEL:qwen3.7-text-embedding}
 llm:
   provider: ${LLM_PROVIDER:mimo}
   model: ${LLM_MODEL:mimo-v2.5-pro}

@@ -39,6 +39,22 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       timeout: 2s
+  # v6.0: Spring AI 主线使用 OpenAI starter（DashScope OpenAI 兼容端点）
+  ai:
+    openai:
+      api-key: ${LLM_API_KEY:}
+      base-url: ${LLM_BASE_URL:https://llm-fua5iwoagy8hd5de.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
+      # v6.0fix: LLM_BASE_URL 以 /v1 结尾（MCP vision 的 OpenAI SDK 语义）。
+      # Spring AI 会额外拼路径，因此显式覆盖为不带 /v1 的端点路径，避免 /v1/v1 重复。
+      chat:
+        completions-path: /chat/completions
+        options:
+          model: ${LLM_MODEL:qwen3.7-max}
+          temperature: 0.4
+      embedding:
+        embeddings-path: /embeddings
+        options:
+          model: ${LLM_EMBEDDING_MODEL:qwen3.7-text-embedding}
 llm:
   provider: ${LLM_PROVIDER:bailian}
   model: ${LLM_MODEL:qwen3.7-max}

@@ -4,6 +4,31 @@
 
 ---
 
+## v6.0 — Spring AI 混合重构（保留 MCP）
+**日期**: 2026-08-18
+**主题**: LLM 文本/流式/JSON/Embedding 层从 MCP 子进程迁移到 Spring AI OpenAI starter；保留 MCP 浏览器/工具/多模态
+
+### 变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `backend/pom.xml` | 修改 | Spring Boot 3.2.5 -> 3.4.5；新增 `spring-ai-bom` 与 `spring-ai-starter-model-openai` 1.0.0 |
+| `service/LlmService.java` | 重构 | `chat`/`chatStreaming`/`chatJson` 改用 `ChatClient`；`isConfigured` 改查 `ChatModel`；新增 `cancelStreaming()`；`chatWithImage` 保留 MCP |
+| `service/EmbeddingService.java` | 重构 | 从 MCP `llm_embedding` 改为 Spring AI `EmbeddingModel`，新增 `getDimensions()` |
+| `mcp/McpClientManager.java` | 修改 | 不再拉起 `llm-chat`/`llm-stream`/`llm-embedding`，保留 `llm`(vision)/`playwright`/`tools` |
+| `resources/application.yml` / `application-prod.yml` | 修改 | 新增 `spring.ai.openai.*` 映射与 `completions-path`/`embeddings-path` 覆盖 |
+| `docs/spring-ai-migration.md` | 新增 | 迁移说明 + 前后调用链路图 + PoC 对比 + 验证记录 |
+| 测试 | 修改/新增 | 修复 `PrdAgentTest`/`StateMachineAgentTest` mock 方法；新增 `LlmServiceTest`、`EmbeddingServiceTest` |
+
+### 验证结果
+
+- `mvn verify` BUILD SUCCESS（JaCoCo 门禁通过，测试全绿）
+- `npm run build` 成功；`docker compose config` 通过
+- 真实 Spring AI 调用 `qwen3.7-max` 返回 200（`/api/settings/test-llm` 响应 `ok`）
+- 真实 `qwen3.7-text-embedding` 返回 1024 维向量
+
+---
+
 ## Performance — 默认关闭 qwen3.7-max 思考模式
 **日期**: 2026-08-17
 **主题**: qwen3.7-max 默认输出大量 reasoning token，单次用例生成耗时 60-90 秒；实测关闭 `enable_thinking` 后同任务从 35.5s 降到 5.5s，token 从 1933 降到 352

@@ -31,7 +31,7 @@ class PrdAgentTest {
     @Test
     void llmFailureMessageIsPropagated() {
         LlmService llmService = mock(LlmService.class);
-        when(llmService.chat(anyString(), anyString(), anyDouble()))
+        when(llmService.chatWithAnalysis(anyString(), anyString(), anyDouble()))
                 .thenThrow(new BusinessException(50002,
                         "LLM调用失败（已重试3次）: MCP [llm] 执行失败: MCP Server 错误: 403 Free quota exhausted",
                         HttpStatus.INTERNAL_SERVER_ERROR));
@@ -51,7 +51,7 @@ class PrdAgentTest {
     @Test
     void emptyLlmResultIsRejected() {
         LlmService llmService = mock(LlmService.class);
-        when(llmService.chat(anyString(), anyString(), anyDouble())).thenReturn("{}");
+        when(llmService.chatWithAnalysis(anyString(), anyString(), anyDouble())).thenReturn("{}");
 
         PrdAgent agent = buildAgent(llmService);
 

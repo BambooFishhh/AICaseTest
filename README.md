@@ -11,7 +11,7 @@
 | 运行态 | Redis 7（取消标志/心跳/并发配额/防爆破/缓存/任务队列） |
 | 语义层 | Milvus 2.4 + LLM Embedding（语义去重/RAG/搜索/失败经验库） |
 | 前端 | Vue 3、Vite、Element Plus、Pinia、ECharts、markmap |
-| AI/执行 | OpenAI 兼容协议 + MCP（LLM 对话/embedding/多模态/Playwright 浏览器/tools 能力桥接） |
+| AI/执行 | Spring AI 1.0（LLM 文本/流式/JSON/Embedding，OpenAI starter）+ MCP（Playwright 浏览器/多模态视觉定位/tools 能力桥接） |
 | 部署 | Docker、docker-compose（MySQL + Redis + Milvus standalone） |
 
 ## 核心能力
@@ -25,6 +25,10 @@
 7. **AI 自动执行**：Playwright MCP 驱动真实浏览器，Agent 模式多模态定位 + LLM 决策 + DOM 兜底，输出步骤截图、WebM 录屏、HTML 报告与证据文件
 8. **语义检索**：Milvus 语义去重、生成前 RAG 上下文注入、自然语言语义搜索、失败经验知识库
 9. **数据治理**：事务落库、项目级联清理、MySQL 复合索引、执行历史分页、保留策略、数据健康检查与 H2→MySQL 迁移工具
+
+## Spring AI 与 MCP 边界
+
+v6.0 起 LLM 文本、流式、JSON 与 Embedding 层由 Spring AI（`spring-ai-starter-model-openai`，兼容 DashScope/MAAS 端点）承载；MCP 继续承担 Playwright 浏览器执行、多模态视觉定位（`multimodal_element_locate`）、`chatWithImage` 与 tools 后端能力桥接。详见 [docs/spring-ai-migration.md](docs/spring-ai-migration.md)。
 
 ## 快速开始
 

@@ -9,21 +9,37 @@ import com.testagent.mcp.McpClientManager;
 import com.testagent.mcp.McpToolResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import reactor.core.Disposable;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.function.Consumer;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * LLM 调用服务。
  * v1.0: OkHttp 直调 OpenAI API
  * v2.3: 重构为通过 MCP 协议调用独立 MCP Server
  * v2.6: 适配 McpClientManager 多 Server 架构
+ * v6.0: 文本/流式/JSON/Embedding 层改用 Spring AI OpenAI starter，
+ *       仅多模态(chatWithImage / multimodal_element_locate)与浏览器/工具仍走 MCP。
+ * 注意：Spring AI 1.0.0 OpenAI starter 无法透传 DashScope 的 enable_thinking，
+ *       因此 analysis/generation 思考开关在该链路为咨询性配置（详见迁移文档 PoC 对比）。
  */
 @Service
 public class LlmService {
@@ -38,11 +54,21 @@ public class LlmService {
     private String model;
 
     // v5.14: 按任务粒度控制思考模式——分析类任务保留，生成/评审默认关闭
+    // v6.0: 咨询性配置（OpenAI starter 不透传 enable_thinking，见类注释）
     @Value("${llm.thinking.analysis:true}")
     private boolean analysisThinking;
 
     @Value("${llm.thinking.generation:false}")
     private boolean generationThinking;
+
+    @Autowired
+    private ChatClient.Builder chatClientBuilder;
+
+    @Autowired
+    private ChatModel chatModel;
+
+    @Autowired
+    private EmbeddingModel embeddingModel;
 
     @Autowired
     private McpClientManager mcpClientManager;
@@ -54,15 +80,19 @@ public class LlmService {
     private static final int MAX_RETRIES = 3;
     private static final long[] RETRY_DELAYS_MS = {1000, 2000, 4000};
 
+    // v6.0: 当前进行中的流式订阅，供取消生成使用（与旧版单 llm-stream 连接语义一致）
+    private final AtomicReference<Disposable> activeStream = new AtomicReference<>();
+    private final AtomicBoolean streamCancelled = new AtomicBoolean(false);
+
     /**
-     * v2.6: 通过 MCP Server 调用 LLM 文本对话。
+     * v6.0: 检查 Spring AI ChatModel/EmbeddingModel 是否可用（替代旧版 MCP llm 可用性检查）。
      */
     public boolean isConfigured() {
-        return mcpClientManager.isAvailable("llm-chat");
+        return chatModel != null;
     }
 
     /**
-     * v2.6: 通过 MCP 协议调用 llm_chat 工具。
+     * v6.0: 通过 Spring AI ChatClient 调用 LLM 文本对话。
      */
     public String chat(String systemPrompt, String userPrompt, double temperature) {
         return chatWithUsage(systemPrompt, userPrompt, temperature, generationThinking).getText();
@@ -84,23 +114,25 @@ public class LlmService {
 
     private LlmCallResult chatWithUsage(String systemPrompt, String userPrompt, double temperature,
                                         boolean enableThinking) {
-        log.info("[LLM] chat() 开始, provider={}, model={}, prompt长度={}", provider, model, userPrompt == null ? 0 : userPrompt.length());
+        log.info("[LLM] chat() 开始, provider={}, model={}, prompt长度={}, thinking={}",
+                provider, model, userPrompt == null ? 0 : userPrompt.length(), enableThinking);
         Exception lastException = null;
         for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
             try {
-                log.info("[LLM] 调用 MCP callTool(llm, llm_chat), attempt={}", attempt + 1);
                 long start = System.currentTimeMillis();
-                McpToolResult result = mcpClientManager.callToolWithMeta("llm-chat", "llm_chat", Map.of(
-                        "system_prompt", systemPrompt,
-                        "user_prompt", userPrompt,
-                        "temperature", temperature,
-                        "enable_thinking", enableThinking
-                ));
-                long elapsed = System.currentTimeMillis() - start;
-                LlmCallResult call = toLlmCallResult(result, start, null);
+                OpenAiChatOptions options = buildOptions(temperature, enableThinking);
+                ChatResponse response = chatClientBuilder.build().prompt()
+                        .system(systemPrompt)
+                        .user(userPrompt == null ? "" : userPrompt)
+                        .options(options)
+                        .call()
+                        .chatResponse();
+                String text = extractText(response);
+                LlmCallResult call = toLlmCallResult(text, response == null ? null : response.getMetadata().getUsage(),
+                        start, null);
                 telemetryService.recordLlmCall(call);
-                log.info("[LLM] MCP 返回, 耗时={}ms, 响应长度={}, usage={}",
-                        elapsed, call.getText() == null ? 0 : call.getText().length(),
+                log.info("[LLM] Spring AI 返回, 耗时={}ms, 响应长度={}, usage={}",
+                        System.currentTimeMillis() - start, text == null ? 0 : text.length(),
                         Map.of("prompt", call.getPromptTokens(), "completion", call.getCompletionTokens(),
                                 "total", call.getTotalTokens()));
                 return call;
@@ -128,11 +160,11 @@ public class LlmService {
 
     /**
      * v3.7: 流式调用 LLM。chunkConsumer 接收逐块文本，方法返回完整响应。
-     * 用于用例生成场景，让用户在 LLM 生成过程中即可看到逐条用例。
+     * v6.0: 改为 Spring AI ChatClient.stream()，Flux<ChatResponse> 仅在本类内部适配。
      */
     public String chatStreaming(String systemPrompt, String userPrompt,
-                               double temperature,
-                               Consumer<String> chunkConsumer) {
+                                double temperature,
+                                Consumer<String> chunkConsumer) {
         return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer, generationThinking).getText();
     }
 
@@ -149,35 +181,77 @@ public class LlmService {
                                                  double temperature,
                                                  Consumer<String> chunkConsumer,
                                                  boolean enableThinking) {
-        log.info("[LLM] chatStreaming() 开始, prompt长度={}", userPrompt == null ? 0 : userPrompt.length());
+        log.info("[LLM] chatStreaming() 开始, prompt长度={}, thinking={}",
+                userPrompt == null ? 0 : userPrompt.length(), enableThinking);
         Exception lastException = null;
         for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            streamCancelled.set(false);
             try {
                 long start = System.currentTimeMillis();
                 AtomicLong firstTokenAt = new AtomicLong(0);
-                Map<String, Object> args = new LinkedHashMap<>();
-                args.put("system_prompt", systemPrompt);
-                args.put("user_prompt", userPrompt);
-                args.put("temperature", temperature);
-                args.put("stream", true);
-                args.put("enable_thinking", enableThinking);
+                StringBuilder full = new StringBuilder();
+                AtomicReference<Usage> usageRef = new AtomicReference<>();
+                AtomicReference<Throwable> errorRef = new AtomicReference<>();
+                CountDownLatch done = new CountDownLatch(1);
 
-                Consumer<String> wrappedChunk = chunk -> {
-                    if (firstTokenAt.get() == 0) {
-                        firstTokenAt.set(System.currentTimeMillis());
+                OpenAiChatOptions options = buildOptions(temperature, enableThinking);
+                var flux = chatClientBuilder.build().prompt()
+                        .system(systemPrompt)
+                        .user(userPrompt == null ? "" : userPrompt)
+                        .options(options)
+                        .stream()
+                        .chatResponse();
+
+                Disposable disposable = flux.doOnNext(response -> {
+                    if (streamCancelled.get()) {
+                        throw new GenerationCancelledException("用户取消生成");
                     }
-                    if (chunkConsumer != null) {
-                        chunkConsumer.accept(chunk);
+                    String delta = extractText(response);
+                    if (delta != null && !delta.isEmpty()) {
+                        firstTokenAt.compareAndSet(0, System.currentTimeMillis());
+                        full.append(delta);
+                        if (chunkConsumer != null) {
+                            chunkConsumer.accept(delta);
+                        }
                     }
-                };
-                McpToolResult result = mcpClientManager.callToolStreamingWithMeta(
-                        "llm-stream", "llm_chat", args, wrappedChunk);
+                    Usage usage = response.getMetadata().getUsage();
+                    if (usage != null) {
+                        usageRef.set(usage);
+                    }
+                }).doOnError(errorRef::set)
+                  .doOnComplete(done::countDown)
+                  .doOnCancel(done::countDown)
+                  .subscribe();
+                activeStream.set(disposable);
+
+                try {
+                    while (!done.await(200, TimeUnit.MILLISECONDS)) {
+                        if (streamCancelled.get()) {
+                            disposable.dispose();
+                            throw new GenerationCancelledException("用户取消生成");
+                        }
+                    }
+                } finally {
+                    activeStream.set(null);
+                    if (!disposable.isDisposed()) {
+                        disposable.dispose();
+                    }
+                }
+
+                if (streamCancelled.get()) {
+                    throw new GenerationCancelledException("用户取消生成");
+                }
+                Throwable error = errorRef.get();
+                if (error != null) {
+                    throw new RuntimeException(error);
+                }
+
                 long elapsed = System.currentTimeMillis() - start;
                 Long firstTokenMs = firstTokenAt.get() == 0 ? null : firstTokenAt.get() - start;
-                LlmCallResult call = toLlmCallResult(result, start, firstTokenMs);
+                LlmCallResult call = toLlmCallResult(full.toString(), usageRef.get(), start, firstTokenMs);
                 telemetryService.recordLlmCall(call);
                 log.info("[LLM] chatStreaming 完成, 耗时={}ms, ttft={}ms, 响应长度={}, usage={}",
-                        elapsed, firstTokenMs, call.getText() == null ? 0 : call.getText().length(),
+                        elapsed, firstTokenMs, full.length(),
                         Map.of("prompt", call.getPromptTokens(), "completion", call.getCompletionTokens(),
                                 "total", call.getTotalTokens()));
                 return call;
@@ -204,7 +278,22 @@ public class LlmService {
     }
 
     /**
-     * v2.6: 通过 MCP 协议调用 llm_chat_with_image 工具。
+     * v6.0: 取消当前进行中的 Spring AI 流式请求（由测试用例生成取消端点触发）。
+     */
+    public void cancelStreaming() {
+        streamCancelled.set(true);
+        Disposable disposable = activeStream.get();
+        if (disposable != null && !disposable.isDisposed()) {
+            try {
+                disposable.dispose();
+            } catch (Exception e) {
+                log.debug("Cancel Spring AI stream dispose failed: {}", e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * v2.6: 通过 MCP 协议调用 llm_chat_with_image 工具（保留 MCP 多模态）。
      */
     public String chatWithImage(String systemPrompt, String userText, String imageBase64) {
         Exception lastException = null;
@@ -216,7 +305,10 @@ public class LlmService {
                         "user_text", userText,
                         "image_base64", imageBase64
                 ));
-                LlmCallResult call = toLlmCallResult(result, start, null);
+                LlmCallResult call = toLlmCallResult(result == null ? null : result.getText(),
+                        result == null || result.getMetadata() == null ? null
+                                : usageFromMcpJson(result.getMetadata().path("usage")),
+                        start, null);
                 telemetryService.recordLlmCall(call);
                 return call.getText();
             } catch (Exception e) {
@@ -237,19 +329,49 @@ public class LlmService {
                 HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
-    private LlmCallResult toLlmCallResult(McpToolResult result, long startMs, Long firstTokenMs) {
+    private OpenAiChatOptions buildOptions(double temperature, boolean enableThinking) {
+        // v6.0: OpenAI starter 不透传 enable_thinking；temperature/maxTokens 对齐旧版 MCP 请求。
+        log.debug("[LLM] thinking flag={} (Spring AI OpenAI starter advisory only)", enableThinking);
+        return OpenAiChatOptions.builder()
+                .model(model)
+                .temperature(temperature)
+                .maxTokens(16384)
+                .streamUsage(true)
+                .build();
+    }
+
+    private String extractText(ChatResponse response) {
+        if (response == null) {
+            return "";
+        }
+        Generation generation = response.getResult();
+        if (generation == null || generation.getOutput() == null || generation.getOutput().getText() == null) {
+            return "";
+        }
+        return generation.getOutput().getText();
+    }
+
+    private Usage usageFromMcpJson(JsonNode usage) {
+        if (usage == null || usage.isMissingNode()) {
+            return null;
+        }
+        return new SimpleUsage(
+                usage.path("prompt_tokens").asInt(0),
+                usage.path("completion_tokens").asInt(0),
+                usage.path("total_tokens").asInt(0));
+    }
+
+    private LlmCallResult toLlmCallResult(String text, Usage usage, long startMs, Long firstTokenMs) {
         LlmCallResult.LlmCallResultBuilder builder = LlmCallResult.builder()
-                .text(result == null ? null : result.getText())
+                .text(text)
                 .durationMs(System.currentTimeMillis() - startMs)
-                .firstTokenMs(firstTokenMs)
-                .promptTokens(0)
-                .completionTokens(0)
-                .totalTokens(0);
-        if (result != null && result.getMetadata() != null && result.getMetadata().has("usage")) {
-            JsonNode usage = result.getMetadata().path("usage");
-            builder.promptTokens(usage.path("prompt_tokens").asInt(0));
-            builder.completionTokens(usage.path("completion_tokens").asInt(0));
-            builder.totalTokens(usage.path("total_tokens").asInt(0));
+                .firstTokenMs(firstTokenMs);
+        if (usage == null) {
+            builder.promptTokens(0).completionTokens(0).totalTokens(0);
+        } else {
+            builder.promptTokens(usage.getPromptTokens() == null ? 0 : usage.getPromptTokens())
+                    .completionTokens(usage.getCompletionTokens() == null ? 0 : usage.getCompletionTokens())
+                    .totalTokens(usage.getTotalTokens() == null ? 0 : usage.getTotalTokens());
         }
         return builder.build();
     }
@@ -298,13 +420,14 @@ public class LlmService {
     }
 
     /**
-     * v2.6: 测试 MCP Server 连接。
+     * v2.6: 测试 LLM 连通性。
      */
     public Map<String, Object> testConnection() {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("provider", provider);
         result.put("model", model);
-        result.put("mcpAvailable", mcpClientManager.isAvailable("llm"));
+        result.put("springAiChatModel", chatModel != null);
+        result.put("springAiEmbeddingModel", embeddingModel != null);
         try {
             String response = chat("You are a helpful assistant.", "Reply with the word: ok", 0.0);
             String preview = response.length() > 200 ? response.substring(0, 200) : response;
@@ -315,5 +438,40 @@ public class LlmService {
             result.put("status", "failed");
         }
         return result;
+    }
+
+    /**
+     * 最小 Usage 实现，用于 MCP 多模态返回（chatWithImage）的埋点适配。
+     */
+    private static final class SimpleUsage implements Usage {
+        private final int promptTokens;
+        private final int completionTokens;
+        private final int totalTokens;
+
+        private SimpleUsage(int promptTokens, int completionTokens, int totalTokens) {
+            this.promptTokens = promptTokens;
+            this.completionTokens = completionTokens;
+            this.totalTokens = totalTokens;
+        }
+
+        @Override
+        public Integer getPromptTokens() {
+            return promptTokens;
+        }
+
+        @Override
+        public Integer getCompletionTokens() {
+            return completionTokens;
+        }
+
+        @Override
+        public Integer getTotalTokens() {
+            return totalTokens;
+        }
+
+        @Override
+        public Object getNativeUsage() {
+            return null;
+        }
     }
 }
