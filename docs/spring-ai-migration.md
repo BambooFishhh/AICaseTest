@@ -84,11 +84,11 @@ flowchart LR
 - 全仓库无 `qwen3.7-max-2026-05-20` 残留。
 - `/api/health` 返回 `UP`。
 - 真实 LLM：Spring AI 调用 `qwen3.7-max` 返回 200，`/api/settings/test-llm` 响应 `ok`。
-- 真实 embedding：`qwen3.7-text-embedding` 返回 1024 维向量。
+- 真实流式：`LlmStreamingIntegrationTest`（`AICT_LIVE_LLM_TEST=true` 开启）验证 `chatStreaming` 真实收到分块，返回完整文本并回传 usage（`LlmStreamingIntegrationTest` 正常 `mvn test` 默认跳过）。
+- 真实 embedding：Spring AI `EmbeddingModel` + `qwen3.7-text-embedding` 返回 1024 维向量。
 
 待部署环境验证（MySQL/Redis/Milvus + Playwright + 前端 + 带 PRD 项目）：
 
-- 真实 `chatStreaming` 的 SSE 用例事件逐条触发；
 - 完整链路：代码分析 / PRD 解析 -> 用例生成 -> Playwright 执行 -> 截图 / 录屏 / 报告；
 - `enable_thinking` 开关在 OpenAI starter 链路下的影响评估。
 
