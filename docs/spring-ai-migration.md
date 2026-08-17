@@ -86,10 +86,11 @@ flowchart LR
 - 真实 LLM：Spring AI 调用 `qwen3.7-max` 返回 200，`/api/settings/test-llm` 响应 `ok`。
 - 真实流式：`LlmStreamingIntegrationTest`（`AICT_LIVE_LLM_TEST=true` 开启）验证 `chatStreaming` 真实收到分块，返回完整文本并回传 usage（`LlmStreamingIntegrationTest` 正常 `mvn test` 默认跳过）。
 - 真实 embedding：Spring AI `EmbeddingModel` + `qwen3.7-text-embedding` 返回 1024 维向量。
+- 真实生成 SSE：为 PRD 项目触发 `GET /api/projects/{id}/testcases/generate-stream`，Spring AI 流式 + `StreamingTestCaseParser` 成功推送多条 `case` 事件并以 `complete(total=7)` 结束。
 
 待部署环境验证（MySQL/Redis/Milvus + Playwright + 前端 + 带 PRD 项目）：
 
-- 完整链路：代码分析 / PRD 解析 -> 用例生成 -> Playwright 执行 -> 截图 / 录屏 / 报告；
+- 用例生成后由 Playwright 自动执行并输出截图 / 录屏 / 报告（执行段仍需浏览器 MCP 与可用被测应用）；
 - `enable_thinking` 开关在 OpenAI starter 链路下的影响评估。
 
 ## 迁移命令

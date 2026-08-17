@@ -6,6 +6,11 @@ spring:
   # vP2: 优雅停机最长等待 30s
   lifecycle:
     timeout-per-shutdown-phase: 30s
+  # v6.0fix: Spring AI OpenAI 长推理请求需更长 HTTP 超时，避免 Total timeout 10s 超时
+  http:
+    client:
+      connect-timeout: 30s
+      read-timeout: 600s
   # v5.0/v5.5: profile 组——prod/migrate 自动带入 mysql
   profiles:
     group:

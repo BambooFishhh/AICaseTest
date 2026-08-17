@@ -27,6 +27,7 @@
 - 真实 Spring AI 调用 `qwen3.7-max` 返回 200（`/api/settings/test-llm` 响应 `ok`）
 - 真实 Spring AI 流式（`LlmStreamingIntegrationTest` 开启时运行）收到分块并回传 usage
 - 真实 Spring AI `qwen3.7-text-embedding` 返回 1024 维向量
+- 真实 PRD 生成 SSE 触发多条 `case` 事件并以 `complete(total=7)` 结束
 
 ---
 
