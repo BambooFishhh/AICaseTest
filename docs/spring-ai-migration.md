@@ -74,6 +74,8 @@ flowchart LR
 
 `enable_thinking` 无法经 OpenAI starter 透传（已通过反射核验 `ChatCompletionRequest` 字段），因此 `llm.thinking.*` 在该链路为咨询性配置。这是两条路线对比的核心差异。
 
+**DashScope PoC 分支结论**：已在独立分支 `codex/poc-spring-ai-dashscope` 完成依赖切换（`spring-ai-alibaba-starter-dashscope:1.0.0.4`），`LlmService` 改用 `DashScopeChatOptions`（原生 `withEnableThinking`），配置前缀切为 `spring.ai.dashscope.*`，`mvn compile` 通过。运行时注意：当前 MAAS 资源为 OpenAI 兼容模式，Alibaba DashScope starter 走原生 DashScope 协议，如需真实调用应改用原生 DashScope 的 endpoint/api-key（或确认目标资源同时支持原生模式）。
+
 ## 验证结果记录
 
 已完成：
