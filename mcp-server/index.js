@@ -26,8 +26,12 @@ const baseUrl = process.env.OPENAI_BASE_URL || process.env.LLM_BASE_URL || 'http
 const model = process.env.OPENAI_MODEL || process.env.LLM_MODEL || 'gpt-4o';
 // v5.4: embedding 模型（默认复用对话模型，可通过环境变量单独指定）
 const embeddingModel = process.env.OPENAI_EMBEDDING_MODEL || process.env.LLM_EMBEDDING_MODEL || model;
+// v5.14fix: 默认关闭思考模式可显著降低 qwen3.7-max 延迟与 token 消耗；Java 侧可按任务覆盖
+const enableThinking = process.env.LLM_ENABLE_THINKING === 'true';
 
 const client = new OpenAI({ apiKey, baseURL: baseUrl });
+// v5.14: 记录进行中的请求 id -> AbortController，用于按请求取消
+const activeRequests = new Map();
 
 const LOCATE_SYSTEM_PROMPT = `你是页面控件视觉识别专家。请看截图，找到用户描述的控件位置。
 返回纯 JSON（不要 markdown 代码块），格式固定：
@@ -41,10 +45,10 @@ const LOCATE_SYSTEM_PROMPT = `你是页面控件视觉识别专家。请看截�
 
 // v3.7: StreamingServer 子类，暴露 protected notification() 用于流式 chunk 推送
 class StreamingServer extends Server {
-  async sendChunkNotification(text, index) {
+  async sendChunkNotification(text, index, requestId) {
     await this.notification({
       method: 'notifications/llm_chunk',
-      params: { text, index },
+      params: { text, index, request_id: requestId },
     });
   }
 }
@@ -108,6 +112,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['input'],
       },
     },
+    {
+      name: 'llm_cancel',
+      description: '取消进行中的 LLM 请求（按 request_id）',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          request_id: { type: 'integer' },
+        },
+        required: ['request_id'],
+      },
+    },
   ],
 }));
 
@@ -118,7 +133,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case 'llm_chat': {
-        const { system_prompt, user_prompt, temperature = 0.7, stream = false } = args;
+        const { system_prompt, user_prompt, temperature = 0.7, stream = false, enable_thinking } = args;
+        const thinking = typeof enable_thinking === 'boolean' ? enable_thinking : enableThinking;
+        const controller = new AbortController();
+        activeRequests.set(request.id, controller);
+        try {
         // v3.7: 流式模式——逐块推送 notification + 累积完整文本
         if (stream) {
           let fullText = '';
@@ -129,6 +148,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             max_tokens: 16384,
             stream: true,
             stream_options: { include_usage: true },
+            enable_thinking: thinking,
+            signal: controller.signal,
             messages: [
               { role: 'system', content: system_prompt },
               { role: 'user', content: user_prompt },
@@ -142,7 +163,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const delta = chunk.choices[0]?.delta?.content || '';
             if (delta) {
               fullText += delta;
-              await server.sendChunkNotification(delta, chunkIndex++);
+              await server.sendChunkNotification(delta, chunkIndex++, request.id);
             }
           }
           return {
@@ -157,6 +178,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           model,
           temperature: parseFloat(temperature),
           max_tokens: 16384,
+          enable_thinking: thinking,
+          signal: controller.signal,
           messages: [
             { role: 'system', content: system_prompt },
             { role: 'user', content: user_prompt },
@@ -170,6 +193,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             { type: 'text', text: JSON.stringify({ usage }) },
           ],
         };
+        } finally {
+          activeRequests.delete(request.id);
+        }
+      }
+
+      case 'llm_cancel': {
+        const { request_id } = args;
+        const controller = activeRequests.get(request_id);
+        if (controller) {
+          controller.abort();
+        }
+        return { content: [{ type: 'text', text: 'cancelled' }] };
       }
 
       case 'llm_chat_with_image': {

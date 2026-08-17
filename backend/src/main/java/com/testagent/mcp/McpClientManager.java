@@ -43,6 +43,9 @@ public class McpClientManager {
     @Value("${llm.embedding-model:qwen3.7-text-embedding}")
     private String llmEmbeddingModel;
 
+    @Value("${llm.enable-thinking:false}")
+    private boolean llmEnableThinking;
+
     // v2.7: Playwright MCP Server 配置
     @Value("${mcp.servers.playwright.node-path:node}")
     private String playwrightNodePath;
@@ -73,16 +76,33 @@ public class McpClientManager {
             log.info("MCP disabled (app.mcp.enabled=false), skip spawning MCP servers");
             return;
         }
-        // 创建并启动 "llm" Server
+        // v5.14: LLM 能力按连接拆分——vision 保留 "llm"，chat/stream/embedding 独立进程
         Map<String, String> llmEnv = new HashMap<>();
         llmEnv.put("OPENAI_API_KEY", llmApiKey);
         llmEnv.put("OPENAI_BASE_URL", llmBaseUrl);
         llmEnv.put("OPENAI_MODEL", llmModel);
         llmEnv.put("OPENAI_EMBEDDING_MODEL", llmEmbeddingModel);
+        llmEnv.put("LLM_ENABLE_THINKING", String.valueOf(llmEnableThinking));
 
+        // 多模态/视觉识别继续使用原 "llm" 连接
         McpConnection llmConn = new McpConnection("llm", llmNodePath, llmScriptPath, null, llmEnv);
         llmConn.start();
         connections.put("llm", llmConn);
+
+        Map<String, String> chatEnv = new HashMap<>(llmEnv);
+        McpConnection chatConn = new McpConnection("llm-chat", llmNodePath, llmScriptPath, null, chatEnv);
+        chatConn.start();
+        connections.put("llm-chat", chatConn);
+
+        Map<String, String> streamEnv = new HashMap<>(llmEnv);
+        McpConnection streamConn = new McpConnection("llm-stream", llmNodePath, llmScriptPath, null, streamEnv);
+        streamConn.start();
+        connections.put("llm-stream", streamConn);
+
+        Map<String, String> embeddingEnv = new HashMap<>(llmEnv);
+        McpConnection embeddingConn = new McpConnection("llm-embedding", llmNodePath, llmScriptPath, null, embeddingEnv);
+        embeddingConn.start();
+        connections.put("llm-embedding", embeddingConn);
 
         // v2.7: 创建并启动 "playwright" Server
         McpConnection playwrightConn = new McpConnection("playwright",
@@ -167,6 +187,16 @@ public class McpClientManager {
      */
     public boolean isAnyAvailable() {
         return connections.values().stream().anyMatch(McpConnection::isAvailable);
+    }
+
+    /**
+     * v5.14: 中断指定连接的当前流式请求（用于取消生成）。
+     */
+    public void cancelStreaming(String serverName) {
+        McpConnection conn = connections.get(serverName);
+        if (conn != null) {
+            conn.cancelActiveStreaming();
+        }
     }
 
     @PreDestroy

@@ -23,6 +23,7 @@ import com.testagent.entity.Project;
 import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
 import com.testagent.entity.TestCaseVersion;
+import com.testagent.mcp.McpClientManager;
 import com.testagent.repository.CodeAnalysisRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
@@ -93,6 +94,9 @@ public class TestCaseService {
     private SemanticService semanticService;
 
     @Autowired
+    private SemanticIndexingAsyncService semanticIndexingAsyncService;
+
+    @Autowired
     private TestCasePersistenceService testCasePersistenceService;
 
     @Autowired
@@ -136,6 +140,9 @@ public class TestCaseService {
 
     @Autowired
     private UploadGuard uploadGuard;
+
+    @Autowired
+    private McpClientManager mcpClientManager;
 
     private boolean hasPrd(Project project) {
         if (project.getPrdContent() != null && !project.getPrdContent().isBlank()) {
@@ -454,7 +461,28 @@ public class TestCaseService {
                 if (maxLen > 0 && (double) intersection.size() / maxLen > 0.8) return true;
             }
         }
+        // v5.14: 类型一致且步骤/接口指纹一致视为重复
+        String typeA = a.getType() == null ? "" : a.getType();
+        String typeB = b.getType() == null ? "" : b.getType();
+        if (modA.equals(modB) && typeA.equals(typeB)
+                && !caseStepsSignature(a).isEmpty()
+                && caseStepsSignature(a).equals(caseStepsSignature(b))) {
+            return true;
+        }
         return false;
+    }
+
+    private String caseStepsSignature(TestCase tc) {
+        StringBuilder sb = new StringBuilder();
+        for (Map<String, Object> step : JsonHelper.parseListMap(tc.getStructuredSteps())) {
+            sb.append(step.get("type")).append('|')
+                    .append(step.get("action")).append('|')
+                    .append(step.get("target")).append(';');
+        }
+        for (Map<String, Object> ep : JsonHelper.parseListMap(tc.getApiEndpoints())) {
+            sb.append(ep.get("method")).append(' ').append(ep.get("path")).append(';');
+        }
+        return sb.toString();
     }
 
     // v3.3: 取消生成（供 Controller 调用）。返回是否成功取消（有进行中的生成任务）。
@@ -462,6 +490,8 @@ public class TestCaseService {
         RuntimeFlag flag = cancellationFlags.get(projectId);
         if (flag != null) {
             flag.cancel();
+            // v5.14: 立即中断流式 MCP 连接，避免等待当前 LLM 调用跑完
+            mcpClientManager.cancelStreaming("llm-stream");
             return true;
         }
         return false;
@@ -1123,8 +1153,8 @@ public class TestCaseService {
         }
 
         testCaseRepository.save(tc);
-        // v5.6: 编辑用例后重建向量（先删旧向量再写入）
-        semanticService.reindexCase(projectId, tc);
+        // v5.6: 编辑用例后重建向量（先删旧向量再写入）；异步执行避免排在 MCP 连接后阻塞保存请求
+        semanticIndexingAsyncService.reindexCase(projectId, tc);
         return TestCaseDTO.from(tc);
     }
 

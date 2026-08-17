@@ -322,6 +322,7 @@
               <el-dropdown-item command="suites" :icon="Operation">测试集</el-dropdown-item>
               <el-dropdown-item command="env" :icon="Connection">执行环境</el-dropdown-item>
               <el-dropdown-item command="semantic" :icon="Search">语义搜索</el-dropdown-item>
+              <el-dropdown-item command="applyAiReview" :icon="Select" :disabled="selectedRows.length === 0">批量采纳 AI 评审</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -925,7 +926,7 @@ import {
   Search, Delete, Download, Upload, Check, ArrowDown, VideoPlay,
   Setting, Plus, View, RefreshRight, Share, Files, Document, MoreFilled, CircleCheck,
   CircleClose, Aim, Coin, FolderOpened, ArrowLeft, Loading, DataAnalysis,
-  Clock, Filter, CopyDocument, Operation, Connection, MagicStick, EditPen
+  Clock, Filter, CopyDocument, Operation, Connection, MagicStick, EditPen, Select
 } from '@element-plus/icons-vue'
 import {
   listTestCases, streamGenerate, streamGenerateAppend,
@@ -987,6 +988,7 @@ const coverage = ref(null)
 const aiReviewExpanded = ref([])
 let aiReviewAutoExpanded = false
 const reviewingId = ref('')
+const batchApplyAiReviewing = ref(false)
 
 const aiReviewRows = computed(() =>
   (testCases.value || [])
@@ -1138,6 +1140,39 @@ function handleMoreCommand(command) {
   else if (command === 'suites') openSuiteDialog()
   else if (command === 'env') openEnvDialog()
   else if (command === 'semantic') openSemanticDialog()
+  else if (command === 'applyAiReview') batchApplyAiReview()
+}
+
+// 批量采纳 AI 评审（选中行）
+async function batchApplyAiReview() {
+  if (!selectedRows.value.length) return
+  batchApplyAiReviewing.value = true
+  let ok = 0
+  try {
+    for (const row of selectedRows.value) {
+      const r = row.review
+      if (!r) continue
+      const s = r.suggestedChanges || {}
+      const hints = {
+        ...(row.hints || {}),
+        aiReview: { ...r, status: 'applied' }
+      }
+      const body = { executionHints: hints, reviewStatus: 'reviewed' }
+      if (s.coverageRefs) hints.coverageRefs = s.coverageRefs
+      if (s.title) body.title = s.title
+      if (s.module) body.module = s.module
+      if (s.type) body.type = s.type
+      if (s.priority) body.priority = s.priority
+      await updateTestCase(projectId, row.id, body)
+      ok++
+    }
+    ElMessage.success(`已批量采纳 ${ok} 条 AI 评审`)
+    await Promise.all([loadList(), loadAllForStats()])
+  } catch {
+    // 错误已由响应拦截器统一提示
+  } finally {
+    batchApplyAiReviewing.value = false
+  }
 }
 
 const moduleOptions = computed(() => {
@@ -1374,7 +1409,10 @@ async function handleDeleteTestCase(testcaseId) {
     await deleteTestCase(projectId, testcaseId)
     ElMessage.success('用例已删除')
     dialogVisible.value = false
-    await Promise.all([loadList(), loadAllForStats()])
+    if (currentTestCase.value?.id === testcaseId) {
+      currentTestCase.value = null
+    }
+    await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
   } catch {
     // 错误已由响应拦截器统一提示
   }
@@ -1504,7 +1542,10 @@ async function handleBatchDelete() {
     const res = await batchDeleteTestCases(projectId, ids)
     ElMessage.success(`已删除 ${res.data} 条用例`)
     selectedRows.value = []
-    await Promise.all([loadList(), loadAllForStats()])
+    if (currentTestCase.value && ids.includes(currentTestCase.value.id)) {
+      currentTestCase.value = null
+    }
+    await Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
   } catch {
     // 错误已由响应拦截器统一提示
   }

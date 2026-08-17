@@ -25,7 +25,7 @@ public class EmbeddingService {
     private McpClientManager mcpClientManager;
 
     public boolean isConfigured() {
-        return mcpClientManager.isAvailable("llm");
+        return mcpClientManager.isAvailable("llm-embedding");
     }
 
     public List<Float> embed(String text) {
@@ -37,7 +37,7 @@ public class EmbeddingService {
             return List.of();
         }
         try {
-            String response = mcpClientManager.callTool("llm", "llm_embedding", Map.of("input", text));
+            String response = mcpClientManager.callTool("llm-embedding", "llm_embedding", Map.of("input", text));
             String json = extractJsonArray(response);
             JsonNode arr = objectMapper.readTree(json);
             List<Float> result = new ArrayList<>();

@@ -148,11 +148,14 @@ services:
       - "8000:8000"
     environment:
       - SPRING_PROFILES_ACTIVE=prod
-      - LLM_PROVIDER=${LLM_PROVIDER:-mimo}
+      - LLM_PROVIDER=${LLM_PROVIDER:-bailian}
       - LLM_API_KEY=${LLM_API_KEY:-}
-      - LLM_MODEL=${LLM_MODEL:-mimo-v2.5-pro}
-      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.xiaomimimo.com/v1}
+      - LLM_MODEL=${LLM_MODEL:-qwen3.7-max}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://llm-fua5iwoagy8hd5de.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
       - LLM_EMBEDDING_MODEL=${LLM_EMBEDDING_MODEL:-qwen3.7-text-embedding}
+      - LLM_ENABLE_THINKING=${LLM_ENABLE_THINKING:-false}
+      - LLM_THINKING_ANALYSIS=${LLM_THINKING_ANALYSIS:-true}
+      - LLM_THINKING_GENERATION=${LLM_THINKING_GENERATION:-false}
       # v5.5: 正式切换 MySQL + Redis + Milvus
       - MYSQL_URL=jdbc:mysql://aicasetest-mysql:3306/aicasetest?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
       - MYSQL_USERNAME=${MYSQL_USERNAME:-aicasetest}
@@ -169,6 +172,8 @@ services:
       - APP_ENFORCE_SECURITY=${APP_ENFORCE_SECURITY:-true}
       - APP_JWT_SECRET=${APP_JWT_SECRET:-}
       - APP_ADMIN_PASSWORD=${APP_ADMIN_PASSWORD:-}
+      # v5.13fix: SSE 长连接超时（分钟），需与 frontend/nginx.conf proxy timeout 对齐
+      - APP_SSE_TIMEOUT_MINUTES=${APP_SSE_TIMEOUT_MINUTES:-30}
       # v5.13: tools MCP Server 访问后端桥接接口
       - MCP_BRIDGE_URL=http://backend:8000
       - MCP_BRIDGE_TOKEN=${MCP_BRIDGE_TOKEN:-aicasetest-mcp-local}

@@ -3,6 +3,7 @@ package com.testagent.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.common.BusinessException;
+import com.testagent.common.GenerationCancelledException;
 import com.testagent.dto.LlmCallResult;
 import com.testagent.mcp.McpClientManager;
 import com.testagent.mcp.McpToolResult;
@@ -36,6 +37,13 @@ public class LlmService {
     @Value("${llm.model:gpt-4o}")
     private String model;
 
+    // v5.14: 按任务粒度控制思考模式——分析类任务保留，生成/评审默认关闭
+    @Value("${llm.thinking.analysis:true}")
+    private boolean analysisThinking;
+
+    @Value("${llm.thinking.generation:false}")
+    private boolean generationThinking;
+
     @Autowired
     private McpClientManager mcpClientManager;
 
@@ -50,30 +58,43 @@ public class LlmService {
      * v2.6: 通过 MCP Server 调用 LLM 文本对话。
      */
     public boolean isConfigured() {
-        return mcpClientManager.isAvailable("llm");
+        return mcpClientManager.isAvailable("llm-chat");
     }
 
     /**
      * v2.6: 通过 MCP 协议调用 llm_chat 工具。
      */
     public String chat(String systemPrompt, String userPrompt, double temperature) {
-        return chatWithUsage(systemPrompt, userPrompt, temperature).getText();
+        return chatWithUsage(systemPrompt, userPrompt, temperature, generationThinking).getText();
+    }
+
+    /**
+     * v5.14: 分析类调用（PRD 解析/状态机提取）保留思考模式。
+     */
+    public String chatWithAnalysis(String systemPrompt, String userPrompt, double temperature) {
+        return chatWithUsage(systemPrompt, userPrompt, temperature, analysisThinking).getText();
     }
 
     /**
      * v5.14: chat() 的埋点版本，返回耗时与 token usage。
      */
     public LlmCallResult chatWithUsage(String systemPrompt, String userPrompt, double temperature) {
+        return chatWithUsage(systemPrompt, userPrompt, temperature, generationThinking);
+    }
+
+    private LlmCallResult chatWithUsage(String systemPrompt, String userPrompt, double temperature,
+                                        boolean enableThinking) {
         log.info("[LLM] chat() 开始, provider={}, model={}, prompt长度={}", provider, model, userPrompt == null ? 0 : userPrompt.length());
         Exception lastException = null;
         for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
             try {
                 log.info("[LLM] 调用 MCP callTool(llm, llm_chat), attempt={}", attempt + 1);
                 long start = System.currentTimeMillis();
-                McpToolResult result = mcpClientManager.callToolWithMeta("llm", "llm_chat", Map.of(
+                McpToolResult result = mcpClientManager.callToolWithMeta("llm-chat", "llm_chat", Map.of(
                         "system_prompt", systemPrompt,
                         "user_prompt", userPrompt,
-                        "temperature", temperature
+                        "temperature", temperature,
+                        "enable_thinking", enableThinking
                 ));
                 long elapsed = System.currentTimeMillis() - start;
                 LlmCallResult call = toLlmCallResult(result, start, null);
@@ -86,6 +107,9 @@ public class LlmService {
             } catch (Exception e) {
                 lastException = e;
                 log.warn("[LLM] attempt {} 失败: {}", attempt + 1, e.getMessage());
+                if (e instanceof GenerationCancelledException) {
+                    throw (GenerationCancelledException) e;
+                }
             }
             if (attempt < MAX_RETRIES - 1) {
                 try {
@@ -109,7 +133,7 @@ public class LlmService {
     public String chatStreaming(String systemPrompt, String userPrompt,
                                double temperature,
                                Consumer<String> chunkConsumer) {
-        return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer).getText();
+        return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer, generationThinking).getText();
     }
 
     /**
@@ -118,6 +142,13 @@ public class LlmService {
     public LlmCallResult chatStreamingWithUsage(String systemPrompt, String userPrompt,
                                                 double temperature,
                                                 Consumer<String> chunkConsumer) {
+        return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer, generationThinking);
+    }
+
+    private LlmCallResult chatStreamingWithUsage(String systemPrompt, String userPrompt,
+                                                 double temperature,
+                                                 Consumer<String> chunkConsumer,
+                                                 boolean enableThinking) {
         log.info("[LLM] chatStreaming() 开始, prompt长度={}", userPrompt == null ? 0 : userPrompt.length());
         Exception lastException = null;
         for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -129,6 +160,7 @@ public class LlmService {
                 args.put("user_prompt", userPrompt);
                 args.put("temperature", temperature);
                 args.put("stream", true);
+                args.put("enable_thinking", enableThinking);
 
                 Consumer<String> wrappedChunk = chunk -> {
                     if (firstTokenAt.get() == 0) {
@@ -139,7 +171,7 @@ public class LlmService {
                     }
                 };
                 McpToolResult result = mcpClientManager.callToolStreamingWithMeta(
-                        "llm", "llm_chat", args, wrappedChunk);
+                        "llm-stream", "llm_chat", args, wrappedChunk);
                 long elapsed = System.currentTimeMillis() - start;
                 Long firstTokenMs = firstTokenAt.get() == 0 ? null : firstTokenAt.get() - start;
                 LlmCallResult call = toLlmCallResult(result, start, firstTokenMs);
@@ -152,6 +184,9 @@ public class LlmService {
             } catch (Exception e) {
                 lastException = e;
                 log.warn("[LLM] chatStreaming attempt {} 失败: {}", attempt + 1, e.getMessage());
+                if (e instanceof GenerationCancelledException) {
+                    throw (GenerationCancelledException) e;
+                }
             }
             if (attempt < MAX_RETRIES - 1) {
                 try {

@@ -4,6 +4,125 @@
 
 ---
 
+## Performance — 默认关闭 qwen3.7-max 思考模式
+**日期**: 2026-08-17
+**主题**: qwen3.7-max 默认输出大量 reasoning token，单次用例生成耗时 60-90 秒；实测关闭 `enable_thinking` 后同任务从 35.5s 降到 5.5s，token 从 1933 降到 352
+
+### 变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `mcp-server/index.js` | 修改 | `llm_chat` 支持 `enable_thinking`，默认关闭 |
+| `mcp/McpClientManager.java` | 修改 | 透传 `LLM_ENABLE_THINKING` 到 MCP 子进程 |
+| `resources/application.yml` / `docker-compose.yml` / `.env.example` / `.env` | 修改 | 新增 `LLM_ENABLE_THINKING=false` 配置 |
+
+### 验证结果
+
+- 同 Prompt 实测：开启思考 35.5s / 1933 token；关闭思考 5.5s / 352 token
+
+---
+
+## Performance — 思考模式按任务粒度拆分
+**日期**: 2026-08-17
+**主题**: PRD 解析/状态机提取保留思考模式，用例生成与 AI 评审默认关闭思考模式
+
+### 变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/LlmService.java` | 修改 | 新增 `chatWithAnalysis`，`chat`/`chatStreaming` 默认走 `LLM_THINKING_GENERATION` |
+| `agent/PrdAgent.java` / `agent/StateMachineAgent.java` | 修改 | 分析类调用改为保留思考模式 |
+| `mcp-server/index.js` | 修改 | `llm_chat` 支持按调用覆盖 `enable_thinking` |
+| `resources/application.yml` / `docker-compose.yml` / `.env.example` / `.env` | 修改 | 新增 `LLM_THINKING_ANALYSIS=true`、`LLM_THINKING_GENERATION=false` |
+
+---
+
+## Fix — 重新生成时清理 AI 评审历史
+**日期**: 2026-08-17
+**主题**: 重新生成会删除旧用例与版本快照，但未清理 `test_case_ai_reviews`，导致旧 AI 评审记录残留并与新记录混存
+
+### 变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/TestCasePersistenceService.java` | 修改 | `replaceAll` 先按项目删除旧 AI 评审历史，再写入新用例与新评审记录 |
+
+### 验证结果
+
+- Docker JDK17 镜像构建：通过
+
+---
+
+## Feature — 用例生成自动多轮补齐
+**日期**: 2026-08-17
+**主题**: PRD 驱动生成从“单轮 8-15 条”升级为按剩余覆盖缺口自动多轮补齐；标准档最多 3 轮，详尽档最多 4 轮，单次生成上限 60 条
+
+### 变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `agent/TestGeneratorAgent.java` | 修改 | PRD 生成拆为多轮，每轮用剩余 `coverageGaps` 继续补齐缺口，直到覆盖或达到轮数/条数上限 |
+| `agent/TestGeneratorAgent.java` | 修改 | 每轮推送进度“第 N 轮补齐覆盖缺口...”，流式生成同步支持多轮 |
+
+### 验证结果
+
+- Docker JDK17 镜像构建：通过
+
+---
+
+## Fix — 编辑用例保存请求超时
+**日期**: 2026-08-17
+**主题**: 生成任务占用 MCP LLM 连接时，编辑用例触发的语义重建会在同一个 synchronized 连接上排队，导致 `PUT` 请求超过前端 30s 超时
+
+### 变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/SemanticIndexingAsyncService.java` | 新增 | 用例语义重建移到独立线程池异步执行 |
+| `config/AsyncConfig.java` | 修改 | 新增 `semanticExecutor` 线程池 |
+| `service/TestCaseService.java` | 修改 | 编辑用例改调异步语义重建，保存请求不再等待 embedding |
+| `resources/application.yml` / `.env.example` | 修改 | 新增 `EXECUTOR_SEMANTIC_*` 配置 |
+
+### 验证结果
+
+- Docker JDK17 镜像构建：通过
+
+---
+
+## Fix — SSE 长连接超时导致“生成连接异常”
+**日期**: 2026-08-17
+**主题**: 用例生成包含多次 LLM 调用，耗时超过 5 分钟时后端 SSE 与 nginx 先后掐断连接，前端提示“生成连接异常”，且已完成结果被按取消丢弃；PRD 解析失败时透传 LLM 原始错误
+
+### 变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `controller/ProjectController.java` | 修改 | SSE 超时由 `app.sse.timeout-minutes` 控制，默认 30 分钟 |
+| `resources/application.yml` | 修改 | 新增 `app.sse.timeout-minutes` 配置 |
+| `docker-compose.yml` / `.env.example` | 修改 | 透传 `APP_SSE_TIMEOUT_MINUTES` |
+| `frontend/nginx.conf` | 修改 | `proxy_read_timeout` / `proxy_send_timeout` 由 360s 提升至 1800s |
+| `security/SecurityConfig.java` | 修改 | 放行 `/error`，避免 SSE 超时后的内部错误派发产生 AccessDenied 噪音 |
+| `agent/PrdAgent.java` | 修改 | PRD 解析失败/结果为空时抛出 `BusinessException`，保留 LLM 原始错误原因 |
+
+### 验证结果
+
+- 后端 `mvn test`：通过
+- 前端 `npm run build`：通过
+
+---
+
+## 配置 — 默认 LLM 切换为 qwen3.7-max
+**日期**: 2026-08-17
+**主题**: 默认语言模型从 mimo-v2.5-pro 切换为阿里百炼 qwen3.7-max
+
+### 变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `.env.example` / `docker-compose.yml` / `resources/application.yml` | 修改 | 默认 `LLM_PROVIDER=bailian`、`LLM_MODEL=qwen3.7-max`、`LLM_BASE_URL=百炼兼容地址` |
+
+---
+
 ## v5.13 — 能力分层：MCP 工具化与 Prompt Skill 化
 **日期**: 2026-08-16
 **基线**: v5.12

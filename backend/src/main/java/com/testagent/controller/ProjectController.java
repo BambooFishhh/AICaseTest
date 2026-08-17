@@ -13,6 +13,7 @@ import com.testagent.service.TaskQueueService;
 import com.testagent.service.TestCaseService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -55,6 +56,9 @@ public class ProjectController {
 
     @Autowired
     private TaskQueueService taskQueueService;
+
+    @Value("${app.sse.timeout-minutes:30}")
+    private long sseTimeoutMinutes;
 
     @GetMapping
     public ApiResponse<List<ProjectDTO>> listProjects() {
@@ -104,7 +108,7 @@ public class ProjectController {
             }
             return err;
         }
-        SseEmitter emitter = new SseEmitter(5L * 60 * 1000);
+        SseEmitter emitter = new SseEmitter(sseTimeoutMinutes * 60 * 1000);
         analysisService.runAnalysisStream(projectId, emitter);
         return emitter;
     }
@@ -139,7 +143,8 @@ public class ProjectController {
             }
             return err;
         }
-        SseEmitter emitter = new SseEmitter(5L * 60 * 1000); // 5 分钟超时
+        // v5.13fix: 生成包含多次 LLM 调用，可能远超 5 分钟；超时由 app.sse.timeout-minutes 控制
+        SseEmitter emitter = new SseEmitter(sseTimeoutMinutes * 60 * 1000);
         // v5.3: 生成任务进入队列统计
         taskQueueService.enqueue(TaskQueueService.GENERATION_QUEUE, projectId);
         testCaseService.runGenerateStream(projectId, emitter);
@@ -167,7 +172,7 @@ public class ProjectController {
             }
             return err;
         }
-        SseEmitter emitter = new SseEmitter(5L * 60 * 1000);
+        SseEmitter emitter = new SseEmitter(sseTimeoutMinutes * 60 * 1000);
         taskQueueService.enqueue(TaskQueueService.GENERATION_QUEUE, projectId);
         testCaseService.runGenerateStreamAppend(projectId, type, emitter);
         return emitter;

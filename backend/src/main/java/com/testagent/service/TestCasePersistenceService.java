@@ -2,6 +2,7 @@ package com.testagent.service;
 
 import com.testagent.agent.TestCaseReviewAgent;
 import com.testagent.entity.TestCase;
+import com.testagent.repository.TestCaseAiReviewRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.TestCaseVersionRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,11 +24,16 @@ public class TestCasePersistenceService {
     private TestCaseVersionRepository testCaseVersionRepository;
 
     @Autowired
+    private TestCaseAiReviewRepository aiReviewRepository;
+
+    @Autowired
     private TestCaseReviewAgent testCaseReviewAgent;
 
     @Transactional
     public List<TestCase> replaceAll(String projectId, List<TestCase> cases) {
         testCaseVersionRepository.deleteByProjectId(projectId);
+        // v5.14fix: 重新生成时同步清理旧 AI 评审历史，避免与新评审记录混存
+        aiReviewRepository.deleteByProjectId(projectId);
         testCaseRepository.deleteAll(testCaseRepository.findByProjectId(projectId));
         for (TestCase tc : cases) {
             tc.setProjectId(projectId);

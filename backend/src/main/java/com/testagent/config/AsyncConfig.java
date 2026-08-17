@@ -45,6 +45,15 @@ public class AsyncConfig {
     @Value("${app.executor.execution.queue:200}")
     private int executionQueue;
 
+    @Value("${app.executor.semantic.core:1}")
+    private int semanticCore;
+
+    @Value("${app.executor.semantic.max:2}")
+    private int semanticMax;
+
+    @Value("${app.executor.semantic.queue:100}")
+    private int semanticQueue;
+
     @Value("${app.executor.keep-alive-seconds:60}")
     private int keepAliveSeconds;
 
@@ -64,6 +73,11 @@ public class AsyncConfig {
     @Bean(name = "executionExecutor")
     public ThreadPoolTaskExecutor executionExecutor() {
         return buildExecutor("execution-", executionCore, executionMax, executionQueue);
+    }
+
+    @Bean(name = "semanticExecutor")
+    public ThreadPoolTaskExecutor semanticExecutor() {
+        return buildExecutor("semantic-", semanticCore, semanticMax, semanticQueue);
     }
 
     private ThreadPoolTaskExecutor buildExecutor(String prefix, int core, int max, int queue) {

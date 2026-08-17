@@ -118,7 +118,7 @@ public class StateMachineAgent {
             userPrompt = "状态机与前端证据：\n" + context.toString();
         }
 
-        String response = llmService.chat(systemPrompt, userPrompt, 0.3);
+        String response = llmService.chatWithAnalysis(systemPrompt, userPrompt, 0.3);
         mergeFrontendEnhancements(stateMachines, response);
     }
 
@@ -252,7 +252,7 @@ public class StateMachineAgent {
             userPrompt = "后端代码分析结果：\n" + summary.toString();
         }
 
-        String response = llmService.chat(systemPrompt, userPrompt, 0.3);
+        String response = llmService.chatWithAnalysis(systemPrompt, userPrompt, 0.3);
         String json = extractJsonArray(response);
 
         List<StateMachine> result = new ArrayList<>();

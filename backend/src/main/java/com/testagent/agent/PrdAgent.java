@@ -1,6 +1,7 @@
 package com.testagent.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.testagent.common.BusinessException;
 import com.testagent.dto.PrdAnalysisResult;
 import com.testagent.service.LlmService;
 import com.testagent.service.PromptSkillLoader;
@@ -12,6 +13,7 @@ import org.jsoup.Connection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -61,19 +63,30 @@ public class PrdAgent {
     /**
      * v5.11: 多篇需求文档解析。输入明确区分 PRD 文档 / 上下文文档 / 补充需求，
      * 全部拼入 Prompt 后交给 LLM 做结构化需求分析。
+     * v5.13fix: 解析失败或结果为空时抛出携带原始原因的 BusinessException，避免前端只见通用错误。
      */
     public PrdAnalysisResult analyze(List<Map<String, Object>> prdDocs,
                                      List<Map<String, Object>> contextDocs,
                                      String supplementary) {
         String requirementText = buildRequirementPrompt(prdDocs, contextDocs, supplementary);
         if (requirementText.isBlank()) {
-            return new PrdAnalysisResult();
+            throw new BusinessException(50015, "PRD 解析失败：需求文档内容为空，请补充有效需求资料",
+                    HttpStatus.INTERNAL_SERVER_ERROR);
         }
         try {
-            return analyzeByLlm(requirementText);
+            PrdAnalysisResult result = analyzeByLlm(requirementText);
+            if (result == null || result.isEmpty()) {
+                throw new BusinessException(50015,
+                        "PRD 解析失败：模型未提取到有效需求，请检查需求文档内容是否完整",
+                        HttpStatus.INTERNAL_SERVER_ERROR);
+            }
+            return result;
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("PRD analyze failed, return empty: {}", e.getMessage());
-            return new PrdAnalysisResult();
+            log.warn("PRD analyze failed: {}", e.getMessage(), e);
+            throw new BusinessException(50015, "PRD 解析失败: " + e.getMessage(),
+                    HttpStatus.INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -153,7 +166,7 @@ public class PrdAgent {
         String userPrompt = "需求资料：\n" + requirementText;
         log.info("[PRD] 调用 LlmService.chat() ...");
         long start = System.currentTimeMillis();
-        String response = llmService.chat(systemPrompt, userPrompt, 0.2);
+        String response = llmService.chatWithAnalysis(systemPrompt, userPrompt, 0.2);
         long elapsed = System.currentTimeMillis() - start;
         log.info("[PRD] LLM 返回, 耗时={}ms, 响应长度={}", elapsed, response == null ? 0 : response.length());
         String json = extractJsonObject(response);

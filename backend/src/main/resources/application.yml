@@ -40,14 +40,21 @@ spring:
       password: ${REDIS_PASSWORD:}
       timeout: 2s
 llm:
-  provider: ${LLM_PROVIDER:mimo}
-  model: ${LLM_MODEL:mimo-v2.5-pro}
+  provider: ${LLM_PROVIDER:bailian}
+  model: ${LLM_MODEL:qwen3.7-max}
   embedding-model: ${LLM_EMBEDDING_MODEL:qwen3.7-text-embedding}
+  enable-thinking: ${LLM_ENABLE_THINKING:false}
+  thinking:
+    analysis: ${LLM_THINKING_ANALYSIS:true}
+    generation: ${LLM_THINKING_GENERATION:false}
   api-key: ${LLM_API_KEY:}
-  base-url: ${LLM_BASE_URL:https://api.xiaomimimo.com/v1}
+  base-url: ${LLM_BASE_URL:https://llm-fua5iwoagy8hd5de.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
 app:
   output-dir: outputs
   projects-dir: projects
+  # v5.13fix: SSE 长连接超时（生成/分析包含多次 LLM 调用，可能远超 5 分钟）
+  sse:
+    timeout-minutes: ${APP_SSE_TIMEOUT_MINUTES:30}
   # vP1: 上传文件大小二次校验（字节，与 multipart 配置保持一致）
   upload:
     max-size: ${MAX_UPLOAD_SIZE_BYTES:20971520}
@@ -99,6 +106,10 @@ app:
       core: ${EXECUTOR_EXECUTION_CORE:4}
       max: ${EXECUTOR_EXECUTION_MAX:12}
       queue: ${EXECUTOR_EXECUTION_QUEUE:500}
+    semantic:
+      core: ${EXECUTOR_SEMANTIC_CORE:1}
+      max: ${EXECUTOR_SEMANTIC_MAX:2}
+      queue: ${EXECUTOR_SEMANTIC_QUEUE:100}
     project-execution-max: ${PROJECT_EXECUTION_MAX:5}
 # v2.6: MCP 多 Server 配置
 mcp:

@@ -37,6 +37,10 @@ public class TestGeneratorAgent {
     private static final Logger log = LoggerFactory.getLogger(TestGeneratorAgent.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // v5.14: 自动多轮补齐上限，避免无限调用 LLM
+    private static final int MAX_GENERATION_ROUNDS = 4;
+    private static final int MAX_GENERATED_CASES = 60;
+
     // v1.6: 进度回调接口，供调用方感知分模块生成进度
     @FunctionalInterface
     public interface ProgressCallback {
@@ -533,7 +537,8 @@ public class TestGeneratorAgent {
             progressCallback.update("基于 PRD 生成用例...");
         }
         try {
-            result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult, null, null, params);
+            result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult,
+                    null, null, params, progressCallback);
         } catch (Exception e) {
             log.error("PRD-driven generation failed: {}", e.getMessage());
             throw new BusinessException(50016, "PRD 生成用例失败: " + e.getMessage(),
@@ -593,7 +598,7 @@ public class TestGeneratorAgent {
         }
         try {
             result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult,
-                    effectiveCb, cancelled, params);
+                    effectiveCb, cancelled, params, progressCallback);
         } catch (GenerationCancelledException e) {
             throw e;  // v3.3: 取消异常向上传播，不触发 fallback
         } catch (Exception e) {
@@ -875,11 +880,42 @@ public class TestGeneratorAgent {
     // v3.2: 新增 caseCb 参数，透传给 parseTestCases 用于流式回调
     // v3.3: 新增 cancelled 参数，LLM 调用前检查取消标志
     // v3.4: 新增 params 参数，动态拼接 PRD system prompt + 调整 temperature
+    // v5.14: 自动多轮补齐——每轮根据剩余 coverageGaps 继续生成，直到缺口补齐或达到轮数/条数上限
     private List<TestCase> generateByLlmWithPrd(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                                  BackendResult backendResult,
                                                  FrontendResult frontendResult,
                                                  CaseCallback caseCb, CancellationSignal cancelled,
-                                                 GenerationParams params) throws Exception {
+                                                 GenerationParams params,
+                                                 ProgressCallback progressCallback) throws Exception {
+        Map<String, Object> coverage = buildCoverageChecklist(prdResult, stateMachines, backendResult);
+        List<TestCase> all = new ArrayList<>();
+        int maxRounds = "high".equals(params != null ? params.getCaseDensity() : null)
+                ? MAX_GENERATION_ROUNDS : 3;
+
+        for (int round = 1; round <= maxRounds; round++) {
+            checkCancelled(cancelled);
+            Map<String, Object> gaps = remainingGaps(all, coverage);
+            if (!hasRemainingGaps(gaps) || all.size() >= MAX_GENERATED_CASES) {
+                break;
+            }
+            if (progressCallback != null) {
+                progressCallback.update(round == 1 ? "基于 PRD 生成用例..." : "第 " + round + " 轮补齐覆盖缺口...");
+            }
+            List<TestCase> roundCases = generatePrdRound(prdResult, stateMachines, backendResult, frontendResult,
+                    caseCb, cancelled, params, coverage, gaps, round);
+            if (roundCases.isEmpty()) {
+                break;
+            }
+            all.addAll(roundCases);
+        }
+        return all;
+    }
+
+    private List<TestCase> generatePrdRound(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                             BackendResult backendResult, FrontendResult frontendResult,
+                                             CaseCallback caseCb, CancellationSignal cancelled,
+                                             GenerationParams params, Map<String, Object> coverage,
+                                             Map<String, Object> gaps, int round) throws Exception {
         Map<String, Object> context = new LinkedHashMap<>();
 
         // PRD 为主上下文
@@ -931,14 +967,17 @@ public class TestGeneratorAgent {
         // v1.11: 前端上下文（辅助）
         putFrontendContext(context, frontendResult);
 
-        // v5.12: 覆盖清单与缺口（需求/转换/接口/规则）
-        Map<String, Object> coverage = buildCoverageChecklist(prdResult, stateMachines, backendResult);
+        // v5.12: 覆盖清单与当前轮剩余缺口
         context.put("coverageChecklist", coverage.get("checklist"));
-        context.put("coverageGaps", coverage.get("gaps"));
+        context.put("coverageGaps", gaps);
 
+        String roundNote = round > 1
+                ? "\n\n这是第 " + round + " 轮补齐：以下 coverageGaps 仍未覆盖，请优先为这些缺口生成用例，不要重复已有场景。"
+                : "";
         String userPrompt = "上下文信息：\n" + objectMapper.writeValueAsString(context)
                 + "\n\n" + FEW_SHOT_EXAMPLES
-                + "\n\n请以 PRD 文档为纲生成测试用例；上下文文档和补充需求用于补充约束与场景，代码信息用于补充接口路径与前置状态。";
+                + "\n\n请以 PRD 文档为纲生成测试用例；上下文文档和补充需求用于补充约束与场景，代码信息用于补充接口路径与前置状态。"
+                + roundNote;
         checkCancelled(cancelled);  // v3.3: LLM 调用前检查（耗时操作，最关键的取消点）
         // v3.4: 动态构建 PRD system prompt + temperature 参数化
         // v3.7: caseCb 非空时启用流式调用 + 增量解析
@@ -948,18 +987,118 @@ public class TestGeneratorAgent {
                     buildPrdDrivenPrompt(params), userPrompt, resolveTemperature(params), parser::append);
             // 兜底：用完整响应重新解析，推送流式期间未推送的用例
             String json = extractJsonArray(response);
-            List<TestCase> all = parseTestCases(json, null);
-            for (int i = parser.getParsedCount(); i < all.size(); i++) {
-                try { caseCb.onCase(all.get(i)); } catch (Exception ex) {
+            List<TestCase> roundCases = parseTestCases(json, null);
+            for (int i = parser.getParsedCount(); i < roundCases.size(); i++) {
+                try { caseCb.onCase(roundCases.get(i)); } catch (Exception ex) {
                     log.warn("兜底推送失败: {}", ex.getMessage());
                 }
             }
-            return all;
+            return roundCases;
         }
         // caseCb 为 null（非流式场景）：原有逻辑
         String response = llmService.chat(buildPrdDrivenPrompt(params), userPrompt, resolveTemperature(params));
         String json = extractJsonArray(response);
         return parseTestCases(json, null);
+    }
+
+    private boolean hasRemainingGaps(Map<String, Object> gaps) {
+        if (gaps == null) {
+            return false;
+        }
+        for (String key : List.of("requirementIds", "transitionIds", "endpointIds", "ruleIds")) {
+            Object value = gaps.get(key);
+            if (value instanceof List<?> list && !list.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Map<String, Object> remainingGaps(List<TestCase> cases, Map<String, Object> coverage) {
+        Map<String, Object> gaps = new LinkedHashMap<>();
+        Object rawGaps = coverage.get("gaps");
+        if (rawGaps instanceof Map<?, ?> raw) {
+            for (String key : List.of("requirementIds", "transitionIds", "endpointIds", "ruleIds")) {
+                gaps.put(key, new ArrayList<>(readIdList(raw, key)));
+            }
+        }
+        if (cases == null || cases.isEmpty()) {
+            return gaps;
+        }
+
+        Set<String> coveredRequirements = new HashSet<>();
+        Set<String> coveredTransitions = new HashSet<>();
+        Set<String> coveredEndpoints = new HashSet<>();
+        Set<String> coveredRules = new HashSet<>();
+        for (TestCase tc : cases) {
+            Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
+            Object refsObj = hints.get("coverageRefs");
+            if (refsObj instanceof Map<?, ?> refs) {
+                addCoveredIds(coveredRequirements, refs.get("requirementIds"));
+                addCoveredIds(coveredTransitions, refs.get("transitionIds"));
+                addCoveredIds(coveredEndpoints, refs.get("endpointIds"));
+                addCoveredIds(coveredRules, refs.get("ruleIds"));
+            }
+            // 兜底：LLM 未填 coverageRefs 时，从用例的接口/状态机引用推断已覆盖项
+            for (Map<String, Object> ep : JsonHelper.parseListMap(tc.getApiEndpoints())) {
+                String method = String.valueOf(ep.getOrDefault("method", "")).trim().toUpperCase();
+                String path = String.valueOf(ep.getOrDefault("path", "")).trim();
+                if (!method.isBlank() && !path.isBlank()) {
+                    coveredEndpoints.add(method + " " + path);
+                }
+            }
+            Map<String, Object> smRef = JsonHelper.parseMap(tc.getStateMachineRef());
+            Object transitionsObj = smRef.get("transitions");
+            if (transitionsObj instanceof List<?> transitions) {
+                for (Object item : transitions) {
+                    if (item instanceof Map<?, ?> t) {
+                        coveredTransitions.add(String.valueOf(t.get("from")) + "->" + String.valueOf(t.get("to")));
+                    }
+                }
+            }
+        }
+        removeCovered(gaps, "requirementIds", coveredRequirements);
+        removeCovered(gaps, "transitionIds", coveredTransitions);
+        removeCovered(gaps, "endpointIds", coveredEndpoints);
+        removeCovered(gaps, "ruleIds", coveredRules);
+        return gaps;
+    }
+
+    private List<String> readIdList(Map<?, ?> source, String key) {
+        Object value = source.get(key);
+        if (value instanceof List<?> list) {
+            List<String> ids = new ArrayList<>();
+            for (Object item : list) {
+                if (item != null) {
+                    ids.add(String.valueOf(item));
+                }
+            }
+            return ids;
+        }
+        return new ArrayList<>();
+    }
+
+    private void addCoveredIds(Set<String> target, Object value) {
+        if (value instanceof List<?> list) {
+            for (Object item : list) {
+                if (item != null) {
+                    target.add(String.valueOf(item));
+                }
+            }
+        }
+    }
+
+    private void removeCovered(Map<String, Object> gaps, String key, Set<String> covered) {
+        Object value = gaps.get(key);
+        if (value instanceof List<?> list) {
+            List<Object> remaining = new ArrayList<>();
+            for (Object item : list) {
+                if (!covered.contains(String.valueOf(item))) {
+                    remaining.add(item);
+                }
+            }
+            gaps.put(key, remaining);
+        }
     }
 
     // v1.11: 将前端上下文注入 context Map，截断避免 token 超限
@@ -1375,7 +1514,28 @@ public class TestGeneratorAgent {
                 }
             }
         }
+        // v5.14: 类型一致且步骤/接口指纹一致视为重复，覆盖“标题不同但步骤相同”的重复用例
+        String typeA = a.getType() == null ? "" : a.getType();
+        String typeB = b.getType() == null ? "" : b.getType();
+        if (modA.equals(modB) && typeA.equals(typeB)
+                && !caseStepsSignature(a).isEmpty()
+                && caseStepsSignature(a).equals(caseStepsSignature(b))) {
+            return true;
+        }
         return false;
+    }
+
+    private String caseStepsSignature(TestCase tc) {
+        StringBuilder sb = new StringBuilder();
+        for (Map<String, Object> step : JsonHelper.parseListMap(tc.getStructuredSteps())) {
+            sb.append(step.get("type")).append('|')
+                    .append(step.get("action")).append('|')
+                    .append(step.get("target")).append(';');
+        }
+        for (Map<String, Object> ep : JsonHelper.parseListMap(tc.getApiEndpoints())) {
+            sb.append(ep.get("method")).append(' ').append(ep.get("path")).append(';');
+        }
+        return sb.toString();
     }
 
     // ==================== 质量评分（v1.2） ====================
