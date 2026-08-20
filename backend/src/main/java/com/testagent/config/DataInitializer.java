@@ -62,7 +62,7 @@ public class DataInitializer implements CommandLineRunner {
             admin.setMustChangePassword(true);
             userRepository.save(admin);
             log.info("v4.0: 已创建默认管理员 admin（请尽快修改初始密码）");
-        } else if (admin.getMustChangePassword() == null
+        } else if (!Boolean.TRUE.equals(admin.getMustChangePassword())
                 && passwordEncoder.matches(adminPassword, admin.getPasswordHash())) {
             // v6.6: 存量默认管理员仍在使用初始密码时，标记为需强制改密
             admin.setMustChangePassword(true);
