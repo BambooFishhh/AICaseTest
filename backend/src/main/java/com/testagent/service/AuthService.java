@@ -48,6 +48,7 @@ public class AuthService {
         user.setDisplayName(req.getDisplayName() == null || req.getDisplayName().isBlank()
                 ? username : req.getDisplayName().trim());
         user.setRole("USER");
+        user.setMustChangePassword(false);
         userRepository.save(user);
         return buildAuthResponse(user);
     }
@@ -77,6 +78,8 @@ public class AuthService {
             throw new BusinessException(40105, "原密码错误", HttpStatus.BAD_REQUEST);
         }
         user.setPasswordHash(passwordEncoder.encode(newPassword));
+        // v6.6: 修改密码后清除“强制改密”标记
+        user.setMustChangePassword(false);
         userRepository.save(user);
     }
 

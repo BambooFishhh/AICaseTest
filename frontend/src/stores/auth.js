@@ -51,5 +51,25 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAdmin = computed(() => user.value?.role === 'ADMIN')
 
-  return { token, user, isAdmin, login, register, fetchMe, logout }
+  // v6.6: 首次登录/初始密码是否需强制修改
+  const mustChangePassword = computed(() => !!user.value?.mustChangePassword)
+
+  function clearMustChangePassword() {
+    if (user.value) {
+      user.value.mustChangePassword = false
+    }
+    persist()
+  }
+
+  return {
+    token,
+    user,
+    isAdmin,
+    mustChangePassword,
+    clearMustChangePassword,
+    login,
+    register,
+    fetchMe,
+    logout
+  }
 })

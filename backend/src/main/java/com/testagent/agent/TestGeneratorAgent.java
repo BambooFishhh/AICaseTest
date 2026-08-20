@@ -10,6 +10,7 @@ import com.testagent.analyzer.result.OperationDep;
 import com.testagent.dto.GenerationParams;
 import com.testagent.dto.JsonHelper;
 import com.testagent.dto.PrdAnalysisResult;
+import com.testagent.common.BusinessComponentPolicy;
 import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
 import com.testagent.runtime.CancellationSignal;
@@ -342,6 +343,9 @@ public class TestGeneratorAgent {
 
     @Autowired
     private LlmService llmService;
+
+    @Autowired
+    private BusinessComponentPolicy businessComponentPolicy;
 
     @Autowired
     private TestCaseReviewAgent testCaseReviewAgent;
@@ -1274,28 +1278,14 @@ public class TestGeneratorAgent {
         return out;
     }
 
-    private double numberScore(Object value) {
-        if (value instanceof Number n) {
-            return n.doubleValue();
-        }
-        if (value != null) {
-            try {
-                return Double.parseDouble(String.valueOf(value));
-            } catch (NumberFormatException ignored) {
-                return 0.0;
-            }
-        }
-        return 0.0;
-    }
-
-    // v6.1fix: 仅保留业务分非负的组件，过滤掉已打负分的公共组件（BackToTop/Breadcrumb/Pagination 等）
+    // v6.1fix/v6.6: 仅保留业务分严格大于 0 的组件进入覆盖清单，过滤 0 分/负分公共组件与解析失败项
     private List<Map<String, Object>> filterBusinessComponents(List<Map<String, Object>> comps) {
         if (comps == null || comps.isEmpty()) {
             return List.of();
         }
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> c : comps) {
-            if (c != null && numberScore(c.get("businessScore")) >= 0) {
+            if (businessComponentPolicy.inCoverage(c)) {
                 out.add(c);
             }
         }

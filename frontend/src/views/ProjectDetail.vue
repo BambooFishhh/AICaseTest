@@ -223,6 +223,7 @@ import {
 import { getProject, getExecutionCookies, updateExecutionCookies } from '@/api/project'
 import PrdPanel from '@/components/PrdPanel.vue'
 import { generateMindmap, downloadMindmapUrl } from '@/api/mindmap'
+import { fetchSseTicket } from '@/api/sse'
 import { downloadAuth } from '@/utils/download'
 import { useProjectStore } from '@/stores/project'
 
@@ -383,14 +384,23 @@ async function refreshProject() {
 }
 
 // v4.4: 流式分析——SSE 实时阶段进度
-function handleAnalyze() {
+// v6.6: 先换短期 ticket 再连 EventSource，避免长期 JWT 进 URL
+async function handleAnalyze() {
   if (analysisRunning.value || analyzeEs) return
   analysisRunning.value = true
   ElMessage.success('分析已启动')
   analysisSuccess.value = false
   pollingMessage.value = '正在启动分析...'
-  const token = encodeURIComponent(localStorage.getItem('aicase-token') || '')
-  analyzeEs = new EventSource(`/api/projects/${projectId}/analyze-stream?token=${token}`)
+  try {
+    const { data } = await fetchSseTicket()
+    analyzeEs = new EventSource(`/api/projects/${projectId}/analyze-stream?ticket=${encodeURIComponent(data.ticket)}`)
+  } catch {
+    analyzeEs = null
+    analysisRunning.value = false
+    pollingMessage.value = ''
+    ElMessage.error('分析连接初始化失败')
+    return
+  }
 
   analyzeEs.addEventListener('progress', (e) => {
     try {

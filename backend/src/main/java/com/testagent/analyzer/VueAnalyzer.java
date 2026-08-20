@@ -3,6 +3,7 @@ package com.testagent.analyzer;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.analyzer.result.FrontendResult;
+import com.testagent.common.BusinessComponentPolicy;
 import com.testagent.service.LlmService;
 import com.testagent.service.TelemetryService;
 import org.slf4j.Logger;
@@ -38,6 +39,9 @@ public class VueAnalyzer {
 
     @Autowired
     private TelemetryService telemetryService;
+
+    @Autowired
+    private BusinessComponentPolicy businessComponentPolicy;
 
     @Value("${app.executor.llm-concurrency:4}")
     private int llmConcurrency;
@@ -938,20 +942,10 @@ public class VueAnalyzer {
         return out;
     }
 
-    // v6.3: 只有足够强的业务信号才触发 LLM 摘要；低于阈值判为通用组件，仅保留确定性基线。
+    // v6.3/v6.6: 只有足够强的业务信号才触发 LLM 摘要；低于阈值判为通用组件，仅保留确定性基线。
     private boolean isBusinessComponent(Map<String, Object> m) {
-        Object score = m == null ? null : m.get("businessScore");
-        if (score instanceof Number n) {
-            return n.doubleValue() >= 0.3;
-        }
-        if (score != null) {
-            try {
-                return Double.parseDouble(String.valueOf(score)) >= 0.3;
-            } catch (NumberFormatException ignored) {
-                return true;
-            }
-        }
-        return true;
+        // v6.6: 与 TestGeneratorAgent 共用统一阈值。解析失败默认排除，不再误判为业务组件。
+        return businessComponentPolicy.needsLlmSummary(m);
     }
 
     private Map<String, List<Map<String, Object>>> groupByComponent(List<Map<String, Object>> items) {

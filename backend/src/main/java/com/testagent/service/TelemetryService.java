@@ -132,6 +132,9 @@ public class TelemetryService {
                 ctx.taskType, ctx.projectId, ctx.status,
                 System.currentTimeMillis() - ctx.startedAt,
                 aggregate(ctx).promptTokens, aggregate(ctx).completionTokens, aggregate(ctx).totalTokens);
+        // v6.6: 任务结束后清空本线程残留上下文与 phase，避免线程池复用时的脏状态/内存滞留
+        stack.clear();
+        localPhase.remove();
     }
 
     private TelemetryContext current() {

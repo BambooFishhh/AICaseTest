@@ -118,12 +118,15 @@ public class ProjectService {
 
     public List<ProjectDTO> listProjects() {
         List<Project> all = projectRepository.findAllByOrderByCreatedAtDesc();
+        // v6.6: 批量计算访问级别，避免原先对每个项目重复查用户/项目/组的 N+1
+        Map<String, AccessLevel> levels = projectAccessService.getAccessLevels(
+                all.stream().map(Project::getId).toList());
         return all.stream()
                 // v4.3: 仅返回有访问权限的项目（创建者/组成员/管理员）
-                .filter(p -> projectAccessService.getAccessLevel(p.getId()) != AccessLevel.NONE)
+                .filter(p -> levels.getOrDefault(p.getId(), AccessLevel.NONE) != AccessLevel.NONE)
                 .map(p -> {
                     ProjectDTO dto = ProjectDTO.from(p);
-                    dto.setAccessLevel(projectAccessService.getAccessLevel(p.getId()).name());
+                    dto.setAccessLevel(levels.get(p.getId()).name());
                     return dto;
                 })
                 .collect(Collectors.toList());

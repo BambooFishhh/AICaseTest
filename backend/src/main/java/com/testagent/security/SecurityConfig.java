@@ -39,6 +39,8 @@ public class SecurityConfig {
         http
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> {})
+                // v6.6: H2 Console/iframe 预览场景需要 sameOrigin frame 放行
+                .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         // v6.1fix: 只对 REQUEST 分发做鉴权，跳过 SSE 结束时的 async re-dispatch。

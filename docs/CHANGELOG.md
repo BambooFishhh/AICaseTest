@@ -4,6 +4,41 @@
 
 ---
 
+## v6.3 — 本地代码审查整改：安全与工程健壮性补强
+**日期**: 2026-08-21
+**基线**: v6.2
+**主题**: 依据《本地代码审查修改方案》补齐首登强制改密、SSE 票据化鉴权、业务组件口径统一、项目列表 N+1 优化，以及 Telemetry/H2/MCP/前端存储加固
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `entity/User.java`、`dto/UserDTO.java`、`service/AuthService.java`、`config/DataInitializer.java` | 修改 | 新增 `mustChangePassword`；默认管理员初始化与“仍在使用初始密码”的存量管理员标记为 true；改密后清除并随登录/me 返回 |
+| `security/SseTicketService.java`、`controller/SseTicketController.java` | 新增 | SSE 短期票据（默认 300s TTL、TTL 内可复用适配 EventSource 重连）；`POST /api/sse/ticket` 以 Bearer 换票 |
+| `security/JwtAuthFilter.java` | 修改 | SSE 改收 `?ticket=`；长期 JWT 不再进入 SSE URL，仅媒体访问（video/file/report）保留 `?token=` 兼容 |
+| `common/BusinessComponentPolicy.java` | 新增 | 统一业务组件判定：`needsLlmSummary`（默认 0.3）与 `inCoverage`（需严格 >0）；解析失败默认排除 |
+| `analyzer/VueAnalyzer.java`、`agent/TestGeneratorAgent.java` | 修改 | 复用统一策略，消除 Analyzer `>=0.3` 与 Generator `>=0` 口径不一致，0 分/异常分组件不再漏进覆盖清单 |
+| `service/ProjectAccessService.java`、`service/ProjectService.java` | 修改 | 新增 `getAccessLevels` 批量计算访问级别，项目列表不再逐项目重复查用户/项目/组成员（消除 N+1） |
+| `service/TelemetryService.java` | 修改 | `finish` 清空线程残留 `contextStack` 与 `localPhase`，避免线程池复用脏状态/内存滞留 |
+| `resources/application.yml`、`resources/application-dev.yml` | 修改/新增 | H2 Console 默认关闭、仅 dev profile 开放；新增 SSE 票据 TTL 与业务组件阈值配置 |
+| `security/SecurityConfig.java` | 修改 | 补 `frameOptions.sameOrigin()` 支持 H2 Console/iframe 预览 |
+| `config/ProductionGuard.java` | 修改 | prod 门禁新增 `MCP_BRIDGE_TOKEN` 必须显式覆盖默认弱 token 校验 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `stores/auth.js`、`App.vue` | 修改 | 暴露 `mustChangePassword`；首登/初始密码强制弹出不可关闭改密弹窗并阻断主功能，改密成功清除标记 |
+| `api/sse.js`、`api/testcase.js`、`views/ProjectDetail.vue`、`views/TestCaseList.vue` | 新增/修改 | SSE 先以 Bearer 换取短期 ticket 再用 `?ticket=` 建连，长期 JWT 不再进入 SSE URL |
+
+### 验证结果
+
+- 后端 `mvn compile`（Maven 3.9 + JDK 17）BUILD SUCCESS
+- 前端 `npm run build` 成功
+- 已通过 docker compose 重新构建并部署 backend/frontend，新版本在本地栈生效
+
+---
+
 ## v6.2 — 分析全链路并行化与状态机收口
 **日期**: 2026-08-20
 **基线**: v6.1

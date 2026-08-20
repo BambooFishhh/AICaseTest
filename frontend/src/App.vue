@@ -109,7 +109,16 @@
     </div>
 
     <!-- v4.1: 修改密码弹窗 -->
-    <el-dialog v-model="pwdDialogVisible" title="修改密码" width="440px">
+    <!-- v6.6: 首次登录/初始密码强制改密时不可关闭，阻断主功能 -->
+    <el-dialog
+      v-model="pwdShown"
+      :title="forcePasswordVisible ? '请修改初始密码' : '修改密码'"
+      width="440px"
+      :close-on-click-modal="!forcePasswordVisible"
+      :close-on-press-escape="!forcePasswordVisible"
+      :show-close="!forcePasswordVisible"
+      :align-center="true"
+    >
       <el-form ref="pwdFormRef" :model="pwdForm" :rules="pwdRules" label-width="90px">
         <el-form-item label="原密码" prop="oldPassword">
           <el-input v-model="pwdForm.oldPassword" type="password" show-password />
@@ -122,15 +131,17 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="pwdDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="changingPwd" @click="handleChangePassword">确认修改</el-button>
+        <el-button v-if="!forcePasswordVisible" @click="pwdDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="changingPwd" @click="handleChangePassword">
+          {{ forcePasswordVisible ? '修改并进入系统' : '确认修改' }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   FolderOpened, Setting, Fold, Expand, DataAnalysis, View, Document, Clock, Share, Picture,
@@ -197,6 +208,16 @@ function handleUserCommand(command) {
 
 // v4.1: 修改密码
 const pwdDialogVisible = ref(false)
+// v6.6: 首次登录/初始密码强制改密（不可关闭）
+const forcePasswordVisible = ref(false)
+const pwdShown = computed({
+  get: () => pwdDialogVisible.value || forcePasswordVisible.value,
+  set: (v) => {
+    if (!v && !forcePasswordVisible.value) {
+      pwdDialogVisible.value = v
+    }
+  }
+})
 const pwdFormRef = ref()
 const changingPwd = ref(false)
 const pwdForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' })
@@ -236,7 +257,9 @@ async function handleChangePassword() {
         newPassword: pwdForm.value.newPassword
       })
       ElMessage.success('密码已修改，下次登录请使用新密码')
+      authStore.clearMustChangePassword()
       pwdDialogVisible.value = false
+      forcePasswordVisible.value = false
       pwdForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
     } catch {
       // 错误已由响应拦截器统一提示
@@ -245,6 +268,17 @@ async function handleChangePassword() {
     }
   })
 }
+
+// v6.6: 首次登录/初始密码标记存在时，强制弹出改密并阻断主功能
+watch(
+  () => authStore.mustChangePassword,
+  (must) => {
+    if (must) {
+      forcePasswordVisible.value = true
+    }
+  },
+  { immediate: true }
+)
 
 // v3.17: 面包屑
 const breadcrumbs = computed(() => {

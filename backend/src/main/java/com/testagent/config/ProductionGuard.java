@@ -22,6 +22,7 @@ public class ProductionGuard implements CommandLineRunner {
 
     static final String DEFAULT_JWT_SECRET = "aicasetest-dev-secret-change-me-please-0123456789";
     static final String DEFAULT_ADMIN_PASSWORD = "admin123";
+    static final String DEFAULT_MCP_BRIDGE_TOKEN = "aicasetest-mcp-local";
     private static final int MIN_JWT_SECRET_LENGTH = 32;
     private static final int MIN_ADMIN_PASSWORD_LENGTH = 12;
 
@@ -33,6 +34,9 @@ public class ProductionGuard implements CommandLineRunner {
 
     @Value("${app.admin.password:admin123}")
     private String adminPassword;
+
+    @Value("${app.mcp.bridge-token:aicasetest-mcp-local}")
+    private String mcpBridgeToken;
 
     @Value("${llm.api-key:}")
     private String llmApiKey;
@@ -48,6 +52,11 @@ public class ProductionGuard implements CommandLineRunner {
         if (password.isBlank() || DEFAULT_ADMIN_PASSWORD.equals(password)
                 || password.length() < MIN_ADMIN_PASSWORD_LENGTH) {
             violations.add("APP_ADMIN_PASSWORD 必须为自定义强密码（至少 12 字符）");
+        }
+        // v6.6: MCP 桥接接口须显式覆盖默认弱 token
+        String mcpToken = mcpBridgeToken == null ? "" : mcpBridgeToken;
+        if (mcpToken.isBlank() || DEFAULT_MCP_BRIDGE_TOKEN.equals(mcpToken)) {
+            violations.add("MCP_BRIDGE_TOKEN 必须显式覆盖默认 token");
         }
 
         if (!violations.isEmpty()) {

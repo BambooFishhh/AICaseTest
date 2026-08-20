@@ -13,6 +13,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -60,6 +64,49 @@ public class ProjectAccessService {
             }
         }
         return AccessLevel.NONE;
+    }
+
+    /**
+     * v6.6: 批量计算项目访问级别，消除项目列表 N+1。
+     * 当前用户与组成员关系只查询一次，不再对每个项目重复查表。
+     */
+    public Map<String, AccessLevel> getAccessLevels(Collection<String> projectIds) {
+        Map<String, AccessLevel> result = new HashMap<>();
+        if (projectIds == null || projectIds.isEmpty()) {
+            return result;
+        }
+        if (SecurityUtils.isAdmin()) {
+            for (String id : projectIds) {
+                result.put(id, AccessLevel.OWNER);
+            }
+            return result;
+        }
+        String username = SecurityUtils.currentUsername();
+        if (username == null) {
+            return result;
+        }
+        User user = userRepository.findByUsername(username).orElse(null);
+        if (user == null) {
+            return result;
+        }
+        List<Project> projects = projectRepository.findAllById(projectIds);
+        Map<String, String> groupRoles = new HashMap<>();
+        for (GroupMember member : groupMemberRepository.findByUserId(user.getId())) {
+            groupRoles.put(member.getGroupId(), member.getRole());
+        }
+        for (Project project : projects) {
+            AccessLevel level = AccessLevel.NONE;
+            if (project.getUserId() != null && project.getUserId().equals(user.getId())) {
+                level = AccessLevel.OWNER;
+            } else if (project.getGroupId() != null) {
+                String role = groupRoles.get(project.getGroupId());
+                if (role != null) {
+                    level = "OPERATOR".equals(role) ? AccessLevel.OPERATOR : AccessLevel.VIEWER;
+                }
+            }
+            result.put(project.getId(), level);
+        }
+        return result;
     }
 
     public void assertViewAccess(String projectId) {

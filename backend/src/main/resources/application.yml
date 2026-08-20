@@ -37,7 +37,7 @@ spring:
     show-sql: false
   h2:
     console:
-      enabled: true
+      enabled: ${H2_CONSOLE_ENABLED:false}
       path: /h2-console
   # v5.2: Redis 连接配置
   data:
@@ -86,6 +86,12 @@ app:
   # v5.13fix: SSE 长连接超时（生成/分析包含多次 LLM 调用，可能远超 5 分钟）
   sse:
     timeout-minutes: ${APP_SSE_TIMEOUT_MINUTES:30}
+    # v6.6: SSE 短期票据 TTL（秒），避免长期 JWT 出现在 URL
+    ticket-ttl-seconds: ${APP_SSE_TICKET_TTL_SECONDS:300}
+  # v6.6: 业务组件判定口径（Analyzer/Generator 共用）
+  business:
+    llm-summary-threshold: ${APP_BUSINESS_LLM_SUMMARY_THRESHOLD:0.3}
+    coverage-threshold: ${APP_BUSINESS_COVERAGE_THRESHOLD:0.0}
   # vP1: 上传文件大小二次校验（字节，与 multipart 配置保持一致）
   upload:
     max-size: ${MAX_UPLOAD_SIZE_BYTES:20971520}

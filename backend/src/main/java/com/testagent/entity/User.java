@@ -33,6 +33,13 @@ public class User {
     /** USER / ADMIN */
     private String role = "USER";
 
+    /**
+     * v6.6: 首次登录/初始密码是否强制修改。默认管理员初始化为 true，
+     * 修改密码成功后清除。grants 前端在改密前阻断主功能。
+     */
+    @Column(name = "must_change_password")
+    private Boolean mustChangePassword = false;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

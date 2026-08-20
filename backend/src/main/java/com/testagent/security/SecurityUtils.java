@@ -27,4 +27,20 @@ public final class SecurityUtils {
                 .map(GrantedAuthority::getAuthority)
                 .anyMatch("ROLE_ADMIN"::equals);
     }
+
+    /**
+     * v6.6: 返回当前用户角色（去掉 ROLE_ 前缀），未登录返回 null。
+     */
+    public static String currentRole() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) {
+            return null;
+        }
+        return auth.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .filter(a -> a != null && a.startsWith("ROLE_"))
+                .map(a -> a.substring("ROLE_".length()))
+                .findFirst()
+                .orElse(null);
+    }
 }

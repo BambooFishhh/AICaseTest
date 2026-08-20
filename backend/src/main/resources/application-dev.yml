@@ -1,0 +1,5 @@
+# v6.6: dev profile 才开放 H2 Console（默认开关为 false）
+spring:
+  h2:
+    console:
+      enabled: true

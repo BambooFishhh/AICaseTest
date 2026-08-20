@@ -2063,7 +2063,8 @@ async function handleRegenerate() {
   streamedCases.value = []
   regenerating.value = true
 
-  streamEs = streamGenerate(projectId, {
+  try {
+    streamEs = await streamGenerate(projectId, {
     onProgress: (msg) => {
       streamProgress.value = msg
     },
@@ -2098,7 +2099,16 @@ async function handleRegenerate() {
       generationError.value = msg
       ElMessage.error('用例生成失败')
     }
-  })
+    })
+  } catch {
+    // 换取 SSE ticket 失败（多为登录态失效），重置生成中状态
+    streaming.value = false
+    currentGenMode.value = null
+    streamProgress.value = ''
+    regenerating.value = false
+    generationError.value = '生成连接初始化失败'
+    return
+  }
 }
 
 const showAppendDialog = ref(false)
@@ -2148,19 +2158,20 @@ function handleOpenAppendDialog() {
   showAppendDialog.value = true
 }
 
-function handleConfirmAppend() {
+async function handleConfirmAppend() {
   showAppendDialog.value = false
-  startAppendStream(appendType.value)
+  await startAppendStream(appendType.value)
 }
 
-function startAppendStream(type) {
+async function startAppendStream(type) {
   generationError.value = ''
   streaming.value = true
   currentGenMode.value = 'append'
   streamProgress.value = '正在启动追加生成...'
   streamedCases.value = []
 
-  streamEs = streamGenerateAppend(projectId, type, {
+  try {
+    streamEs = await streamGenerateAppend(projectId, type, {
     onProgress: (msg) => {
       streamProgress.value = msg
     },
@@ -2198,7 +2209,13 @@ function startAppendStream(type) {
       generationError.value = msg
       ElMessage.error('追加生成失败')
     }
-  })
+    })
+  } catch {
+    streaming.value = false
+    currentGenMode.value = null
+    streamProgress.value = ''
+    generationError.value = '追加生成连接初始化失败'
+  }
 }
 
 async function handleCancelGenerate() {

@@ -1,4 +1,5 @@
 import request from './request'
+import { fetchSseTicket } from './sse'
 
 export function triggerGenerate(projectId, params) {
   return request.post(`/projects/${projectId}/generate`, params || {})
@@ -7,10 +8,10 @@ export function triggerGenerate(projectId, params) {
 // v3.2: SSE 流式生成用例。基于浏览器原生 EventSource，返回事件源对象供调用方 close()。
 // 事件类型：progress（进度文本）、case（单条用例）、complete（完成，含 total）、cancelled（取消）、error（失败）。
 // v3.3: 新增 cancelled 事件 + onCancelled 回调，区分"取消"与"失败"。
-export function streamGenerate(projectId, { onProgress, onCase, onComplete, onCancelled, onError } = {}) {
-  // EventSource 无法带 Authorization 头，改用 ?token= 查询参数认证
-  const token = encodeURIComponent(localStorage.getItem('aicase-token') || '')
-  const url = `/api/projects/${projectId}/testcases/generate-stream?token=${token}`
+// v6.6: 先以 Bearer 换短期 ticket，再用 ?ticket= 建立连接（避免长期 JWT 进 URL）。
+export async function streamGenerate(projectId, { onProgress, onCase, onComplete, onCancelled, onError } = {}) {
+  const { data } = await fetchSseTicket()
+  const url = `/api/projects/${projectId}/testcases/generate-stream?ticket=${encodeURIComponent(data.ticket)}`
   const es = new EventSource(url)
 
   es.addEventListener('progress', (e) => {
@@ -44,7 +45,7 @@ export function streamGenerate(projectId, { onProgress, onCase, onComplete, onCa
 // v3.5: SSE 流式追加生成。复用 streamGenerate 的事件结构，
 // complete 事件携带 total/appended/dropped/existingBefore 字段。
 // type 为空时全类型追加；非空时仅追加该类型（positive/negative/boundary/data）。
-export function streamGenerateAppend(
+export async function streamGenerateAppend(
   projectId,
   type,
   { onProgress, onCase, onComplete, onCancelled, onError } = {}
@@ -52,9 +53,9 @@ export function streamGenerateAppend(
   const params = new URLSearchParams()
   if (type) params.set('type', type)
   const query = params.toString() ? `?${params.toString()}` : ''
-  const token = encodeURIComponent(localStorage.getItem('aicase-token') || '')
+  const { data } = await fetchSseTicket()
   const sep = query ? '&' : '?'
-  const url = `/api/projects/${projectId}/testcases/generate-stream-append${query}${sep}token=${token}`
+  const url = `/api/projects/${projectId}/testcases/generate-stream-append${query}${sep}ticket=${encodeURIComponent(data.ticket)}`
   const es = new EventSource(url)
 
   es.addEventListener('progress', (e) => {

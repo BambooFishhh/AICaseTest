@@ -14,6 +14,7 @@ public class UserDTO {
     private String username;
     private String displayName;
     private String role;
+    private Boolean mustChangePassword;
     private LocalDateTime createdAt;
 
     public static UserDTO from(User user) {
@@ -23,6 +24,7 @@ public class UserDTO {
                 .username(user.getUsername())
                 .displayName(user.getDisplayName())
                 .role(user.getRole())
+                .mustChangePassword(Boolean.TRUE.equals(user.getMustChangePassword()))
                 .createdAt(user.getCreatedAt())
                 .build();
     }
