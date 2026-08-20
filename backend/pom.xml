@@ -247,6 +247,21 @@
                     </excludes>
                 </configuration>
             </plugin>
+            <!--
+              CI 等普通环境不应在 mvn test/verify 阶段拉起 Docker 化的集成测试
+              （MySQL/Redis testcontainers，起容器失败会把整个 verify 标红）。
+              默认只跑单元测试，集成测试另行通过 profile/手工触发。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine}</argLine>
+                    <excludes>
+                        <exclude>**/*IntegrationTest.java</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>
