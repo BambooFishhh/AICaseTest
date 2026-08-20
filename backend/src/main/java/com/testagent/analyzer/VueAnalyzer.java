@@ -894,7 +894,15 @@ public class VueAnalyzer {
         // v6.2: 逐组件 LLM 增强并行化——串行 N 次调用是分析最大瓶颈，改有界并发。
         // 注意：不能复用 analysisExecutor（core=2 且父线程 join 阻塞时线程池不扩线程，结果串行），
         // 必须用按并发数建好的专用固定线程池，才能保证真的有 llm-concurrency 路并发。
-        if (llmService.isConfigured() && !out.isEmpty()) {
+        // v6.3fix: 仅对业务组件（businessScore >= 0）跑 LLM 摘要；公共/布局组件（BackToTop/Breadcrumb
+        // 等）保留确定性基线摘要即可，不再每次白白消耗一次 LLM 调用（前端阶段是分析的最大耗时来源）。
+        List<Map<String, Object>> businessComponents = new ArrayList<>();
+        for (Map<String, Object> m : out) {
+            if (isBusinessComponent(m)) {
+                businessComponents.add(m);
+            }
+        }
+        if (llmService.isConfigured() && !businessComponents.isEmpty()) {
             long t0 = System.currentTimeMillis();
             int workers = Math.max(1, llmConcurrency);
             // 把外层分析子线程上的埋点上下文与 phase 传播到组件并发池，使 LLM token 也能落库。
@@ -903,7 +911,7 @@ public class VueAnalyzer {
             ExecutorService pool = Executors.newFixedThreadPool(workers);
             try {
                 List<CompletableFuture<Void>> futures = new ArrayList<>();
-                for (Map<String, Object> m : out) {
+                for (Map<String, Object> m : businessComponents) {
                     futures.add(CompletableFuture.runAsync(() -> {
                         telemetryService.bindPhase(telemetryCtx, telemetryPhase, () -> {
                             try {
@@ -920,10 +928,26 @@ public class VueAnalyzer {
             } finally {
                 pool.shutdown();
             }
-            log.info("Parallel LLM component summaries: {} components, concurrency={}, took {}ms",
-                    out.size(), workers, System.currentTimeMillis() - t0);
+            log.info("Parallel LLM component summaries: {} business / {} total components, concurrency={}, took {}ms",
+                    businessComponents.size(), out.size(), workers, System.currentTimeMillis() - t0);
         }
         return out;
+    }
+
+    // v6.3fix: 业务分非负即视为业务组件；解析失败/缺失按业务组件处理，避免漏掉本应增强的组件。
+    private boolean isBusinessComponent(Map<String, Object> m) {
+        Object score = m == null ? null : m.get("businessScore");
+        if (score instanceof Number n) {
+            return n.doubleValue() >= 0;
+        }
+        if (score != null) {
+            try {
+                return Double.parseDouble(String.valueOf(score)) >= 0;
+            } catch (NumberFormatException ignored) {
+                return true;
+            }
+        }
+        return true;
     }
 
     private Map<String, List<Map<String, Object>>> groupByComponent(List<Map<String, Object>> items) {
