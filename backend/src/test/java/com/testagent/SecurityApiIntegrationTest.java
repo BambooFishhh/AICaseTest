@@ -17,6 +17,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * vT6: API 层安全与权限集成测试（H2 + 内存运行态，禁用 MCP）。
+ * 需要 LLM API Key 才能启动完整上下文，按仓库约定用 *IntegrationTest 命名，
+ * 由 surefire 排除，避免 CI（无 LLM Key）下上下文启动失败。
  */
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1",
@@ -25,7 +27,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "app.redis.enabled=false"
 })
 @AutoConfigureMockMvc
-class SecurityApiTest {
+class SecurityApiIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
