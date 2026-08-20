@@ -540,17 +540,13 @@ onMounted(async () => {
   }
 })
 
-// v6.1: 刷新/重新进入页面后，若项目仍在分析/生成中，恢复轮询与提示，
-// 避免当前进行中的状态 toast 丢失，且终态时补发完成/失败提示。
+// v6.1/v6.2fix: 刷新/重新进入页面后，若项目仍在分析/生成中，恢复“需求文档上方”的进度横幅：
+// 先给兜底文案，再由轮询用后端持久化的进度覆盖；终态补发完成/失败提示，并点亮常驻的绿色“分析完成”横幅。
 function resumeActiveStatus() {
   const s = project.value?.status
   if (s !== 'analyzing' && s !== 'generating') return
-  if (s === 'analyzing') {
-    analysisSuccess.value = false
-    ElMessage.info('项目正在分析中，进度将自动刷新')
-  } else {
-    ElMessage.info('项目正在生成用例，进度将自动刷新')
-  }
+  analysisSuccess.value = false
+  pollingMessage.value = s === 'analyzing' ? '正在分析中...' : '正在生成用例中...'
   projectStore.startPolling(projectId, (next, prev, p) => {
     if (p?.progress) pollingMessage.value = p.progress
     if (prev !== 'analyzing' && prev !== 'generating') return
@@ -558,6 +554,7 @@ function resumeActiveStatus() {
     if (next === 'analyzed') {
       ElMessage.success('代码分析完成')
       pollingMessage.value = ''
+      analysisSuccess.value = true
       refreshProject()
     } else if (next === 'completed') {
       ElMessage.success('用例生成完成')

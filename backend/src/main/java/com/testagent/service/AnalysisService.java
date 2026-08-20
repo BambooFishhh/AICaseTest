@@ -295,6 +295,8 @@ public class AnalysisService {
             Project project = projectRepository.findById(projectId)
                     .orElseThrow(() -> new IllegalStateException("项目不存在: " + projectId));
             runAnalysisWithProgress(projectId, project.getSourcePath(), msg -> {
+                // v6.2fix: 分析进度一并持久化到 project.progress，供刷新/重进页面后轮询恢复“操作区下方/需求文档上方”的进度横幅
+                projectRepository.updateProgress(projectId, msg);
                 if (!clientGone.get()) {
                     try {
                         Map<String, Object> data = new LinkedHashMap<>();
@@ -307,6 +309,7 @@ public class AnalysisService {
                 }
             });
             if (!clientGone.get()) {
+                projectRepository.updateProgress(projectId, null);
                 Map<String, Object> data = new LinkedHashMap<>();
                 data.put("message", "分析完成");
                 emitter.send(SseEmitter.event().name("complete").data(data, MediaType.APPLICATION_JSON));
@@ -314,6 +317,7 @@ public class AnalysisService {
             emitter.complete();
         } catch (Exception e) {
             log.error("Stream analysis failed for project {}", projectId, e);
+            projectRepository.updateProgress(projectId, null);
             try {
                 Map<String, Object> data = new LinkedHashMap<>();
                 data.put("message", e.getMessage() != null ? e.getMessage() : "分析失败");
