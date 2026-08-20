@@ -878,7 +878,11 @@ public class VueAnalyzer {
                 m.put("apiCalls", apiCalls);
                 m.put("keywords", keywords);
                 m.put("snippet", extractComponentSnippet(content));
-                m.put("businessScore", businessScore(rel, comp));
+                m.put("businessScore", businessScore(rel, comp,
+                        componentToPath.getOrDefault(comp, ""),
+                        interactions, stateOps, navigations, apiCalls,
+                        formsByComp.getOrDefault(comp, List.of()),
+                        statesByComp.getOrDefault(comp, List.of())));
                 m.put("summary", buildBaselineSummary(comp, rel,
                         formsByComp.getOrDefault(comp, List.of()),
                         statesByComp.getOrDefault(comp, List.of()),
@@ -934,15 +938,15 @@ public class VueAnalyzer {
         return out;
     }
 
-    // v6.3fix: 业务分非负即视为业务组件；解析失败/缺失按业务组件处理，避免漏掉本应增强的组件。
+    // v6.3: 只有足够强的业务信号才触发 LLM 摘要；低于阈值判为通用组件，仅保留确定性基线。
     private boolean isBusinessComponent(Map<String, Object> m) {
         Object score = m == null ? null : m.get("businessScore");
         if (score instanceof Number n) {
-            return n.doubleValue() >= 0;
+            return n.doubleValue() >= 0.3;
         }
         if (score != null) {
             try {
-                return Double.parseDouble(String.valueOf(score)) >= 0;
+                return Double.parseDouble(String.valueOf(score)) >= 0.3;
             } catch (NumberFormatException ignored) {
                 return true;
             }
@@ -1113,20 +1117,46 @@ public class VueAnalyzer {
         return s.length() > 1200 ? s.substring(0, 1200) : s;
     }
 
-    private double businessScore(String rel, String comp) {
+    private static final Set<String> GENERIC_COMPONENT_NAMES = Set.of(
+            "backtotop", "pagination", "paginations", "sidebar", "navbar", "breadcrumb",
+            "tagsview", "appmain", "settings", "svgicon", "table", "upload", "dialog",
+            "icon", "loading", "empty", "blank", "footer", "header", "search");
+
+    // v6.3: 信号打分（反向判定）——默认非业务，有真实业务信号才加分；
+    // 共享/通用目录且既无接口调用、又无用户交互的组件判为通用，避免把普通组件都当成业务发 LLM。
+    private double businessScore(String rel, String comp, String route,
+                                 List<String> interactions, List<String> stateOps,
+                                 List<String> navigations, List<String> apiCalls,
+                                 List<Map<String, Object>> forms,
+                                 List<Map<String, Object>> componentStates) {
         String lower = rel.toLowerCase();
+        boolean hasApi = apiCalls != null && !apiCalls.isEmpty();
+        boolean hasInteraction = interactions != null && !interactions.isEmpty();
+        boolean hasNavigation = navigations != null && !navigations.isEmpty();
+        boolean hasForm = forms != null && !forms.isEmpty();
+        boolean hasState = componentStates != null && !componentStates.isEmpty();
+        boolean isPage = (route != null && !route.isBlank())
+                || lower.contains("/views/") || lower.contains("/pages/")
+                || lower.contains("/containers/");
+
         double score = 0.0;
-        if (lower.contains("/views/") || lower.contains("/pages/")
-                || lower.contains("/views/") || lower.contains("/containers/")) {
-            score += 0.6;
+        if (hasApi) score += 0.5;          // 强业务：调用接口
+        if (hasInteraction) score += 0.3;  // 用户流：交互事件
+        if (hasNavigation) score += 0.2;   // 流转：路由跳转
+        if (hasForm) score += 0.3;         // 表单
+        if (hasState) score += 0.1;        // 状态/弹窗控制
+        if (isPage) score += 0.2;          // 页面/路由组件
+
+        boolean underShared = lower.matches(".*/components(/[^/]*)?$")
+                || lower.contains("/components/layout/") || lower.contains("/components/common/")
+                || lower.contains("/layout/") || lower.contains("/common/");
+        boolean genericName = GENERIC_COMPONENT_NAMES.contains(comp.toLowerCase());
+        if (underShared && !hasApi && !hasInteraction) {
+            score -= 0.8;                  // 共享目录且无业务行为 -> 通用
+        } else if (genericName && !hasApi && !hasInteraction) {
+            score -= 0.6;
         }
-        Set<String> common = Set.of("backtotop", "pagination", "sidebar", "navbar",
-                "breadcrumb", "tagsview", "appmain", "settings", "svgicon", "paginations");
-        if (lower.contains("/components/layout/") || lower.contains("/components/common/")
-                || common.contains(comp.toLowerCase())) {
-            score -= 0.5;
-        }
-        return Math.max(-0.5, Math.min(1.0, score));
+        return Math.max(-1.0, Math.min(1.0, score));
     }
 
     private String sanitizeId(String rel) {
