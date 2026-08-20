@@ -40,9 +40,10 @@ public class StateMachineAgent {
 
     // v5.13: 状态机以前端 pageFlows/apiCalls/componentStates 为旁证做 LLM 增强
     public List<StateMachine> extract(BackendResult backendResult, FrontendResult frontendResult) {
+        // v6.2: 状态机提取 + 前端增强合并为 1 次 LLM 调用（原先是 2 次串行调用）。
         List<StateMachine> result;
         try {
-            result = extractByLlm(backendResult);
+            result = extractByLlm(backendResult, frontendResult);
             if (result == null || result.isEmpty()) {
                 log.warn("LLM state machine extraction returned empty, falling back to rule-based");
                 result = extractByRules(backendResult);
@@ -50,13 +51,6 @@ public class StateMachineAgent {
         } catch (Exception e) {
             log.warn("LLM state machine extraction failed, falling back to rule-based: {}", e.getMessage());
             result = extractByRules(backendResult);
-        }
-        if (hasFrontendEvidence(frontendResult)) {
-            try {
-                enhanceWithFrontend(result, frontendResult);
-            } catch (Exception e) {
-                log.warn("Frontend state machine enhancement failed, keeping backend-only result: {}", e.getMessage());
-            }
         }
         for (StateMachine sm : result) {
             sm.setCreatedAt(LocalDateTime.now());
@@ -230,24 +224,37 @@ public class StateMachineAgent {
         return objectMapper.convertValue(node, Map.class);
     }
 
-    private List<StateMachine> extractByLlm(BackendResult backendResult) {
+    private List<StateMachine> extractByLlm(BackendResult backendResult, FrontendResult frontendResult) {
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("enums", backendResult.getEnums());
         summary.put("entities", backendResult.getEntities());
 
+        boolean withFrontend = hasFrontendEvidence(frontendResult);
+        if (withFrontend) {
+            summary.put("frontendEvidence", Map.of(
+                    "pageFlows", frontendResult.getPageFlows() == null ? List.of() : frontendResult.getPageFlows(),
+                    "apiCalls", frontendResult.getApiCalls() == null ? List.of() : frontendResult.getApiCalls(),
+                    "componentStates", frontendResult.getComponentStates() == null ? List.of() : frontendResult.getComponentStates()));
+        }
+
         String systemPrompt = promptSkillLoader.load("state-machine-extraction",
-                "你是状态机提取专家。根据提供的后端代码分析结果（枚举和常量），提取状态机信息。"
+                "你是状态机提取专家。后端枚举值是状态机的 ground truth，前端 pageFlows/apiCalls/componentStates 只是旁证。"
+                + "根据提供的后端代码分析结果（枚举和常量）提取状态机信息。"
                 + "请返回JSON数组，每个元素包含：name(状态机名称), description(描述), "
                 + "states(状态数组，每个状态对象包含：name(中文名，便于测试人员理解，如'已支付')，"
                 + "code(英文枚举原值，如'PAID'或'STATUS_PAID'，保持与代码一致)，"
                 + "type(initial/normal/final)，description(描述)), "
                 + "transitions(状态转换数组，每个转换的 from/to 必须使用对应状态的 code（英文枚举原值），"
-                + "trigger 用中文动词描述，如'支付'/'发货')。"
+                + (withFrontend
+                        ? "可用 frontendEvidence 推断 trigger(中文动词，如'支付'/'发货')/condition/endpoint(METHOD /path)/order，但不得虚构状态；"
+                        : "trigger 用中文动词描述，如'支付'/'发货'；")
+                + "只返回该状态机 states 中已存在的 code)。"
                 + "只返回JSON数组，不要包含其他文字。");
 
         String userPrompt;
         try {
-            userPrompt = "后端代码分析结果：\n" + objectMapper.writeValueAsString(summary);
+            userPrompt = "后端代码分析结果" + (withFrontend ? "与前端证据" : "") + "：\n"
+                    + objectMapper.writeValueAsString(summary);
         } catch (Exception e) {
             userPrompt = "后端代码分析结果：\n" + summary.toString();
         }
@@ -276,7 +283,62 @@ public class StateMachineAgent {
             log.error("Failed to parse LLM state machine response", e);
             throw new RuntimeException("Failed to parse LLM response", e);
         }
+        validateTransitions(result, withFrontend);
         return result;
+    }
+
+    // v6.2: 确定性校验/去重——transitions 的 from/to 必须落在该状态机 states 的 code 内，并归一化为规范 code。
+    private void validateTransitions(List<StateMachine> stateMachines, boolean withFrontend) {
+        for (StateMachine sm : stateMachines) {
+            Map<String, String> codes = readStateCodeMap(sm);
+            List<Map<String, Object>> valid = new ArrayList<>();
+            for (Map<String, Object> t : JsonHelper.parseListMap(sm.getTransitions())) {
+                String fromRaw = text(t, "from").trim();
+                String toRaw = text(t, "to").trim();
+                String fromKey = normalizeState(fromRaw);
+                String toKey = normalizeState(toRaw);
+                if (fromRaw.isEmpty() || toRaw.isEmpty()
+                        || !codes.containsKey(fromKey) || !codes.containsKey(toKey)) {
+                    log.warn("Drop state machine transition with unknown state in {}: {} -> {}",
+                            sm.getName(), fromRaw, toRaw);
+                    continue;
+                }
+                String from = codes.get(fromKey);
+                String to = codes.get(toKey);
+                String trigger = text(t, "trigger");
+                boolean duplicate = valid.stream().anyMatch(v ->
+                        from.equals(text(v, "from"))
+                                && to.equals(text(v, "to"))
+                                && trigger.equalsIgnoreCase(text(v, "trigger")));
+                if (duplicate) {
+                    continue;
+                }
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("from", from);
+                item.put("to", to);
+                if (!trigger.isEmpty()) {
+                    item.put("trigger", trigger);
+                }
+                String condition = text(t, "condition");
+                if (!condition.isEmpty()) {
+                    item.put("condition", condition);
+                }
+                String endpoint = text(t, "endpoint");
+                if (!endpoint.isEmpty()) {
+                    item.put("endpoint", endpoint);
+                }
+                if (t.get("order") instanceof Number order) {
+                    item.put("order", order.intValue());
+                }
+                valid.add(item);
+            }
+            sm.setTransitions(toJson(valid));
+            List<String> sources = new ArrayList<>(List.of("llm"));
+            if (withFrontend) {
+                sources.add("frontend");
+            }
+            sm.setSources(toJson(sources));
+        }
     }
 
     private List<StateMachine> extractByRules(BackendResult backendResult) {

@@ -41,6 +41,10 @@ public class SecurityConfig {
                 .cors(cors -> {})
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // v6.1fix: 只对 REQUEST 分发做鉴权，跳过 SSE 结束时的 async re-dispatch。
+                        // 默认 shouldFilterAllDispatcherTypes=true 会让 AuthorizationFilter 在异步续派上重新鉴权，
+                        // 而 JwtAuthFilter(OncePerRequestFilter) 不会重跑，安全上下文为空导致无谓的 Access Denied ERROR。
+                        .shouldFilterAllDispatcherTypes(false)
                         .requestMatchers("/api/auth/login", "/api/auth/register", "/api/health",
                                 "/actuator/health", "/actuator/prometheus", "/swagger-ui/**",
                                 "/v3/api-docs/**", "/h2-console/**", "/error").permitAll()

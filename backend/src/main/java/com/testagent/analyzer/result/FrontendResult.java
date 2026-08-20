@@ -32,6 +32,9 @@ public class FrontendResult {
     // v1.11: 页面跳转关系
     private List<Map<String, Object>> pageFlows;
 
+    // v6.1 (Agentic RAG): 逐组件语义摘要（交互事件/API/状态/路由 + 按需源码片段 + 业务分）
+    private List<Map<String, Object>> componentSummaries;
+
     private int fileCount;
 
     private String status;
@@ -46,6 +49,7 @@ public class FrontendResult {
                 .componentStates(List.of())
                 .domSelectors(List.of())
                 .pageFlows(List.of())
+                .componentSummaries(List.of())
                 .fileCount(0)
                 .build();
     }

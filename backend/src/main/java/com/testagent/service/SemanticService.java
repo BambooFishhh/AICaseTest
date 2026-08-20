@@ -1,5 +1,7 @@
 package com.testagent.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.testagent.analyzer.result.FrontendResult;
 import com.testagent.dto.TestCaseDTO;
 import com.testagent.entity.TestCase;
 import com.testagent.repository.TestCaseRepository;
@@ -10,7 +12,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -20,6 +28,7 @@ import java.util.UUID;
 public class SemanticService {
 
     private static final Logger log = LoggerFactory.getLogger(SemanticService.class);
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
     private EmbeddingService embeddingService;
@@ -66,6 +75,7 @@ public class SemanticService {
         clearCases(projectId);
         milvusService.deleteByProject(MilvusService.COLLECTION_CONTEXTS, projectId);
         milvusService.deleteByProject(MilvusService.COLLECTION_FAILURES, projectId);
+        milvusService.deleteByProject(MilvusService.COLLECTION_COMPONENTS, projectId);
     }
 
     // v5.6: 删除指定用例向量
@@ -136,18 +146,224 @@ public class SemanticService {
     }
 
     public List<String> retrieveContexts(String projectId, String query, int topK) {
-        if (!isAvailable() || query == null || query.isBlank()) {
+        return retrieveContexts(projectId, query == null ? List.of() : List.of(query), topK);
+    }
+
+    // v6.1: 按多个查询段（整段 PRD + 各 module/requirement）分别检索上下文，
+    // 按命中 id 保留最高分去重后返回 topK。避免整段 PRD 揉成一个向量带来的噪声。
+    public List<String> retrieveContexts(String projectId, List<String> queries, int topK) {
+        if (!isAvailable() || queries == null || queries.isEmpty() || topK <= 0) {
             return List.of();
         }
+        Map<String, SearchHit> best = new LinkedHashMap<>();
+        for (String query : queries) {
+            if (query == null || query.isBlank()) {
+                continue;
+            }
+            String limited = query.length() > 2000 ? query.substring(0, 2000) : query;
+            List<Float> vector = embeddingService.embed(limited);
+            if (vector.isEmpty()) {
+                continue;
+            }
+            for (SearchHit hit : milvusService.search(MilvusService.COLLECTION_CONTEXTS,
+                    projectId, vector, topK)) {
+                if (hit.id() == null || hit.id().isBlank() || hit.text() == null || hit.text().isBlank()) {
+                    continue;
+                }
+                SearchHit existing = best.get(hit.id());
+                if (existing == null || hit.score() > existing.score()) {
+                    best.put(hit.id(), hit);
+                }
+            }
+        }
+        return best.values().stream()
+                .sorted(Comparator.comparingDouble(SearchHit::score).reversed())
+                .limit(topK)
+                .map(SearchHit::text)
+                .toList();
+    }
+
+    // v6.1 (前端 Agentic RAG): 全量替换组件语义索引（先删同项目旧向量再写入）。
+    public void replaceComponents(String projectId, FrontendResult frontendResult) {
+        if (!isAvailable() || frontendResult == null || frontendResult.getComponentSummaries() == null) {
+            return;
+        }
+        milvusService.deleteByProject(MilvusService.COLLECTION_COMPONENTS, projectId);
+        for (Map<String, Object> comp : frontendResult.getComponentSummaries()) {
+            indexComponent(projectId, comp);
+        }
+        log.info("Indexed {} frontend components for project {}", frontendResult.getComponentSummaries().size(), projectId);
+    }
+
+    private void indexComponent(String projectId, Map<String, Object> comp) {
+        if (comp == null) {
+            return;
+        }
+        try {
+            String id = comp.get("id") == null ? "comp-" + UUID.randomUUID().toString().substring(0, 8)
+                    : String.valueOf(comp.get("id"));
+            String title = comp.get("component") == null ? id : String.valueOf(comp.get("component"));
+            String json = objectMapper.writeValueAsString(comp);
+            if (json.length() > 8000) {
+                json = json.substring(0, 8000);
+            }
+            String embedText = buildComponentEmbedText(comp);
+            List<Float> vector = embeddingService.embed(embedText);
+            if (vector.isEmpty()) {
+                return;
+            }
+            milvusService.insert(MilvusService.COLLECTION_COMPONENTS, projectId, id, title,
+                    "component", json, vector);
+        } catch (Exception e) {
+            log.warn("Frontend component index failed: {}", e.getMessage());
+        }
+    }
+
+    private String buildComponentEmbedText(Map<String, Object> comp) {
+        StringBuilder sb = new StringBuilder();
+        appendIfPresent(sb, comp.get("component"));
+        appendIfPresent(sb, comp.get("route"));
+        appendIfPresent(sb, comp.get("summary"));
+        appendListIfPresent(sb, comp.get("interactions"));
+        appendListIfPresent(sb, comp.get("apiCalls"));
+        appendListIfPresent(sb, comp.get("stateOps"));
+        appendListIfPresent(sb, comp.get("routeNavigations"));
+        appendListIfPresent(sb, comp.get("keywords"));
+        return sb.toString().trim();
+    }
+
+    public List<Map<String, Object>> retrieveComponents(String projectId, String query, int topK) {
+        return retrieveComponents(projectId, query == null ? List.of() : List.of(query), topK);
+    }
+
+    // v6.1: 按多个查询段分别混合检索组件，按组件 id 保留最高 relevance 去重后返回 topK。
+    public List<Map<String, Object>> retrieveComponents(String projectId, List<String> queries, int topK) {
+        if (!isAvailable() || queries == null || queries.isEmpty() || topK <= 0) {
+            return List.of();
+        }
+        Map<String, Map<String, Object>> best = new LinkedHashMap<>();
+        for (String query : queries) {
+            if (query == null || query.isBlank()) {
+                continue;
+            }
+            for (Map<String, Object> comp : scoreComponentsQuery(projectId, query, topK)) {
+                String id = String.valueOf(comp.getOrDefault("id", ""));
+                if (id.isBlank()) {
+                    continue;
+                }
+                Map<String, Object> existing = best.get(id);
+                double rel = numberScore(comp.get("relevance"));
+                if (existing == null || rel > numberScore(existing.get("relevance"))) {
+                    best.put(id, comp);
+                }
+            }
+        }
+        List<Map<String, Object>> out = new ArrayList<>(best.values());
+        out.sort(Comparator.comparingDouble(
+                (Map<String, Object> m) -> numberScore(m.get("relevance"))).reversed());
+        return out.size() > topK ? out.subList(0, topK) : out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> scoreComponentsQuery(String projectId, String query, int topK) {
         String limited = query.length() > 2000 ? query.substring(0, 2000) : query;
         List<Float> vector = embeddingService.embed(limited);
         if (vector.isEmpty()) {
             return List.of();
         }
-        List<SearchHit> hits = milvusService.search(MilvusService.COLLECTION_CONTEXTS, projectId, vector, topK);
-        return hits.stream().map(SearchHit::text)
-                .filter(s -> s != null && !s.isBlank())
-                .toList();
+        List<SearchHit> hits = milvusService.search(MilvusService.COLLECTION_COMPONENTS, projectId, vector,
+                topK * 3);
+        Set<String> queryTerms = tokenize(query);
+        if (queryTerms.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> scored = new ArrayList<>();
+        for (SearchHit hit : hits) {
+            if (hit.text() == null || hit.text().isBlank()) {
+                continue;
+            }
+            Map<String, Object> comp;
+            try {
+                comp = objectMapper.readValue(hit.text(), Map.class);
+            } catch (Exception e) {
+                comp = new LinkedHashMap<>();
+                comp.put("component", hit.title());
+                comp.put("summary", hit.text());
+            }
+            double cosine = Math.max(0.0, hit.score());
+            double keyword = keywordScore(comp, queryTerms);
+            double business = comp.get("businessScore") instanceof Number n ? n.doubleValue() : 0.0;
+            double combined = 0.6 * cosine + 0.35 * keyword + 0.05 * business;
+            comp.put("relevance", Math.round(combined * 100.0) / 100.0);
+            scored.add(comp);
+        }
+        scored.sort(Comparator.comparingDouble(
+                (Map<String, Object> m) -> numberScore(m.get("relevance"))).reversed());
+        return scored;
+    }
+
+    private double numberScore(Object value) {
+        if (value instanceof Number n) {
+            return n.doubleValue();
+        }
+        if (value != null) {
+            try {
+                return Double.parseDouble(String.valueOf(value));
+            } catch (NumberFormatException ignored) {
+                return 0.0;
+            }
+        }
+        return 0.0;
+    }
+
+    @SuppressWarnings("unchecked")
+    private double keywordScore(Map<String, Object> comp, Set<String> queryTerms) {
+        Object kwObj = comp.get("keywords");
+        Set<String> kws = new LinkedHashSet<>();
+        if (kwObj instanceof List<?> list) {
+            for (Object o : list) {
+                if (o != null) {
+                    kws.add(String.valueOf(o).toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        String hay = (String.valueOf(comp.getOrDefault("component", "")) + " "
+                + String.valueOf(comp.getOrDefault("file", ""))).toLowerCase(Locale.ROOT);
+        int overlap = 0;
+        for (String term : queryTerms) {
+            if (kws.contains(term) || hay.contains(term)) {
+                overlap++;
+            }
+        }
+        return (double) overlap / queryTerms.size();
+    }
+
+    private Set<String> tokenize(String text) {
+        Set<String> out = new LinkedHashSet<>();
+        Set<String> stop = Set.of("the", "and", "for", "with", "page", "view", "component",
+                "interface", "api", "测试", "用例", "功能", "页面");
+        for (String part : text.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
+            String p = part.trim();
+            if (p.length() >= 2 && !stop.contains(p)) {
+                out.add(p);
+            }
+        }
+        return out;
+    }
+
+    private void appendIfPresent(StringBuilder sb, Object value) {
+        if (value != null && !String.valueOf(value).isBlank()) {
+            sb.append(String.valueOf(value)).append(' ');
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void appendListIfPresent(StringBuilder sb, Object value) {
+        if (value instanceof List<?> list) {
+            for (Object o : list) {
+                appendIfPresent(sb, o);
+            }
+        }
     }
 
     public void recordFailure(String projectId, String executionId, String action, String error) {

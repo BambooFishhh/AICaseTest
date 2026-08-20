@@ -15,6 +15,8 @@ import com.github.javaparser.ast.expr.AnnotationExpr;
 import com.github.javaparser.ast.expr.NormalAnnotationExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.expr.SingleMemberAnnotationExpr;
+import com.github.javaparser.ast.expr.MethodCallExpr;
+import com.github.javaparser.ast.stmt.ThrowStmt;
 import com.github.javaparser.ast.stmt.IfStmt;
 import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.BusinessRule;
@@ -22,6 +24,7 @@ import com.testagent.analyzer.result.EndpointInfo;
 import com.testagent.analyzer.result.EntityInfo;
 import com.testagent.analyzer.result.EnumInfo;
 import com.testagent.analyzer.result.EnumValue;
+import com.testagent.analyzer.result.OperationDep;
 import com.testagent.service.LlmService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +41,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -68,6 +73,7 @@ public class SpringAnalyzer {
         List<EnumInfo> enums = new ArrayList<>();
         List<EntityInfo> entities = new ArrayList<>();
         List<BusinessRule> businessRules = new ArrayList<>();
+        List<OperationDep> dependencyGraph = new ArrayList<>();
 
         for (File javaFile : javaFiles) {
             String relativePath = relativize(dir, javaFile);
@@ -81,6 +87,7 @@ public class SpringAnalyzer {
                 // skip single file parse failure so the whole analysis is not broken
             }
         }
+        dependencyGraph.addAll(extractDependencyGraph(dir, javaFiles));
 
         enhanceWithLlmIfConfigured(dir, javaFiles, endpoints, enums, entities, businessRules);
 
@@ -90,6 +97,7 @@ public class SpringAnalyzer {
                 .enums(enums)
                 .entities(entities)
                 .businessRules(businessRules)
+                .dependencyGraph(dependencyGraph)
                 .fileCount(javaFiles.size())
                 .status("ok")
                 .build();
@@ -171,17 +179,149 @@ public class SpringAnalyzer {
                     }
                     String methodPath = extractAnnotationPath(ann);
                     String fullPath = joinPath(classPath, methodPath);
+                    // v6.1 (SAINT): 确定性采集响应结构/业务逻辑/异常类型
+                    List<String> exceptionTypes = new ArrayList<>();
+                    method.findFirst(ThrowStmt.class)
+                            .flatMap(t -> t.getExpression().findFirst(ObjectCreationExpr.class))
+                            .ifPresent(c -> exceptionTypes.add(c.getType().asString()));
+                    for (var thrown : method.getThrownExceptions()) {
+                        String thrownName = thrown.asString();
+                        if (!exceptionTypes.contains(thrownName)) {
+                            exceptionTypes.add(thrownName);
+                        }
+                    }
                     endpoints.add(EndpointInfo.builder()
                             .method(httpMethod)
                             .path(fullPath)
                             .function(className + "." + method.getNameAsString())
                             .file(filePath)
+                            .responseBody(method.getType().asString())
+                            .businessLogic(compactMethodBody(method))
+                            .exceptions(exceptionTypes)
                             .sources(List.of("rules"))
                             .build());
                 }
             }
         }
         return endpoints;
+    }
+
+    // v6.1 (SAINT): 确定性生成操作依赖图。以 Service/Facade 为节点，依据方法体内的
+    // MethodCallExpr（含注入字段作用域）解析 "ClassA.method -> ClassB.method" 边。
+    private List<OperationDep> extractDependencyGraph(File dir, List<File> javaFiles) {
+        List<ServiceClass> services = new ArrayList<>();
+        for (File file : javaFiles) {
+            String rel = relativize(dir, file);
+            if (rel.contains("/test/") || rel.contains("src/test/")) {
+                continue;
+            }
+            try {
+                CompilationUnit cu = StaticJavaParser.parse(file);
+                for (ClassOrInterfaceDeclaration cls : cu.findAll(ClassOrInterfaceDeclaration.class)) {
+                    String clsName = cls.getNameAsString();
+                    if (!isServiceClass(clsName)) {
+                        continue;
+                    }
+                    Set<String> methods = new LinkedHashSet<>();
+                    Map<String, String> fieldTypes = new HashMap<>();
+                    for (MethodDeclaration m : cls.getMethods()) {
+                        methods.add(m.getNameAsString());
+                    }
+                    for (FieldDeclaration field : cls.getFields()) {
+                        String type = field.getElementType().asString();
+                        if (isServiceClass(type)) {
+                            for (VariableDeclarator vd : field.getVariables()) {
+                                fieldTypes.putIfAbsent(vd.getNameAsString(), type);
+                            }
+                        }
+                    }
+                    services.add(new ServiceClass(clsName, rel, methods, fieldTypes));
+                }
+            } catch (Exception e) {
+                log.debug("Dependency graph parse failed for {}: {}", file.getName(), e.getMessage());
+            }
+        }
+
+        // 简单名 -> 定义该方法的 Service 类集合，用于解析无显式作用域 / 简短作用域的调用。
+        Map<String, Set<String>> methodOwners = new HashMap<>();
+        for (ServiceClass svc : services) {
+            for (String m : svc.methods()) {
+                methodOwners.computeIfAbsent(m, k -> new LinkedHashSet<>()).add(svc.name());
+            }
+        }
+
+        List<OperationDep> result = new ArrayList<>();
+        for (ServiceClass svc : services) {
+            File f = new File(dir, svc.file());
+            try {
+                CompilationUnit cu = StaticJavaParser.parse(f);
+                ClassOrInterfaceDeclaration cls = cu.findAll(ClassOrInterfaceDeclaration.class).stream()
+                        .filter(c -> c.getNameAsString().equals(svc.name())).findFirst().orElse(null);
+                if (cls == null) {
+                    continue;
+                }
+                for (MethodDeclaration method : cls.getMethods()) {
+                    String operation = svc.name() + "." + method.getNameAsString();
+                    Set<String> deps = new LinkedHashSet<>();
+                    for (MethodCallExpr call : method.findAll(MethodCallExpr.class)) {
+                        String calledName = call.getNameAsString();
+                        String scopeType = svc.fieldTypes().get(
+                                call.getScope().map(Object::toString).orElse(""));
+                        if (scopeType != null && svc.methods().contains(calledName)
+                                && methodOwners.getOrDefault(calledName, Set.of()).contains(scopeType)) {
+                            deps.add(scopeType + "." + calledName);
+                        } else if (scopeType != null
+                                && methodOwners.getOrDefault(calledName, Set.of()).contains(scopeType)) {
+                            deps.add(scopeType + "." + calledName);
+                        } else if (call.getScope().isEmpty() && svc.methods().contains(calledName)) {
+                            if (!calledName.equals(method.getNameAsString())) {
+                                deps.add(svc.name() + "." + calledName);
+                            }
+                        } else if (methodOwners.getOrDefault(calledName, Set.of()).size() == 1) {
+                            String owner = methodOwners.get(calledName).iterator().next();
+                            if (!owner.equals(svc.name())) {
+                                deps.add(owner + "." + calledName);
+                            }
+                        }
+                    }
+                    if (!deps.isEmpty()) {
+                        result.add(OperationDep.builder()
+                                .operation(operation)
+                                .kind("service")
+                                .file(svc.file())
+                                .description("静态方法调用依赖")
+                                .dependsOn(new ArrayList<>(deps))
+                                .build());
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Dependency graph build failed for {}: {}", svc.name(), e.getMessage());
+            }
+        }
+        result.sort(Comparator.comparing(OperationDep::getOperation));
+        return result;
+    }
+
+    private boolean isServiceClass(String clsName) {
+        if (clsName == null) {
+            return false;
+        }
+        return clsName.endsWith("Service") || clsName.endsWith("ServiceImpl")
+                || clsName.endsWith("Facade") || clsName.endsWith("FacadeImpl")
+                || clsName.endsWith("Manager") || clsName.endsWith("ManagerImpl");
+    }
+
+    private String compactMethodBody(MethodDeclaration method) {
+        var body = method.getBody();
+        if (body.isEmpty()) {
+            return "";
+        }
+        String text = body.get().toString().replaceAll("\\s+", " ").trim();
+        return text.length() > 300 ? text.substring(0, 300) + "..." : text;
+    }
+
+    private record ServiceClass(String name, String file, Set<String> methods,
+                                Map<String, String> fieldTypes) {
     }
 
     private List<EnumInfo> extractEnums(CompilationUnit cu, String filePath) {
@@ -411,12 +551,20 @@ public class SpringAnalyzer {
                                     List<EntityInfo> entities,
                                     List<BusinessRule> businessRules) {
         Map<String, Object> summary = new LinkedHashMap<>();
-        summary.put("endpoints", endpoints.stream().map(EndpointInfo::toContextMap).toList());
-        summary.put("enums", enums);
-        summary.put("entities", entities.stream().map(EntityInfo::toContextMap).toList());
-        summary.put("businessRules", businessRules.stream().map(BusinessRule::toContextMap).toList());
+        // v6.1 (B 方案): 降采样——只保留最有价值的子集并控制单条长度，避免全量 JSON 超限。
+        summary.put("endpointCount", endpoints.size());
+        summary.put("endpoints", endpoints.stream().limit(200)
+                .map(ep -> {
+                    Map<String, Object> m = new LinkedHashMap<>(ep.toContextMap());
+                    m.put("businessLogic", truncate((String) m.get("businessLogic"), 200));
+                    return m;
+                }).toList());
+        summary.put("enums", enums.size() > 120 ? enums.subList(0, 120) : enums);
+        summary.put("entities", entities.stream().limit(200).map(EntityInfo::toContextMap).toList());
+        summary.put("businessRules", businessRules.stream().limit(300).map(BusinessRule::toContextMap).toList());
         try {
-            return objectMapper.writeValueAsString(summary);
+            String json = objectMapper.writeValueAsString(summary);
+            return json.length() > 30000 ? json.substring(0, 30000) : json;
         } catch (Exception e) {
             return summary.toString();
         }

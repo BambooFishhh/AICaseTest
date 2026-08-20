@@ -2300,6 +2300,7 @@ onMounted(async () => {
     loadList(), loadAllForStats(), loadCoverageMatrix(), loadDefaultTargetUrl(), loadAccessLevel()
   ])
   window.addEventListener('pageshow', handlePageShow)
+  await resumeGenerationIfActive()
   if (route.query.generate === '1') {
     router.replace({ path: route.path })
     try {
@@ -2312,6 +2313,28 @@ onMounted(async () => {
     }
   }
 })
+
+// v6.1: 刷新/重新进入页面后，若项目仍在生成用例，恢复轮询与完成提示
+async function resumeGenerationIfActive() {
+  try {
+    const res = await getProject(projectId)
+    if (res.data?.status !== 'generating') return
+    ElMessage.info('项目正在生成用例，进度将自动刷新')
+    // 走轮询恢复进度，不置 streaming=true（避免出现无 SSE 连接却可取消的状态）
+    projectStore.startPolling(projectId, (next, prev) => {
+      if (prev !== 'generating' || next === prev) return
+      if (next === 'completed') {
+        ElMessage.success('用例生成完成')
+        Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+      } else if (next === 'failed') {
+        ElMessage.error('用例生成失败')
+        loadList()
+      }
+    })
+  } catch {
+    // 状态获取失败则忽略
+  }
+}
 
 onUnmounted(() => {
   projectStore.stopPolling()

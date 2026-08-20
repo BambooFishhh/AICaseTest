@@ -39,6 +39,8 @@ public class OrchestratorAgent {
 
     private static final Logger log = LoggerFactory.getLogger(OrchestratorAgent.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
+    // v6.1: 分段查询数量上限，控制 embedding/检索开销
+    private static final int MAX_RAG_QUERY_SEGMENTS = 8;
 
     @Autowired
     private ProjectRepository projectRepository;
@@ -201,10 +203,19 @@ public class OrchestratorAgent {
         // v5.4: 生成前 RAG 上下文检索（Milvus 未启用时返回空，不影响原流程）
         String ragText = ragTextBuilder.toString();
         if (!ragText.isBlank()) {
-            List<String> ragContexts = semanticService.retrieveContexts(projectId, ragText, 5);
+            // v6.1: 按 module/requirement 分段查询并合并，避免整段 PRD 揉成单一向量带来的检索噪声
+            List<String> ragQueries = buildRagQueries(ragText, prdResult);
+            List<String> ragContexts = semanticService.retrieveContexts(projectId, ragQueries, 5);
             prdResult.setRagContexts(ragContexts);
             if (!ragContexts.isEmpty()) {
                 log.info("RAG retrieved {} contexts for project {}", ragContexts.size(), projectId);
+            }
+            // v6.1 (前端 Agentic RAG): 用需求文本定位相关组件摘要，供端到端生成融合 UI 语义
+            List<Map<String, Object>> frontendComponents =
+                    semanticService.retrieveComponents(projectId, ragQueries, 6);
+            prdResult.setFrontendComponents(frontendComponents);
+            if (!frontendComponents.isEmpty()) {
+                log.info("Frontend RAG hit {} components for project {}", frontendComponents.size(), projectId);
             }
         }
         prdResult.setOtherContextInfo(supplementary);
@@ -234,6 +245,51 @@ public class OrchestratorAgent {
         // v3.4: 解析生成参数
         GenerationParams params = parseGenerationParams(project.getSettings());
         return new GenContext(prdResult, stateMachines, backendResult, frontendResult, params);
+    }
+
+    // v6.1: 构建检索查询段：整段兜底 + 各模块 + 各需求（title+description），并截断到数量上限。
+    private List<String> buildRagQueries(String ragText, PrdAnalysisResult prdResult) {
+        List<String> queries = new ArrayList<>();
+        if (ragText != null && !ragText.isBlank()) {
+            queries.add(ragText);
+        }
+        if (prdResult != null) {
+            if (prdResult.getModules() != null) {
+                for (Map<String, Object> m : prdResult.getModules()) {
+                    String q = joinFields(m, List.of("name", "description"));
+                    if (!q.isBlank()) {
+                        queries.add(q);
+                    }
+                }
+            }
+            if (prdResult.getRequirements() != null) {
+                for (Map<String, Object> r : prdResult.getRequirements()) {
+                    String q = joinFields(r, List.of("title", "description"));
+                    if (!q.isBlank()) {
+                        queries.add(q);
+                    }
+                }
+            }
+        }
+        return queries.size() > MAX_RAG_QUERY_SEGMENTS
+                ? new ArrayList<>(queries.subList(0, MAX_RAG_QUERY_SEGMENTS)) : queries;
+    }
+
+    private String joinFields(Map<String, Object> map, List<String> fields) {
+        if (map == null || map.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String f : fields) {
+            Object v = map.get(f);
+            if (v instanceof String s && !s.isBlank()) {
+                if (sb.length() > 0) {
+                    sb.append("：");
+                }
+                sb.append(s);
+            }
+        }
+        return sb.toString().trim();
     }
 
     // v3.4: 从 Project.settings JSON 解析生成参数，失败/空降级默认值

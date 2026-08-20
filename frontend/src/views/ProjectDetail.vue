@@ -534,10 +534,42 @@ onMounted(async () => {
   loading.value = true
   try {
     await projectStore.fetchProject(projectId)
+    resumeActiveStatus()
   } finally {
     loading.value = false
   }
 })
+
+// v6.1: 刷新/重新进入页面后，若项目仍在分析/生成中，恢复轮询与提示，
+// 避免当前进行中的状态 toast 丢失，且终态时补发完成/失败提示。
+function resumeActiveStatus() {
+  const s = project.value?.status
+  if (s !== 'analyzing' && s !== 'generating') return
+  if (s === 'analyzing') {
+    analysisSuccess.value = false
+    ElMessage.info('项目正在分析中，进度将自动刷新')
+  } else {
+    ElMessage.info('项目正在生成用例，进度将自动刷新')
+  }
+  projectStore.startPolling(projectId, (next, prev, p) => {
+    if (p?.progress) pollingMessage.value = p.progress
+    if (prev !== 'analyzing' && prev !== 'generating') return
+    if (next === prev) return
+    if (next === 'analyzed') {
+      ElMessage.success('代码分析完成')
+      pollingMessage.value = ''
+      refreshProject()
+    } else if (next === 'completed') {
+      ElMessage.success('用例生成完成')
+      pollingMessage.value = ''
+      refreshProject()
+    } else if (next === 'failed') {
+      ElMessage.error('任务执行失败，请检查项目状态')
+      pollingMessage.value = ''
+      refreshProject()
+    }
+  })
+}
 
 onUnmounted(() => {
   if (analyzeEs) {

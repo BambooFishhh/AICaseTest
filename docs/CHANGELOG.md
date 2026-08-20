@@ -4,6 +4,63 @@
 
 ---
 
+## v6.2 — 分析全链路并行化与状态机收口
+**日期**: 2026-08-20
+**基线**: v6.1
+**主题**: 前端/后端代码分析并行、逐组件 LLM 摘要并发、状态机提取合并为单次调用并做确定性校验；Telemetry 跨线程埋点
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/AnalysisService.java` | 修改 | 前端与后端分析改用 2 线程并发执行（独立定长线程池），不再串行；子线程通过 `bindPhase` 绑定共享埋点上下文 |
+| `analyzer/VueAnalyzer.java` | 修改 | 逐组件 LLM 语义增强改有界并发（`EXECUTOR_LLM_CONCURRENCY`），规避串行 N 次调用这一分析最大瓶颈 |
+| `agent/StateMachineAgent.java` | 修改 | 状态机提取与前端增强合并为 1 次 LLM 调用；新增 `validateTransitions` 将 from/to 归一化为规范 code、剔除未知状态与重复边 |
+| `service/TelemetryService.java` | 修改 | 新增 `bindPhase`/`currentContext`/`currentPhaseOverride` 跨线程传播 phase；`record`/`closePhase` 改为线程安全累加 |
+| `resources/application.yml` / `.env.example` / `docker-compose.yml` | 修改 | 新增 `app.executor.llm-concurrency`（默认 4，`.env` 建议 8） |
+
+### 验证结果
+
+- 前端 `npm run build` 成功
+- 后端编译以 `docker compose build backend`（Maven 3.9 + JDK 17）验证
+
+---
+
+## v6.1 — 前端 Agentic RAG + 后端 SAINT
+**日期**: 2026-08-20
+**基线**: v6.0
+**主题**: 前端逐组件语义索引（Agentic RAG）与后端操作依赖图（SAINT）融入分析与生成链路；统一 prompt 上限；SSE 鉴权与页面刷新状态恢复修复
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `analyzer/VueAnalyzer.java` | 修改 | 逐组件生成语义摘要（交互事件/API/状态/路由/关键词 + 按需源码片段 + 业务分），支持 LLM 语义增强 |
+| `analyzer/SpringAnalyzer.java` | 修改 | 新增 SAINT 风格操作依赖图提取；端点补充响应结构、业务逻辑片段与异常类型采集；LLM summary 降采样防超限 |
+| `analyzer/result/OperationDep.java` | 新增 | 操作依赖图节点（operation/kind/file/description/dependsOn） |
+| `analyzer/result/EndpointInfo.java` / `BackendResult.java` / `FrontendResult.java` / `dto/PrdAnalysisResult.java` | 修改 | 新增 `responseBody`/`businessLogic`/`exceptions`/`dependencyGraph`/`componentSummaries`/`frontendComponents` 字段 |
+| `service/SemanticService.java` | 修改 | 新增组件级索引 `replaceComponents` 与 `retrieveComponents`（cosine+keyword+business 融合评分、多查询段去重）；`retrieveContexts` 支持多查询段 |
+| `service/MilvusService.java` | 修改 | 新增 `components` 集合并建索引；`search` 显式指定向量字段 `embedding` |
+| `agent/OrchestratorAgent.java` | 修改 | 按 module/requirement 分段构造 RAG 查询（上限 8 段），检索需求命中的前端组件摘要 |
+| `agent/TestGeneratorAgent.java` | 修改 | 覆盖清单并入前端组件与操作依赖；前端组件按业务分过滤避免公共组件泄漏；RAG/文档上下文降采样 |
+| `service/LlmService.java` | 修改 | 新增 `llm.max-prompt-chars` 统一 prompt 上限，抑制 277KB 巨型 prompt 触发 idle/read timeout |
+| `security/SecurityConfig.java` | 修改 | `shouldFilterAllDispatcherTypes(false)`，修复 SSE 结束 async re-dispatch 时无谓的 Access Denied |
+| `resources/application.yml` / `.env.example` / `docker-compose.yml` | 修改 | 新增 `LLM_MAX_PROMPT_CHARS`/`LLM_MAX_CONTEXT_CHARS`/HTTP 超时配置；默认模型切到 `mimo-v2.5`、base-url 切到 `opencode.ai/zen/go/v1` |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `views/ProjectDetail.vue` | 修改 | 刷新/重新进入后若项目仍在分析/生成，恢复轮询与终态完成/失败提示 |
+| `views/TestCaseList.vue` | 修改 | 生成中刷新页面后恢复轮询与完成/失败提示 |
+
+### 验证结果
+
+- 前端 `npm run build` 成功
+- 后端编译以 `docker compose build backend`（Maven 3.9 + JDK 17）验证
+
+---
+
 ## v6.0 — Spring AI 混合重构（保留 MCP）
 **日期**: 2026-08-18
 **主题**: LLM 文本/流式/JSON/Embedding 层从 MCP 子进程迁移到 Spring AI OpenAI starter；保留 MCP 浏览器/工具/多模态

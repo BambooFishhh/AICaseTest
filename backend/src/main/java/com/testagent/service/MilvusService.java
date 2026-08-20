@@ -44,6 +44,8 @@ public class MilvusService {
     public static final String COLLECTION_CASES = "cases";
     public static final String COLLECTION_CONTEXTS = "contexts";
     public static final String COLLECTION_FAILURES = "failures";
+    // v6.1 (前端 Agentic RAG): 逐组件语义索引集合
+    public static final String COLLECTION_COMPONENTS = "components";
 
     @Value("${app.milvus.enabled:false}")
     private boolean enabled;
@@ -96,6 +98,7 @@ public class MilvusService {
                         ensureCollection(c, COLLECTION_CASES);
                         ensureCollection(c, COLLECTION_CONTEXTS);
                         ensureCollection(c, COLLECTION_FAILURES);
+                        ensureCollection(c, COLLECTION_COMPONENTS);
                         client = c;
                         log.info("Milvus connected: {}:{}", host, port);
                     } catch (Exception e) {
@@ -221,6 +224,7 @@ public class MilvusService {
                     ? "" : "project_id == \"" + projectId + "\"";
             SearchParam param = SearchParam.newBuilder()
                     .withCollectionName(collection)
+                    .withVectorFieldName("embedding")
                     .withMetricType(MetricType.COSINE)
                     .withOutFields(outFields)
                     .withTopK(topK)

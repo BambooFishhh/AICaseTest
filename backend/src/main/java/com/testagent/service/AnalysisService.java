@@ -29,6 +29,10 @@ import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -149,21 +153,51 @@ public class AnalysisService {
             telemetryService.beginPhaseIfActive("scan");
             ScanResult scanResult = projectScanner.scan(sourcePath);
             telemetryService.endPhase();
-            report(progressCb, "项目结构扫描完成，正在解析后端代码...");
+            report(progressCb, "项目结构扫描完成，正在解析前后端代码...");
 
             FrontendResult frontendResult = null;
-            if (scanResult.getFrontendDir() != null && !scanResult.getFrontendDir().isBlank()) {
-                report(progressCb, "正在解析前端代码...");
-                telemetryService.beginPhaseIfActive("frontend");
-                frontendResult = vueAnalyzer.analyze(scanResult.getFrontendDir());
-                telemetryService.endPhase();
-            }
-
             BackendResult backendResult = null;
-            if (scanResult.getBackendDir() != null && !scanResult.getBackendDir().isBlank()) {
-                telemetryService.beginPhaseIfActive("backend");
-                backendResult = springAnalyzer.analyze(scanResult.getBackendDir());
-                telemetryService.endPhase();
+            boolean hasFrontend = scanResult.getFrontendDir() != null && !scanResult.getFrontendDir().isBlank();
+            boolean hasBackend = scanResult.getBackendDir() != null && !scanResult.getBackendDir().isBlank();
+            // v6.2: 前端与后端分析相互独立，改用 2 线程并发执行（不再串行）。
+            // 注意：不能复用 analysisExecutor（core=2 且父线程阻塞时线程池不扩线程），必须用独立定长池。
+            // 子线程通过 bindPhase 绑定共享上下文与 phase，LLM token 会归属到对应 phase（线程安全累加）。
+            if (hasFrontend || hasBackend) {
+                report(progressCb, hasBackend && hasFrontend
+                        ? "正在并行解析前后端代码..." : "正在解析代码...");
+                TelemetryService.TelemetryContext telemetryCtx = telemetryService.currentContext();
+                ExecutorService pool = Executors.newFixedThreadPool(2);
+                try {
+                    CompletableFuture<FrontendResult> frontendFuture = hasFrontend
+                            ? CompletableFuture.supplyAsync(
+                                    () -> telemetryService.bindPhase(telemetryCtx, "frontend",
+                                            () -> vueAnalyzer.analyze(scanResult.getFrontendDir())), pool)
+                            : CompletableFuture.completedFuture(null);
+                    CompletableFuture<BackendResult> backendFuture = hasBackend
+                            ? CompletableFuture.supplyAsync(
+                                    () -> telemetryService.bindPhase(telemetryCtx, "backend",
+                                            () -> springAnalyzer.analyze(scanResult.getBackendDir())), pool)
+                            : CompletableFuture.completedFuture(null);
+
+                    if (hasFrontend) {
+                        telemetryService.beginPhaseIfActive("frontend");
+                        try {
+                            frontendResult = await(frontendFuture);
+                        } finally {
+                            telemetryService.endPhase();
+                        }
+                    }
+                    if (hasBackend) {
+                        telemetryService.beginPhaseIfActive("backend");
+                        try {
+                            backendResult = await(backendFuture);
+                        } finally {
+                            telemetryService.endPhase();
+                        }
+                    }
+                } finally {
+                    pool.shutdown();
+                }
             }
             report(progressCb, "代码解析完成，正在提取状态机...");
 
@@ -184,6 +218,8 @@ public class AnalysisService {
                 if (frontendResult != null) {
                     semanticService.replaceContext(projectId, "frontend",
                             objectMapper.writeValueAsString(frontendResult));
+                    // v6.1 (前端 Agentic RAG): 逐组件语义索引
+                    semanticService.replaceComponents(projectId, frontendResult);
                 }
             } catch (Exception e) {
                 log.warn("Failed to index analysis contexts: {}", e.getMessage());
@@ -298,6 +334,21 @@ public class AnalysisService {
             } catch (Exception ignored) {
                 // 回调失败不影响分析
             }
+        }
+    }
+
+    private static <T> T await(CompletableFuture<T> future) {
+        try {
+            return future.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("分析被中断", e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new RuntimeException(cause == null ? e : cause);
         }
     }
 

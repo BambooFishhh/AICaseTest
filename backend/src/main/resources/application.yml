@@ -9,8 +9,10 @@ spring:
   # v6.0fix: Spring AI OpenAI 长推理请求需更长 HTTP 超时，避免 Total timeout 10s 超时
   http:
     client:
+      # v6.1fix: 强制 JDK 客户端，规避 Jetty 默认 30s idle timeout（Spring AI RestClient 会自建 Jetty，自定义 bean 不生效）
+      factory: simple
       connect-timeout: 30s
-      read-timeout: 600s
+      read-timeout: 900s
   # v5.0/v5.5: profile 组——prod/migrate 自动带入 mysql
   profiles:
     group:
@@ -48,13 +50,13 @@ spring:
   ai:
     openai:
       api-key: ${LLM_API_KEY:}
-      base-url: ${LLM_BASE_URL:https://llm-fua5iwoagy8hd5de.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
+      base-url: ${LLM_BASE_URL:https://opencode.ai/zen/go/v1}
       # v6.0fix: LLM_BASE_URL 以 /v1 结尾（MCP vision 的 OpenAI SDK 语义）。
       # Spring AI 会额外拼路径，因此显式覆盖为不带 /v1 的端点路径，避免 /v1/v1 重复。
       chat:
         completions-path: /chat/completions
         options:
-          model: ${LLM_MODEL:qwen3.7-max}
+          model: ${LLM_MODEL:mimo-v2.5}
           temperature: 0.4
       embedding:
         embeddings-path: /embeddings
@@ -62,14 +64,22 @@ spring:
           model: ${LLM_EMBEDDING_MODEL:qwen3.7-text-embedding}
 llm:
   provider: ${LLM_PROVIDER:bailian}
-  model: ${LLM_MODEL:qwen3.7-max}
+  model: ${LLM_MODEL:mimo-v2.5}
   embedding-model: ${LLM_EMBEDDING_MODEL:qwen3.7-text-embedding}
   enable-thinking: ${LLM_ENABLE_THINKING:false}
   thinking:
     analysis: ${LLM_THINKING_ANALYSIS:true}
     generation: ${LLM_THINKING_GENERATION:false}
   api-key: ${LLM_API_KEY:}
-  base-url: ${LLM_BASE_URL:https://llm-fua5iwoagy8hd5de.cn-beijing.maas.aliyuncs.com/compatible-mode/v1}
+  base-url: ${LLM_BASE_URL:https://opencode.ai/zen/go/v1}
+  # v6.1 (B 方案): 统一 prompt 上限，避免 277KB 超大 prompt 触发 Idle timeout/超时
+  max-prompt-chars: ${LLM_MAX_PROMPT_CHARS:60000}
+  # v6.1: RAG/文档上下文拼接预算（低于 max-prompt-chars，给系统/指令/示例留余量）
+  max-context-chars: ${LLM_MAX_CONTEXT_CHARS:24000}
+  # v6.1: Spring AI HTTP 客户端超时（自定义 ClientHttpRequestFactory，覆盖 Jetty 默认 30s idle）
+  http:
+    connect-timeout-ms: ${LLM_CONNECT_TIMEOUT_MS:30000}
+    read-timeout-ms: ${LLM_READ_TIMEOUT_MS:600000}
 app:
   output-dir: outputs
   projects-dir: projects
@@ -131,6 +141,8 @@ app:
       core: ${EXECUTOR_SEMANTIC_CORE:1}
       max: ${EXECUTOR_SEMANTIC_MAX:2}
       queue: ${EXECUTOR_SEMANTIC_QUEUE:100}
+    # v6.2: 前端逐组件 LLM 增强的并发上限（越大越快，注意模型限流）
+    llm-concurrency: ${EXECUTOR_LLM_CONCURRENCY:4}
     project-execution-max: ${PROJECT_EXECUTION_MAX:5}
 # v2.6: MCP 多 Server 配置
 mcp:

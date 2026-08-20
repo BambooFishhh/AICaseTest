@@ -61,6 +61,10 @@ public class LlmService {
     @Value("${llm.thinking.generation:false}")
     private boolean generationThinking;
 
+    // v6.1 (B 方案): 统一 prompt 上限，防止超大上下文触发 Idle timeout
+    @Value("${llm.max-prompt-chars:60000}")
+    private int maxPromptChars;
+
     @Autowired
     private ChatClient.Builder chatClientBuilder;
 
@@ -114,6 +118,7 @@ public class LlmService {
 
     private LlmCallResult chatWithUsage(String systemPrompt, String userPrompt, double temperature,
                                         boolean enableThinking) {
+        userPrompt = boundPrompt(userPrompt);
         log.info("[LLM] chat() 开始, provider={}, model={}, prompt长度={}, thinking={}",
                 provider, model, userPrompt == null ? 0 : userPrompt.length(), enableThinking);
         Exception lastException = null;
@@ -181,6 +186,7 @@ public class LlmService {
                                                  double temperature,
                                                  Consumer<String> chunkConsumer,
                                                  boolean enableThinking) {
+        userPrompt = boundPrompt(userPrompt);
         log.info("[LLM] chatStreaming() 开始, prompt长度={}, thinking={}",
                 userPrompt == null ? 0 : userPrompt.length(), enableThinking);
         Exception lastException = null;
@@ -438,6 +444,17 @@ public class LlmService {
             result.put("status", "failed");
         }
         return result;
+    }
+
+    // v6.1 (B 方案): 对 userPrompt 做统一长度约束，避免 277KB 巨型 prompt 触发 idle/read timeout。
+    // 截断时保留头部并追加提示标记，让调用方仍能感知上下文被裁剪。
+    private String boundPrompt(String userPrompt) {
+        if (userPrompt == null || userPrompt.length() <= maxPromptChars) {
+            return userPrompt;
+        }
+        log.warn("[LLM] prompt 超限 {} → 截断到 {}", userPrompt.length(), maxPromptChars);
+        String head = userPrompt.substring(0, maxPromptChars);
+        return head + "\n\n[system] 上下文已按 llm.max-prompt-chars 上限裁剪，请只使用剩余内容作答。";
     }
 
     /**

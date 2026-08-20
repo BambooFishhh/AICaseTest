@@ -23,6 +23,9 @@ public class PrdAnalysisResult {
     private List<Map<String, Object>> prdDocs;
     private List<Map<String, Object>> contextDocs;
 
+    // v6.1 (前端 Agentic RAG): 按需求检索命中的 Top-K 前端组件语义摘要
+    private List<Map<String, Object>> frontendComponents;
+
     public boolean isEmpty() {
         return (modules == null || modules.isEmpty())
                 && (requirements == null || requirements.isEmpty())

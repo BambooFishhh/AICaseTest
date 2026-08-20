@@ -19,6 +19,7 @@ import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 // v5.14: 分析/生成/AI 评审的耗时与 token 埋点。
 // 使用 ThreadLocal 栈，允许嵌套任务；LLM 调用会自动记到最内层任务的当前阶段。
@@ -29,6 +30,8 @@ public class TelemetryService {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ThreadLocal<Deque<TelemetryContext>> contextStack =
             ThreadLocal.withInitial(ArrayDeque::new);
+    // v6.2: 并发子线程上的 phase 覆盖——前端/后端/组件池等子线程用它把 LLM token 记到正确 phase。
+    private final ThreadLocal<String> localPhase = new ThreadLocal<>();
 
     @Autowired
     private TaskTelemetryRepository telemetryRepository;
@@ -68,7 +71,48 @@ public class TelemetryService {
         if (ctx == null || result == null) {
             return;
         }
-        ctx.record(result);
+        String phase = localPhase.get();
+        if (phase == null) {
+            phase = ctx.currentPhase == null ? "total" : ctx.currentPhase;
+        }
+        ctx.record(phase, result);
+    }
+
+    /**
+     * v6.2: 返回当前线程的埋点上下文（供跨线程传播到子线程 bound 使用）。
+     */
+    public TelemetryContext currentContext() {
+        return current();
+    }
+
+    /**
+     * v6.2: 返回当前线程被 pin 住的 phase（子线程写入 LLM token 归属用）。
+     */
+    public String currentPhaseOverride() {
+        return localPhase.get();
+    }
+
+    /**
+     * v6.2: 在子线程上绑定共享上下文与 phase 后运行 task，使其中产生的 LLM token 也能归属到对应 phase。
+     * ctx 为空时（如单元测试、无埋点上下文）原样执行，不丢功能。
+     */
+    public <T> T bindPhase(TelemetryContext ctx, String phase, Supplier<T> task) {
+        if (task == null) {
+            return null;
+        }
+        if (ctx == null) {
+            return task.get();
+        }
+        Deque<TelemetryContext> stack = contextStack.get();
+        String prevPhase = localPhase.get();
+        stack.push(ctx);
+        localPhase.set(phase);
+        try {
+            return task.get();
+        } finally {
+            localPhase.set(prevPhase);
+            stack.pop();
+        }
     }
 
     public boolean isActive() {
@@ -200,6 +244,7 @@ public class TelemetryService {
         private long phaseStartedAt = System.currentTimeMillis();
         private String status = "running";
         private final Map<String, PhaseStat> phases = new LinkedHashMap<>();
+        private final Object lock = new Object();
 
         private TelemetryContext(String taskType, String projectId, long startedAt) {
             this.taskType = taskType;
@@ -209,23 +254,27 @@ public class TelemetryService {
         }
 
         private void closePhase() {
-            if (currentPhase == null) {
-                return;
+            synchronized (lock) {
+                if (currentPhase == null) {
+                    return;
+                }
+                PhaseStat stat = phases.computeIfAbsent(currentPhase, k -> new PhaseStat());
+                stat.durationMs += System.currentTimeMillis() - phaseStartedAt;
+                currentPhase = null;
             }
-            PhaseStat stat = phases.computeIfAbsent(currentPhase, k -> new PhaseStat());
-            stat.durationMs += System.currentTimeMillis() - phaseStartedAt;
-            currentPhase = null;
         }
 
-        private void record(LlmCallResult result) {
-            String phase = currentPhase == null ? "total" : currentPhase;
-            PhaseStat stat = phases.computeIfAbsent(phase, k -> new PhaseStat());
-            stat.promptTokens += result.getPromptTokens() == null ? 0 : result.getPromptTokens();
-            stat.completionTokens += result.getCompletionTokens() == null ? 0 : result.getCompletionTokens();
-            stat.totalTokens += result.getTotalTokens() == null ? 0 : result.getTotalTokens();
-            stat.calls++;
-            if (result.getFirstTokenMs() != null) {
-                stat.firstTokenMs = Math.min(stat.firstTokenMs, result.getFirstTokenMs());
+        private void record(String phase, LlmCallResult result) {
+            synchronized (lock) {
+                String key = phase == null ? "total" : phase;
+                PhaseStat stat = phases.computeIfAbsent(key, k -> new PhaseStat());
+                stat.promptTokens += result.getPromptTokens() == null ? 0 : result.getPromptTokens();
+                stat.completionTokens += result.getCompletionTokens() == null ? 0 : result.getCompletionTokens();
+                stat.totalTokens += result.getTotalTokens() == null ? 0 : result.getTotalTokens();
+                stat.calls++;
+                if (result.getFirstTokenMs() != null) {
+                    stat.firstTokenMs = Math.min(stat.firstTokenMs, result.getFirstTokenMs());
+                }
             }
         }
     }

@@ -24,6 +24,9 @@ public class BackendResult {
 
     private List<BusinessRule> businessRules;
 
+    // v6.1 (SAINT): 操作依赖图（createOrder -> checkStock/getUserInfo 等）
+    private List<OperationDep> dependencyGraph;
+
     private int fileCount;
 
     private String status;
@@ -36,6 +39,7 @@ public class BackendResult {
                 .enums(List.of())
                 .entities(List.of())
                 .businessRules(List.of())
+                .dependencyGraph(List.of())
                 .fileCount(0)
                 .build();
     }

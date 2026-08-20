@@ -4,9 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.analyzer.result.FrontendResult;
 import com.testagent.service.LlmService;
+import com.testagent.service.TelemetryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -16,8 +18,13 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -28,6 +35,12 @@ public class VueAnalyzer {
 
     @Autowired
     private LlmService llmService;
+
+    @Autowired
+    private TelemetryService telemetryService;
+
+    @Value("${app.executor.llm-concurrency:4}")
+    private int llmConcurrency;
 
     private static final Pattern VUE_VERSION_PATTERN =
             Pattern.compile("\"vue\"\\s*:\\s*\"([^\"]+)\"");
@@ -55,6 +68,15 @@ public class VueAnalyzer {
         List<Map<String, Object>> domSelectors = extractDomSelectors(dir);
         List<Map<String, Object>> pageFlows = extractPageFlows(dir);
 
+        // v6.1 (Agentic RAG): 逐组件语义摘要 + 按需源码片段 + 业务分，供前端组件级索引
+        List<Map<String, Object>> componentSummaries = new ArrayList<>();
+        try {
+            componentSummaries = extractComponentSummaries(dir, forms, componentStates,
+                    domSelectors, pageFlows);
+        } catch (Exception e) {
+            log.warn("Component summary extraction failed: {}", e.getMessage());
+        }
+
         // v1.12: LLM 补充正则遗漏的内容
         if (llmService.isConfigured()) {
             try {
@@ -72,6 +94,7 @@ public class VueAnalyzer {
                 .componentStates(componentStates)
                 .domSelectors(domSelectors)
                 .pageFlows(pageFlows)
+                .componentSummaries(componentSummaries)
                 .fileCount(fileCount)
                 .status("ok")
                 .build();
@@ -811,6 +834,359 @@ public class VueAnalyzer {
     // ==================== v1.12 LLM 增强方法 ====================
 
     // v1.12: 用 LLM 补充正则遗漏的前端分析结果
+    // v6.1 (Agentic RAG): 逐组件生成语义摘要。确定性基线 + LLM 语义增强（完整读文件，不截断）。
+    private List<Map<String, Object>> extractComponentSummaries(File dir,
+                                                                List<Map<String, Object>> forms,
+                                                                List<Map<String, Object>> componentStates,
+                                                                List<Map<String, Object>> domSelectors,
+                                                                List<Map<String, Object>> pageFlows) {
+        List<File> vueFiles = new ArrayList<>();
+        collectVueFiles(dir, vueFiles);
+        Map<String, String> componentToPath = buildComponentToPathMap(dir);
+        Map<String, List<Map<String, Object>>> formsByComp = groupByComponent(forms);
+        Map<String, List<Map<String, Object>>> statesByComp = groupByComponent(componentStates);
+        Map<String, List<Map<String, Object>>> selectorsByComp = groupByComponent(domSelectors);
+        Map<String, List<Map<String, Object>>> flowsByComp = groupByComponent(pageFlows);
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        int limit = 200;
+        for (File file : vueFiles) {
+            if (out.size() >= limit) {
+                break;
+            }
+            try {
+                String rel = relativize(dir, file);
+                String comp = stripExtension(file.getName());
+                String content = readFile(file);
+                if (content == null || content.isBlank()) {
+                    continue;
+                }
+                List<String> interactions = extractInteractions(content);
+                List<String> stateOps = extractStateOps(content);
+                List<String> navigations = extractNavigations(content);
+                List<String> apiCalls = extractComponentApiCalls(content);
+                List<String> keywords = extractKeywords(comp, rel, interactions, apiCalls, navigations);
+
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", "comp-" + sanitizeId(rel));
+                m.put("component", comp);
+                m.put("file", rel);
+                m.put("route", componentToPath.getOrDefault(comp, ""));
+                m.put("interactions", interactions);
+                m.put("stateOps", stateOps);
+                m.put("routeNavigations", navigations);
+                m.put("apiCalls", apiCalls);
+                m.put("keywords", keywords);
+                m.put("snippet", extractComponentSnippet(content));
+                m.put("businessScore", businessScore(rel, comp));
+                m.put("summary", buildBaselineSummary(comp, rel,
+                        formsByComp.getOrDefault(comp, List.of()),
+                        statesByComp.getOrDefault(comp, List.of()),
+                        selectorsByComp.getOrDefault(comp, List.of()),
+                        flowsByComp.getOrDefault(comp, List.of()),
+                        interactions, stateOps, navigations, apiCalls));
+                out.add(m);
+            } catch (Exception e) {
+                log.debug("Component summary failed for {}: {}", file.getName(), e.getMessage());
+            }
+        }
+
+        // v6.2: 逐组件 LLM 增强并行化——串行 N 次调用是分析最大瓶颈，改有界并发。
+        // 注意：不能复用 analysisExecutor（core=2 且父线程 join 阻塞时线程池不扩线程，结果串行），
+        // 必须用按并发数建好的专用固定线程池，才能保证真的有 llm-concurrency 路并发。
+        if (llmService.isConfigured() && !out.isEmpty()) {
+            long t0 = System.currentTimeMillis();
+            int workers = Math.max(1, llmConcurrency);
+            // 把外层分析子线程上的埋点上下文与 phase 传播到组件并发池，使 LLM token 也能落库。
+            TelemetryService.TelemetryContext telemetryCtx = telemetryService.currentContext();
+            String telemetryPhase = telemetryService.currentPhaseOverride();
+            ExecutorService pool = Executors.newFixedThreadPool(workers);
+            try {
+                List<CompletableFuture<Void>> futures = new ArrayList<>();
+                for (Map<String, Object> m : out) {
+                    futures.add(CompletableFuture.runAsync(() -> {
+                        telemetryService.bindPhase(telemetryCtx, telemetryPhase, () -> {
+                            try {
+                                enhanceComponentSummary(dir, m);
+                            } catch (Exception e) {
+                                log.warn("LLM component summary failed for {}: {}",
+                                        m.get("component"), e.getMessage());
+                            }
+                            return null;
+                        });
+                    }, pool));
+                }
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            } finally {
+                pool.shutdown();
+            }
+            log.info("Parallel LLM component summaries: {} components, concurrency={}, took {}ms",
+                    out.size(), workers, System.currentTimeMillis() - t0);
+        }
+        return out;
+    }
+
+    private Map<String, List<Map<String, Object>>> groupByComponent(List<Map<String, Object>> items) {
+        Map<String, List<Map<String, Object>>> map = new HashMap<>();
+        if (items == null) {
+            return map;
+        }
+        for (Map<String, Object> item : items) {
+            Object comp = item == null ? null : item.get("component");
+            String key = comp == null ? "" : String.valueOf(comp);
+            map.computeIfAbsent(key, k -> new ArrayList<>()).add(item);
+        }
+        return map;
+    }
+
+    private List<String> extractInteractions(String content) {
+        List<String> out = new ArrayList<>();
+        Matcher m = Pattern.compile("@(?:click|change|input|submit|blur|keyup)\\s*=\\s*\"([^\"]+)\"")
+                .matcher(content);
+        while (m.find()) {
+            String expr = m.group(1).trim();
+            if (!expr.isEmpty() && !out.contains(expr) && out.size() < 20) {
+                out.add(expr);
+            }
+        }
+        return out;
+    }
+
+    private List<String> extractStateOps(String content) {
+        List<String> out = new ArrayList<>();
+        Matcher m = Pattern.compile("(?::visible|v-if|v-show|v-model)\\s*=\\s*\"([^\"]+)\"")
+                .matcher(content);
+        while (m.find()) {
+            String expr = m.group(1).trim();
+            if (!expr.isEmpty() && !out.contains(expr) && out.size() < 20) {
+                out.add(expr);
+            }
+        }
+        return out;
+    }
+
+    private List<String> extractNavigations(String content) {
+        List<String> out = new ArrayList<>();
+        Matcher push = Pattern.compile("router\\.push\\(\\s*['\"]?([^'\"\\)]+)").matcher(content);
+        while (push.find()) {
+            String to = push.group(1).trim();
+            if (!to.isEmpty() && !out.contains(to) && out.size() < 20) {
+                out.add(to);
+            }
+        }
+        Matcher link = Pattern.compile("<router-link\\b[^>]*\\bto\\s*=\\s*\"([^\"]+)\"").matcher(content);
+        while (link.find()) {
+            String to = link.group(1);
+            if (!to.isEmpty() && !out.contains(to) && out.size() < 20) {
+                out.add(to);
+            }
+        }
+        return out;
+    }
+
+    private List<String> extractComponentApiCalls(String content) {
+        List<String> out = new ArrayList<>();
+        Matcher axios = AXIOS_PATTERN.matcher(content);
+        while (axios.find()) {
+            String url = axios.group(2);
+            if (!out.contains(url) && out.size() < 20) {
+                out.add(url);
+            }
+        }
+        Matcher urlM = URL_METHOD_PATTERN.matcher(content);
+        while (urlM.find()) {
+            String url = urlM.group(1);
+            if (!out.contains(url) && out.size() < 20) {
+                out.add(url);
+            }
+        }
+        return out;
+    }
+
+    private List<String> extractKeywords(String comp, String rel, List<String> interactions,
+                                         List<String> apiCalls, List<String> navigations) {
+        Set<String> stop = Set.of("index", "main", "view", "views", "components", "common",
+                "layout", "src", "vue", "js", "ts", "util", "helper", "app", "page", "pages");
+        Set<String> set = new LinkedHashSet<>();
+        for (String part : (comp + " " + rel).split("[^A-Za-z0-9]+")) {
+            String p = part.toLowerCase();
+            if (p.length() >= 3 && !stop.contains(p)) {
+                set.add(p);
+            }
+        }
+        for (List<String> list : List.of(interactions, apiCalls, navigations)) {
+            for (String s : list) {
+                for (String part : s.split("[^A-Za-z0-9]+")) {
+                    String p = part.toLowerCase();
+                    if (p.length() >= 3 && !stop.contains(p)) {
+                        set.add(p);
+                    }
+                }
+            }
+        }
+        List<String> result = new ArrayList<>(set);
+        return result.size() > 30 ? result.subList(0, 30) : result;
+    }
+
+    private String buildBaselineSummary(String comp, String rel,
+                                        List<Map<String, Object>> forms,
+                                        List<Map<String, Object>> states,
+                                        List<Map<String, Object>> selectors,
+                                        List<Map<String, Object>> flows,
+                                        List<String> interactions, List<String> stateOps,
+                                        List<String> navigations, List<String> apiCalls) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("组件 ").append(comp).append(" (").append(rel).append(")");
+        if (!forms.isEmpty()) {
+            sb.append("；表单字段：");
+            for (Map<String, Object> f : forms) {
+                Object fields = f.get("fields");
+                sb.append(fields == null ? "" : fields);
+            }
+        }
+        if (!states.isEmpty()) {
+            sb.append("；交互状态：").append(states);
+        }
+        if (!selectors.isEmpty()) {
+            sb.append("；DOM 选择器：").append(selectors);
+        }
+        if (!flows.isEmpty()) {
+            sb.append("；页面跳转：").append(flows);
+        }
+        if (!interactions.isEmpty()) {
+            sb.append("；事件：").append(interactions);
+        }
+        if (!stateOps.isEmpty()) {
+            sb.append("；状态操作：").append(stateOps);
+        }
+        if (!navigations.isEmpty()) {
+            sb.append("；路由跳转：").append(navigations);
+        }
+        if (!apiCalls.isEmpty()) {
+            sb.append("；API 调用：").append(apiCalls);
+        }
+        String s = sb.toString().replaceAll("\\s+", " ").trim();
+        return s.length() > 1500 ? s.substring(0, 1500) : s;
+    }
+
+    private String extractComponentSnippet(String content) {
+        int scriptStart = content.indexOf("<script");
+        int scriptEnd = content.indexOf("</script>");
+        StringBuilder sb = new StringBuilder();
+        if (scriptStart >= 0 && scriptEnd > scriptStart) {
+            String script = content.substring(scriptStart, Math.min(scriptEnd + 9, scriptStart + 1600));
+            sb.append(script);
+        }
+        int templateStart = content.indexOf("<template>");
+        if (templateStart >= 0 && sb.length() < 800) {
+            int templateEnd = content.indexOf("</template>");
+            if (templateEnd > templateStart) {
+                sb.append("\n").append(content.substring(templateStart,
+                        Math.min(templateEnd + 11, templateStart + 800)));
+            }
+        }
+        String s = sb.toString().replaceAll("\\s+", " ").trim();
+        return s.length() > 1200 ? s.substring(0, 1200) : s;
+    }
+
+    private double businessScore(String rel, String comp) {
+        String lower = rel.toLowerCase();
+        double score = 0.0;
+        if (lower.contains("/views/") || lower.contains("/pages/")
+                || lower.contains("/views/") || lower.contains("/containers/")) {
+            score += 0.6;
+        }
+        Set<String> common = Set.of("backtotop", "pagination", "sidebar", "navbar",
+                "breadcrumb", "tagsview", "appmain", "settings", "svgicon", "paginations");
+        if (lower.contains("/components/layout/") || lower.contains("/components/common/")
+                || common.contains(comp.toLowerCase())) {
+            score -= 0.5;
+        }
+        return Math.max(-0.5, Math.min(1.0, score));
+    }
+
+    private String sanitizeId(String rel) {
+        return rel.replaceAll("[^A-Za-z0-9_.-]", "-");
+    }
+
+    private String relativize(File base, File file) {
+        try {
+            return base.toPath().relativize(file.toPath()).toString().replace('\\', '/');
+        } catch (Exception e) {
+            return file.getName();
+        }
+    }
+
+    // v6.1: 单组件 LLM 语义增强——完整读文件生成语义摘要，不截断源码。
+    private void enhanceComponentSummary(File dir, Map<String, Object> m) {
+        String file = String.valueOf(m.get("file"));
+        File source = new File(dir, file);
+        String content = readFile(source);
+        if (content == null || content.isBlank()) {
+            return;
+        }
+        String component = String.valueOf(m.get("component"));
+        String path = String.valueOf(m.getOrDefault("route", ""));
+        String prompt = """
+                你是 Vue 组件语义分析专家。请完整阅读下面的组件源码（不截断），提炼一份端到端测试可用的语义摘要。
+                输出纯 JSON，不要 markdown 代码块，结构：
+                {
+                  "summary": "一句话语义摘要（含业务场景）",
+                  "interactions": ["用户操作/事件"],
+                  "apiCalls": ["调用的接口 URL"],
+                  "stateOps": ["状态/弹窗/表单控制变量"],
+                  "routeNavigations": ["路由跳转目标"],
+                  "keywords": ["关键词"]
+                }
+                组件：%s，路由：%s
+                源码：
+                %s
+                只返回 JSON。""".formatted(component, path, content);
+        String response = llmService.chat(
+                "你是前端代码分析助手，只输出合法 JSON。", prompt, 0.2);
+        mergeComponentSummary(response, m);
+    }
+
+    private void mergeComponentSummary(String response, Map<String, Object> m) {
+        String json = response == null ? "" : response.trim();
+        if (json.startsWith("```")) {
+            int start = json.indexOf("{");
+            int end = json.lastIndexOf("}");
+            if (start >= 0 && end > start) {
+                json = json.substring(start, end + 1);
+            }
+        }
+        try {
+            JsonNode root = new ObjectMapper().readTree(json);
+            if (root.hasNonNull("summary")) {
+                m.put("summary", root.path("summary").asText(""));
+            }
+            mergeStringArray(root.path("interactions"), "interactions", m);
+            mergeStringArray(root.path("apiCalls"), "apiCalls", m);
+            mergeStringArray(root.path("stateOps"), "stateOps", m);
+            mergeStringArray(root.path("routeNavigations"), "routeNavigations", m);
+            mergeStringArray(root.path("keywords"), "keywords", m);
+        } catch (Exception e) {
+            log.debug("Failed to parse component summary for {}: {}", m.get("component"), e.getMessage());
+        }
+    }
+
+    private void mergeStringArray(JsonNode node, String key, Map<String, Object> m) {
+        if (node == null || !node.isArray() || node.isEmpty()) {
+            return;
+        }
+        List<String> values = new ArrayList<>();
+        for (JsonNode n : node) {
+            String v = n.asText("").trim();
+            if (!v.isEmpty() && !values.contains(v)) {
+                values.add(v);
+            }
+        }
+        if (!values.isEmpty()) {
+            m.put(key, values);
+        }
+    }
+
     private void enhanceWithLlm(List<Map<String, Object>> forms,
                                 List<Map<String, Object>> componentStates,
                                 List<Map<String, Object>> domSelectors,

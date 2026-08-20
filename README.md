@@ -30,6 +30,8 @@
 
 v6.0 起 LLM 文本、流式、JSON 与 Embedding 层由 Spring AI（`spring-ai-starter-model-openai`，兼容 DashScope/MAAS 端点）承载；MCP 继续承担 Playwright 浏览器执行、多模态视觉定位（`multimodal_element_locate`）、`chatWithImage` 与 tools 后端能力桥接。详见 [docs/spring-ai-migration.md](docs/spring-ai-migration.md)。
 
+v6.1 起新增前端 Agentic RAG（逐组件语义摘要落 Milvus，按 requirement 检索命中组件）与后端 SAINT 操作依赖图，生成端到端用例时融合 UI 交互与后端调用链；v6.2 将前后端分析、逐组件 LLM 摘要改为有界并发并把状态机提取合并为单次调用。默认 LLM 模型切为 `mimo-v2.5`（`opencode.ai/zen/go/v1`），并统一 prompt 上限与 HTTP 超时。
+
 ## 快速开始
 
 > v4.0 起系统需要登录：启动后访问前端，使用默认管理员 `admin` / `admin123`（首次登录后请尽快修改密码）登录，或自行注册新账号。

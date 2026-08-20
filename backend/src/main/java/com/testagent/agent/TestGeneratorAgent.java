@@ -6,6 +6,7 @@ import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.BusinessRule;
 import com.testagent.analyzer.result.EndpointInfo;
 import com.testagent.analyzer.result.FrontendResult;
+import com.testagent.analyzer.result.OperationDep;
 import com.testagent.dto.GenerationParams;
 import com.testagent.dto.JsonHelper;
 import com.testagent.dto.PrdAnalysisResult;
@@ -467,17 +468,44 @@ public class TestGeneratorAgent {
             }
         }
 
+        // v6.1 (前端 Agentic RAG + 后端 SAINT): 前端命中组件与后端操作依赖并入覆盖清单。
+        // v6.1fix: 覆盖清单同样只保留业务分非负组件，避免第 2+ 轮补齐时把 BackToTop 等公共组件
+        // 当作覆盖缺口再次喂给 LLM，造成公共组件用例泄漏。
+        List<Map<String, Object>> components = new ArrayList<>();
+        List<Map<String, Object>> businessComps = filterBusinessComponents(
+                prdResult != null ? prdResult.getFrontendComponents() : null);
+        if (!businessComps.isEmpty()) {
+            for (Map<String, Object> c : businessComps) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("id", c.getOrDefault("id", ""));
+                item.putAll(c);
+                components.add(item);
+            }
+        }
+        List<Map<String, Object>> dependencies = new ArrayList<>();
+        if (backendResult != null && backendResult.getDependencyGraph() != null) {
+            for (OperationDep od : backendResult.getDependencyGraph()) {
+                Map<String, Object> item = new LinkedHashMap<>(od.toContextMap());
+                item.put("id", od.getOperation());
+                dependencies.add(item);
+            }
+        }
+
         Map<String, Object> checklist = new LinkedHashMap<>();
         checklist.put("requirements", requirements);
         checklist.put("transitions", transitions);
         checklist.put("endpoints", endpoints);
         checklist.put("businessRules", rules);
+        checklist.put("frontendComponents", components);
+        checklist.put("operationDependencies", dependencies);
 
         Map<String, Object> gaps = new LinkedHashMap<>();
         gaps.put("requirementIds", requirements.stream().map(r -> r.get("id")).toList());
         gaps.put("transitionIds", transitions.stream().map(t -> t.get("id")).toList());
         gaps.put("endpointIds", endpoints.stream().map(e -> e.get("id")).toList());
         gaps.put("ruleIds", rules.stream().map(r -> r.get("id")).toList());
+        gaps.put("componentIds", components.stream().map(c -> c.get("id")).toList());
+        gaps.put("dependencyIds", dependencies.stream().map(d -> d.get("id")).toList());
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("checklist", checklist);
@@ -920,19 +948,18 @@ public class TestGeneratorAgent {
 
         // PRD 为主上下文
         context.put("prd", objectMapper.convertValue(prdResult, Map.class));
-        // v5.4: RAG 语义检索上下文
-        context.put("ragContexts",
-                prdResult.getRagContexts() == null ? List.of() : prdResult.getRagContexts());
+        // v5.4: RAG 语义检索上下文（v6.1 降采样，避免大块上下文撑爆 prompt）
+        context.put("ragContexts", truncateStrings(prdResult.getRagContexts(), 1500, 4));
         // v5.10/v5.11: 补充需求与 PRD/上下文文档（随需求上下文一起注入，来源保持区分）
         if (prdResult.getOtherContextInfo() != null && !prdResult.getOtherContextInfo().isBlank()) {
             context.put("supplementaryRequirements", prdResult.getOtherContextInfo());
             context.put("otherContextInfo", prdResult.getOtherContextInfo());
         }
         if (prdResult.getPrdDocs() != null && !prdResult.getPrdDocs().isEmpty()) {
-            context.put("prdDocs", prdResult.getPrdDocs());
+            context.put("prdDocs", truncateDocs(prdResult.getPrdDocs(), 3000, 3));
         }
         if (prdResult.getContextDocs() != null && !prdResult.getContextDocs().isEmpty()) {
-            context.put("contextDocs", prdResult.getContextDocs());
+            context.put("contextDocs", truncateDocs(prdResult.getContextDocs(), 3000, 3));
         }
 
         // 代码侧为辅（精简，避免 token 超限）
@@ -965,7 +992,40 @@ public class TestGeneratorAgent {
         context.put("businessRules", ruleList);
 
         // v1.11: 前端上下文（辅助）
-        putFrontendContext(context, frontendResult);
+        // v6.1fix: 只把 RAG 检索命中的组件对应 UI 元素注入 prompt；未命中时兜底全量，避免丢 UI 步骤
+        // v6.1fix: 先按业务分过滤命中组件（丢掉 BackToTop/Breadcrumb 等公共组件），
+        // 再同时用于 UI 元素过滤与语义摘要注入，避免两处不一致导致公共组件泄漏
+        List<Map<String, Object>> hitComponents = prdResult.getFrontendComponents();
+        List<Map<String, Object>> businessComponents = filterBusinessComponents(hitComponents);
+        FrontendResult frontendForPrompt = frontendResult;
+        if (!businessComponents.isEmpty()) {
+            Set<String> relevantComponents = new HashSet<>();
+            for (Map<String, Object> c : businessComponents) {
+                Object comp = c == null ? null : c.get("component");
+                if (comp != null && !String.valueOf(comp).isBlank()) {
+                    relevantComponents.add(String.valueOf(comp));
+                }
+            }
+            FrontendResult filtered = filterFrontendByComponents(frontendResult, relevantComponents);
+            if (filtered != null && hasFrontendUi(filtered)) {
+                frontendForPrompt = filtered;
+            }
+        }
+        putFrontendContext(context, frontendForPrompt);
+        // v6.1 (前端 Agentic RAG): 需求命中的组件语义摘要，供端到端用例融合 UI 交互步骤
+        if (!businessComponents.isEmpty()) {
+            context.put("frontendComponents", businessComponents);
+        }
+        // v6.1 (后端 SAINT): 操作依赖图，供端到端用例按调用链组织后端断言
+        List<Map<String, Object>> opDeps = new ArrayList<>();
+        if (backendResult != null && backendResult.getDependencyGraph() != null) {
+            for (OperationDep od : backendResult.getDependencyGraph()) {
+                opDeps.add(od.toContextMap());
+            }
+        }
+        if (!opDeps.isEmpty()) {
+            context.put("operationDependencies", opDeps);
+        }
 
         // v5.12: 覆盖清单与当前轮剩余缺口
         context.put("coverageChecklist", coverage.get("checklist"));
@@ -1005,7 +1065,8 @@ public class TestGeneratorAgent {
         if (gaps == null) {
             return false;
         }
-        for (String key : List.of("requirementIds", "transitionIds", "endpointIds", "ruleIds")) {
+        for (String key : List.of("requirementIds", "transitionIds", "endpointIds", "ruleIds",
+                "componentIds", "dependencyIds")) {
             Object value = gaps.get(key);
             if (value instanceof List<?> list && !list.isEmpty()) {
                 return true;
@@ -1018,7 +1079,8 @@ public class TestGeneratorAgent {
         Map<String, Object> gaps = new LinkedHashMap<>();
         Object rawGaps = coverage.get("gaps");
         if (rawGaps instanceof Map<?, ?> raw) {
-            for (String key : List.of("requirementIds", "transitionIds", "endpointIds", "ruleIds")) {
+            for (String key : List.of("requirementIds", "transitionIds", "endpointIds", "ruleIds",
+                    "componentIds", "dependencyIds")) {
                 gaps.put(key, new ArrayList<>(readIdList(raw, key)));
             }
         }
@@ -1102,6 +1164,44 @@ public class TestGeneratorAgent {
     }
 
     // v1.11: 将前端上下文注入 context Map，截断避免 token 超限
+    // v6.1 (B 方案): 对注入代生成上下文的长文档/检索片段做降采样，避免 277KB 巨型 prompt。
+    private List<String> truncateStrings(List<String> list, int maxLen, int maxCount) {
+        if (list == null) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (String s : list) {
+            if (out.size() >= maxCount) {
+                break;
+            }
+            if (s == null) {
+                continue;
+            }
+            out.add(s.length() > maxLen ? s.substring(0, maxLen) + "..." : s);
+        }
+        return out;
+    }
+
+    // v6.1: 文档内容降采样（保留 id/title/sourceType 等元数据，仅裁剪 content）。
+    private List<Map<String, Object>> truncateDocs(List<Map<String, Object>> docs, int maxLen, int maxCount) {
+        if (docs == null) {
+            return List.of();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> d : docs) {
+            if (out.size() >= maxCount) {
+                break;
+            }
+            Map<String, Object> copy = new LinkedHashMap<>(d);
+            Object content = d.get("content");
+            if (content instanceof String c) {
+                copy.put("content", c.length() > maxLen ? c.substring(0, maxLen) + "..." : c);
+            }
+            out.add(copy);
+        }
+        return out;
+    }
+
     @SuppressWarnings("unchecked")
     private void putFrontendContext(Map<String, Object> context, FrontendResult frontendResult) {
         if (frontendResult == null) return;
@@ -1139,6 +1239,75 @@ public class TestGeneratorAgent {
         if (frontendResult.getPageFlows() != null && !frontendResult.getPageFlows().isEmpty()) {
             context.put("frontendPageFlows", frontendResult.getPageFlows());
         }
+    }
+
+    // v6.1fix: 按命中的组件名过滤前端确定性结果（forms/selectors/states/flows），只保留与需求相关的 UI 元素
+    private FrontendResult filterFrontendByComponents(FrontendResult src, Set<String> components) {
+        if (src == null || components == null || components.isEmpty()) {
+            return src;
+        }
+        FrontendResult.FrontendResultBuilder b = FrontendResult.builder()
+                .techStack(src.getTechStack())
+                .routes(src.getRoutes())
+                .apiCalls(src.getApiCalls())
+                .componentSummaries(src.getComponentSummaries())
+                .fileCount(src.getFileCount())
+                .status(src.getStatus());
+        b.forms(filterByComponent(src.getForms(), components));
+        b.componentStates(filterByComponent(src.getComponentStates(), components));
+        b.domSelectors(filterByComponent(src.getDomSelectors(), components));
+        b.pageFlows(filterByComponent(src.getPageFlows(), components));
+        return b.build();
+    }
+
+    private List<Map<String, Object>> filterByComponent(List<Map<String, Object>> items, Set<String> components) {
+        if (items == null || items.isEmpty()) {
+            return items;
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> it : items) {
+            Object comp = it == null ? null : it.get("component");
+            if (comp != null && components.contains(String.valueOf(comp))) {
+                out.add(it);
+            }
+        }
+        return out;
+    }
+
+    private double numberScore(Object value) {
+        if (value instanceof Number n) {
+            return n.doubleValue();
+        }
+        if (value != null) {
+            try {
+                return Double.parseDouble(String.valueOf(value));
+            } catch (NumberFormatException ignored) {
+                return 0.0;
+            }
+        }
+        return 0.0;
+    }
+
+    // v6.1fix: 仅保留业务分非负的组件，过滤掉已打负分的公共组件（BackToTop/Breadcrumb/Pagination 等）
+    private List<Map<String, Object>> filterBusinessComponents(List<Map<String, Object>> comps) {
+        if (comps == null || comps.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> c : comps) {
+            if (c != null && numberScore(c.get("businessScore")) >= 0) {
+                out.add(c);
+            }
+        }
+        return out;
+    }
+
+    private boolean hasFrontendUi(FrontendResult fr) {
+        return fr != null && (
+                (fr.getForms() != null && !fr.getForms().isEmpty())
+                        || (fr.getDomSelectors() != null && !fr.getDomSelectors().isEmpty())
+                        || (fr.getComponentStates() != null && !fr.getComponentStates().isEmpty())
+                        || (fr.getPageFlows() != null && !fr.getPageFlows().isEmpty()));
     }
 
     private List<TestCase> parseTestCases(String json) {
