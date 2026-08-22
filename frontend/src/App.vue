@@ -145,7 +145,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   FolderOpened, Setting, Fold, Expand, DataAnalysis, View, Document, Clock, Share, Picture,
-  Sunny, Moon, ArrowDown, Connection
+  Sunny, Moon, ArrowDown, Connection, Cpu
 } from '@element-plus/icons-vue'
 // v3.18: 版本号动态化
 import pkg from '../package.json'
@@ -181,13 +181,14 @@ const allNavItems = [
   { path: '/dashboard', label: '仪表盘', icon: DataAnalysis },
   { path: '/projects', label: '项目列表', icon: FolderOpened },
   { path: '/groups', label: '项目组', icon: Connection },
+  { path: '/tasks', label: '任务中心', icon: Cpu },
   { path: '/settings', label: '系统设置', icon: Setting }
 ]
 
 // v4.0: 按角色过滤导航（仪表盘/系统设置仅管理员）
 const navItems = computed(() => {
   if (authStore.isAdmin) return allNavItems
-  return allNavItems.filter((item) => item.path !== '/dashboard' && item.path !== '/settings')
+  return allNavItems.filter((item) => item.path !== '/dashboard' && item.path !== '/tasks' && item.path !== '/settings')
 })
 
 const userInitial = computed(() => {

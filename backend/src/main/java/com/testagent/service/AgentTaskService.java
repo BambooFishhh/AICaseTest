@@ -152,6 +152,19 @@ public class AgentTaskService {
         update(taskId, task -> finishFailure(task, STATUS_NEEDS_REVIEW, errorCode, errorMessage));
     }
 
+    /**
+     * v6.7: 任务降级标记（如规则兜底生成），保留结果但提示质量下降。
+     */
+    public void markDegraded(String taskId) {
+        update(taskId, task -> task.setDegraded(true));
+        metric("aicasetest.task.degraded_total");
+    }
+
+    public Integer getAttempt(String taskId) {
+        AgentTask task = findById(taskId);
+        return task == null || task.getAttempts() == null ? 0 : task.getAttempts();
+    }
+
     public void markDlq(String taskId, String errorCode, String errorMessage) {
         update(taskId, task -> finishFailure(task, STATUS_DLQ, errorCode, errorMessage));
         metric("aicasetest.task.dlq_total");

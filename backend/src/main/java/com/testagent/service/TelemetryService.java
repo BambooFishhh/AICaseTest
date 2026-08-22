@@ -32,6 +32,9 @@ public class TelemetryService {
             ThreadLocal.withInitial(ArrayDeque::new);
     // v6.2: 并发子线程上的 phase 覆盖——前端/后端/组件池等子线程用它把 LLM token 记到正确 phase。
     private final ThreadLocal<String> localPhase = new ThreadLocal<>();
+    // v6.7: 当前线程关联的 agent_task 上下文（由业务服务在异步线程内设置）
+    private final ThreadLocal<String> currentTaskId = new ThreadLocal<>();
+    private final ThreadLocal<Integer> currentAttempt = new ThreadLocal<>();
 
     @Autowired
     private TaskTelemetryRepository telemetryRepository;
@@ -40,9 +43,24 @@ public class TelemetryService {
     private MeterRegistry meterRegistry;
 
     public TelemetryContext start(String taskType, String projectId) {
-        TelemetryContext ctx = new TelemetryContext(taskType, projectId, System.currentTimeMillis());
+        return start(taskType, projectId, currentTaskId.get(), currentAttempt.get());
+    }
+
+    public TelemetryContext start(String taskType, String projectId, String taskId, Integer attempt) {
+        TelemetryContext ctx = new TelemetryContext(taskType, projectId,
+                System.currentTimeMillis(), taskId, attempt);
         contextStack.get().push(ctx);
         return ctx;
+    }
+
+    public void setTaskContext(String taskId, Integer attempt) {
+        currentTaskId.set(taskId);
+        currentAttempt.set(attempt);
+    }
+
+    public void clearTaskContext() {
+        currentTaskId.remove();
+        currentAttempt.remove();
     }
 
     public boolean beginPhaseIfActive(String phase) {
@@ -170,7 +188,9 @@ public class TelemetryService {
             TaskTelemetry row = new TaskTelemetry();
             row.setId(UUID.randomUUID().toString().substring(0, 12));
             row.setProjectId(ctx.projectId);
+            row.setTaskId(ctx.taskId);
             row.setTaskType(ctx.taskType);
+            row.setAttempt(ctx.attempt);
             row.setPhase(phase);
             row.setStatus(ctx.status);
             row.setDurationMs(durationMs);
@@ -242,6 +262,8 @@ public class TelemetryService {
 
         private final String taskType;
         private final String projectId;
+        private final String taskId;
+        private final Integer attempt;
         private final long startedAt;
         private String currentPhase = "total";
         private long phaseStartedAt = System.currentTimeMillis();
@@ -249,9 +271,12 @@ public class TelemetryService {
         private final Map<String, PhaseStat> phases = new LinkedHashMap<>();
         private final Object lock = new Object();
 
-        private TelemetryContext(String taskType, String projectId, long startedAt) {
+        private TelemetryContext(String taskType, String projectId, long startedAt,
+                                 String taskId, Integer attempt) {
             this.taskType = taskType;
             this.projectId = projectId;
+            this.taskId = taskId;
+            this.attempt = attempt;
             this.startedAt = startedAt;
             this.phaseStartedAt = startedAt;
         }

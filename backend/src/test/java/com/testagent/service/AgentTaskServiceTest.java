@@ -13,6 +13,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -151,5 +152,28 @@ class AgentTaskServiceTest {
 
         assertEquals(1, result.size());
         assertEquals("task-q", result.get(0).getId());
+    }
+
+    @Test
+    void markDegradedSetsFlag() {
+        AgentTask task = new AgentTask();
+        task.setId("task-1");
+        task.setStatus(AgentTaskService.STATUS_RUNNING);
+        task.setDegraded(false);
+        when(repository.findById("task-1")).thenReturn(Optional.of(task));
+
+        service.markDegraded("task-1");
+
+        assertTrue(task.getDegraded());
+    }
+
+    @Test
+    void getAttemptReadsTaskAttempts() {
+        AgentTask task = new AgentTask();
+        task.setId("task-1");
+        task.setAttempts(2);
+        when(repository.findById("task-1")).thenReturn(Optional.of(task));
+
+        assertEquals(2, service.getAttempt("task-1"));
     }
 }

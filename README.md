@@ -88,6 +88,7 @@ LLM_MODEL=your-model-name
 - `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP` / `RAG_RRF_K` / `RAG_CONTEXT_TOPK` / `RAG_FAILURE_TOPK` / `RAG_MAX_QUERIES`（v6.4 RAG 切片与多路检索）
 - `LLM_RETRY_MAX_ATTEMPTS`（LLM 重试次数，v6.5；4xx 不重试） / `APP_HA_TASK_LEASE_SECONDS`（任务租约秒数，v6.5）
 - `APP_MCP_REQUEST_TIMEOUT_SECONDS`（MCP 工具超时秒数，v6.6） / `APP_HA_TASK_TTL_MINUTES`（任务 TTL 分钟数，v6.6）
+- `LLM_CIRCUIT_FAILURE_THRESHOLD` / `LLM_CIRCUIT_OPEN_SECONDS`（LLM 熔断，v6.7）
 - `RETENTION_EXECUTION_DAYS`（执行数据保留天数，0 关闭）
 - `HIKARI_MAX_POOL` / `HIKARI_MIN_IDLE`（MySQL 连接池）
 
@@ -175,8 +176,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v6.6（高可用 P1：执行接入与工具超时）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v6.7（高可用 P2：断点续跑与降级闭环）**，生产线基线为 vP5（压测与容量）。
 
+- v6.7 要点：分析断点续跑复用已完成结果；规则兜底生成标记 `degraded`；LLM provider 连续失败熔断；`task_telemetry` 关联 task_id/attempt；新增仅 ADMIN 的任务中心页面。
 - v6.6 要点：MCP 工具调用加超时并按幂等性自动重试；执行任务接入 `agent_task` 租约与 checkpoint；任务 TTL 与 QUEUED 兜底调度；新增任务/工具 Prometheus 指标。
 - v6.5 要点：分析/生成任务写入 `agent_task` 持久化状态机（phase/checkpoint/attempt/lease/heartbeat）；启动与定时恢复将租约过期任务标记 NEEDS_REVIEW；管理端 `/api/admin/tasks` 支持列表/详情/重试；LLM 重试改为错误分类 + 抖动，4xx 不再盲目重试。
 - v6.4 要点：PRD/上下文文档/补充需求切片进 Milvus、生成侧去掉整段 PRD 自我检索、多路查询 RRF 融合、历史失败经验注入生成、存量项目首次生成自动重建切片。
@@ -213,6 +215,7 @@ AICaseTest/
 | v6.4 | RAG 切片化与多源检索增强 | ✅ 完成 |
 | v6.5 | 高可用 P0（任务状态持久化/租约恢复/LLM 重试分类） | ✅ 完成 |
 | v6.6 | 高可用 P1（执行接入 agent_task/MCP 工具超时/任务 TTL） | ✅ 完成 |
+| v6.7 | 高可用 P2（断点续跑/降级标记/LLM 熔断/任务中心） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

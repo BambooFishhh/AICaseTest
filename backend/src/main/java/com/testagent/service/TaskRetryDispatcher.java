@@ -93,7 +93,7 @@ public class TaskRetryDispatcher {
                     if (project == null) {
                         throw BusinessException.notFound("项目不存在: " + task.getProjectId());
                     }
-                    analysisService.runAnalysis(project.getId(), project.getSourcePath());
+                    analysisService.runAnalysisResume(project.getId(), project.getSourcePath(), task.getId());
                 }
                 case AgentTaskService.TYPE_GENERATION -> {
                     GenerateRequest request = parseGenerateRequest(task.getInputJson());

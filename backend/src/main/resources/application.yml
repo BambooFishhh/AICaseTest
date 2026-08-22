@@ -72,6 +72,10 @@ llm:
     generation: ${LLM_THINKING_GENERATION:false}
   api-key: ${LLM_API_KEY:}
   base-url: ${LLM_BASE_URL:https://opencode.ai/zen/go/v1}
+  # v6.7: provider 简易熔断（连续失败短路）
+  circuit:
+    failure-threshold: ${LLM_CIRCUIT_FAILURE_THRESHOLD:5}
+    open-seconds: ${LLM_CIRCUIT_OPEN_SECONDS:30}
   # v6.1 (B 方案): 统一 prompt 上限，避免 277KB 超大 prompt 触发 Idle timeout/超时
   max-prompt-chars: ${LLM_MAX_PROMPT_CHARS:60000}
   # v6.5: LLM 重试次数（分类 + 抖动，4xx 不重试）

@@ -94,6 +94,12 @@ const routes = [
     name: 'Groups',
     component: () => import('@/views/Groups.vue'),
     meta: { title: '项目组', breadcrumb: ['项目组'] }
+  },
+  {
+    path: '/tasks',
+    name: 'TaskCenter',
+    component: () => import('@/views/TaskCenter.vue'),
+    meta: { title: '任务中心', admin: true, breadcrumb: ['任务中心'] }
   }
 ]
 

@@ -20,8 +20,13 @@ public class TaskTelemetry {
     @Column(name = "project_id")
     private String projectId;
 
+    @Column(name = "task_id")
+    private String taskId;
+
     @Column(name = "task_type")
     private String taskType;
+
+    private Integer attempt;
 
     private String phase;
 

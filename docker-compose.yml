@@ -197,6 +197,9 @@ services:
       - APP_HA_DISPATCH_DELAY_MS=${APP_HA_DISPATCH_DELAY_MS:-15000}
       # v6.6: MCP 工具请求超时（秒）
       - APP_MCP_REQUEST_TIMEOUT_SECONDS=${APP_MCP_REQUEST_TIMEOUT_SECONDS:-60}
+      # v6.7: LLM provider 熔断
+      - LLM_CIRCUIT_FAILURE_THRESHOLD=${LLM_CIRCUIT_FAILURE_THRESHOLD:-5}
+      - LLM_CIRCUIT_OPEN_SECONDS=${LLM_CIRCUIT_OPEN_SECONDS:-30}
       # v5.13: tools MCP Server 访问后端桥接接口
       - MCP_BRIDGE_URL=http://backend:8000
       - MCP_BRIDGE_TOKEN=${MCP_BRIDGE_TOKEN:-aicasetest-mcp-local}

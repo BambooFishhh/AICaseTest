@@ -139,9 +139,20 @@ public class AnalysisService {
      * v4.4: 分析主流程（支持进度回调）。
      */
     public void runAnalysisWithProgress(String projectId, String sourcePath, ProgressCallback progressCb) {
+        runAnalysisWithProgress(projectId, sourcePath, progressCb, null);
+    }
+
+    /**
+     * v6.7: 支持复用已有 agent_task（重试/续跑场景），taskIdOverride 为空时新建。
+     */
+    public void runAnalysisWithProgress(String projectId, String sourcePath,
+                                        ProgressCallback progressCb, String taskIdOverride) {
         // v6.5: 持久化任务（request_id 复用项目 ID，避免同项目重复活跃分析任务）
-        String taskId = agentTaskService.createTask(AgentTaskService.TYPE_ANALYSIS,
-                projectId, projectId, "{}");
+        String taskId = taskIdOverride;
+        if (taskId == null) {
+            taskId = agentTaskService.createTask(AgentTaskService.TYPE_ANALYSIS,
+                    projectId, projectId, "{}");
+        }
         agentTaskService.start(taskId);
 
         // v3.9fix: 删除旧的分析记录，避免多次分析导致 NonUniqueResult
@@ -271,6 +282,83 @@ public class AnalysisService {
                     e.getMessage() != null ? e.getMessage() : "Unknown error");
         }
         telemetryService.finish(telemetryOk);
+    }
+
+    /**
+     * v6.7: 分析断点续跑。若已有 completed 的分析结果，跳过扫描/解析直接重建语义索引与状态机；
+     * 否则按任务重跑完整分析（复用同一 agent_task）。
+     */
+    @Async("analysisExecutor")
+    public void runAnalysisResume(String projectId, String sourcePath, String taskId) {
+        CodeAnalysis existing = getAnalysis(projectId);
+        boolean usable = existing != null && "completed".equals(existing.getStatus())
+                && (hasText(existing.getFrontendResult()) || hasText(existing.getBackendResult()));
+        if (!usable) {
+            runAnalysisWithProgress(projectId, sourcePath, null, taskId);
+            return;
+        }
+        try {
+            agentTaskService.start(taskId);
+            agentTaskService.checkpoint(taskId, "parse", null);
+            FrontendResult frontendResult = parseFrontend(existing.getFrontendResult());
+            BackendResult backendResult = parseBackend(existing.getBackendResult());
+
+            if (backendResult != null) {
+                semanticService.replaceContext(projectId, "backend",
+                        objectMapper.writeValueAsString(backendResult));
+            }
+            if (frontendResult != null) {
+                semanticService.replaceContext(projectId, "frontend",
+                        objectMapper.writeValueAsString(frontendResult));
+                semanticService.replaceComponents(projectId, frontendResult);
+            }
+
+            agentTaskService.checkpoint(taskId, "state_machine", null);
+            if (backendResult != null && stateMachineRepository.findByProjectId(projectId).isEmpty()) {
+                List<StateMachine> machines = stateMachineAgent.extract(backendResult, frontendResult);
+                for (StateMachine sm : machines) {
+                    sm.setId(UUID.randomUUID().toString().substring(0, 8));
+                    sm.setProjectId(projectId);
+                    stateMachineRepository.save(sm);
+                }
+            }
+            updateProjectStatus(projectId, "analyzed");
+            agentTaskService.succeed(taskId);
+            log.info("Analysis resumed for project {} (checkpoint=parse)", projectId);
+        } catch (Exception e) {
+            log.error("Analysis resume failed for project {}", projectId, e);
+            updateProjectStatus(projectId, "failed");
+            agentTaskService.fail(taskId, "ANALYSIS_RESUME_FAILED",
+                    e.getMessage() != null ? e.getMessage() : "Unknown error");
+        }
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private FrontendResult parseFrontend(String json) {
+        if (!hasText(json) || "{}".equals(json)) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, FrontendResult.class);
+        } catch (Exception e) {
+            log.warn("Failed to parse frontend result for resume: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private BackendResult parseBackend(String json) {
+        if (!hasText(json) || "{}".equals(json)) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, BackendResult.class);
+        } catch (Exception e) {
+            log.warn("Failed to parse backend result for resume: {}", e.getMessage());
+            return null;
+        }
     }
 
     private void evictAnalysisCaches(String projectId) {

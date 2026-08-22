@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.common.BusinessException;
 import com.testagent.common.GenerationCancelledException;
+import com.testagent.common.LlmCircuitBreaker;
 import com.testagent.common.LlmRetryPolicy;
 import com.testagent.dto.LlmCallResult;
 import com.testagent.mcp.McpClientManager;
@@ -85,6 +86,9 @@ public class LlmService {
     @Autowired
     private TelemetryService telemetryService;
 
+    @Autowired
+    private LlmCircuitBreaker llmCircuitBreaker;
+
     // v1.4: 重试延迟基数（v6.5 起叠加随机抖动）
     private static final long[] RETRY_DELAYS_MS = {1000, 2000, 4000};
 
@@ -125,6 +129,9 @@ public class LlmService {
         userPrompt = boundPrompt(userPrompt);
         log.info("[LLM] chat() 开始, provider={}, model={}, prompt长度={}, thinking={}",
                 provider, model, userPrompt == null ? 0 : userPrompt.length(), enableThinking);
+        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest()) {
+            throw new BusinessException(50002, "LLM 熔断打开，请稍后重试", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         Exception lastException = null;
         for (int attempt = 0; attempt < maxRetries; attempt++) {
             try {
@@ -144,6 +151,9 @@ public class LlmService {
                         System.currentTimeMillis() - start, text == null ? 0 : text.length(),
                         Map.of("prompt", call.getPromptTokens(), "completion", call.getCompletionTokens(),
                                 "total", call.getTotalTokens()));
+                if (llmCircuitBreaker != null) {
+                    llmCircuitBreaker.onSuccess();
+                }
                 return call;
             } catch (Exception e) {
                 lastException = e;
@@ -166,6 +176,9 @@ public class LlmService {
                     break;
                 }
             }
+        }
+        if (llmCircuitBreaker != null) {
+            llmCircuitBreaker.onFailure();
         }
         throw new BusinessException(50002,
                 "LLM调用失败（已尝试" + maxRetries + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
@@ -198,6 +211,9 @@ public class LlmService {
         userPrompt = boundPrompt(userPrompt);
         log.info("[LLM] chatStreaming() 开始, prompt长度={}, thinking={}",
                 userPrompt == null ? 0 : userPrompt.length(), enableThinking);
+        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest()) {
+            throw new BusinessException(50002, "LLM 熔断打开，请稍后重试", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         Exception lastException = null;
         for (int attempt = 0; attempt < maxRetries; attempt++) {
             streamCancelled.set(false);
@@ -269,6 +285,9 @@ public class LlmService {
                         elapsed, firstTokenMs, full.length(),
                         Map.of("prompt", call.getPromptTokens(), "completion", call.getCompletionTokens(),
                                 "total", call.getTotalTokens()));
+                if (llmCircuitBreaker != null) {
+                    llmCircuitBreaker.onSuccess();
+                }
                 return call;
             } catch (Exception e) {
                 lastException = e;
@@ -291,6 +310,9 @@ public class LlmService {
                     break;
                 }
             }
+        }
+        if (llmCircuitBreaker != null) {
+            llmCircuitBreaker.onFailure();
         }
         throw new BusinessException(50002,
                 "LLM流式调用失败（已尝试" + maxRetries + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
@@ -316,6 +338,9 @@ public class LlmService {
      * v2.6: 通过 MCP 协议调用 llm_chat_with_image 工具（保留 MCP 多模态）。
      */
     public String chatWithImage(String systemPrompt, String userText, String imageBase64) {
+        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest()) {
+            throw new BusinessException(50002, "LLM 熔断打开，请稍后重试", HttpStatus.SERVICE_UNAVAILABLE);
+        }
         Exception lastException = null;
         for (int attempt = 0; attempt < maxRetries; attempt++) {
             try {
@@ -330,6 +355,9 @@ public class LlmService {
                                 : usageFromMcpJson(result.getMetadata().path("usage")),
                         start, null);
                 telemetryService.recordLlmCall(call);
+                if (llmCircuitBreaker != null) {
+                    llmCircuitBreaker.onSuccess();
+                }
                 return call.getText();
             } catch (Exception e) {
                 lastException = e;
@@ -347,6 +375,9 @@ public class LlmService {
                     break;
                 }
             }
+        }
+        if (llmCircuitBreaker != null) {
+            llmCircuitBreaker.onFailure();
         }
         throw new BusinessException(50002,
                 "LLM多模态调用失败（已尝试" + maxRetries + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),

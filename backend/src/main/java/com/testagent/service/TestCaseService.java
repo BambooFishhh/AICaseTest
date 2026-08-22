@@ -192,8 +192,17 @@ public class TestCaseService {
             agentTaskService.start(taskId);
             agentTaskService.checkpoint(taskId, "generate", null);
             // v1.10: 改由 OrchestratorAgent 编排（PrdAgent + 代码侧 → TestGeneratorAgent）
-            List<TestCase> testCases = orchestratorAgent.generate(projectId,
-                    progress -> projectRepository.updateProgress(projectId, progress));
+            telemetryService.setTaskContext(taskId, agentTaskService.getAttempt(taskId));
+            List<TestCase> testCases;
+            try {
+                testCases = orchestratorAgent.generate(projectId,
+                        progress -> projectRepository.updateProgress(projectId, progress));
+            } finally {
+                telemetryService.clearTaskContext();
+            }
+            if (testCases.stream().anyMatch(tc -> "rule_based".equals(tc.getSource()))) {
+                agentTaskService.markDegraded(taskId);
+            }
 
             agentTaskService.checkpoint(taskId, "persist", null);
             projectRepository.updateProgress(projectId, "正在保存用例...");
@@ -280,7 +289,16 @@ public class TestCaseService {
             TestGeneratorAgent.CaseCallback caseCb = tc ->
                     sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
 
-            List<TestCase> testCases = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled);
+            telemetryService.setTaskContext(taskId, agentTaskService.getAttempt(taskId));
+            List<TestCase> testCases;
+            try {
+                testCases = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled);
+            } finally {
+                telemetryService.clearTaskContext();
+            }
+            if (testCases.stream().anyMatch(tc -> "rule_based".equals(tc.getSource()))) {
+                agentTaskService.markDegraded(taskId);
+            }
 
             agentTaskService.checkpoint(taskId, "persist", null);
 
@@ -387,7 +405,16 @@ public class TestCaseService {
             TestGeneratorAgent.CaseCallback caseCb = tc ->
                     sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
 
-            List<TestCase> generated = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled);
+            telemetryService.setTaskContext(taskId, agentTaskService.getAttempt(taskId));
+            List<TestCase> generated;
+            try {
+                generated = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled);
+            } finally {
+                telemetryService.clearTaskContext();
+            }
+            if (generated.stream().anyMatch(tc -> "rule_based".equals(tc.getSource()))) {
+                agentTaskService.markDegraded(taskId);
+            }
 
             agentTaskService.checkpoint(taskId, "persist", null);
 

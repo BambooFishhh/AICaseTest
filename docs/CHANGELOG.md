@@ -4,6 +4,40 @@
 
 ---
 
+## v6.7 — 高可用 P2：断点续跑与降级闭环
+**日期**: 2026-08-22
+**基线**: v6.6
+**主题**: 分析断点续跑、规则兜底降级标记、LLM provider 熔断、Telemetry 关联 task_id/attempt、前端任务中心
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/AnalysisService.java` | 修改 | `runAnalysisResume`：completed 分析结果复用，跳过扫描/解析重建语义索引与缺失状态机 |
+| `service/TaskRetryDispatcher.java` | 修改 | 分析重试统一走 `runAnalysisResume` |
+| `service/AgentTaskService.java` | 修改 | 新增 `markDegraded`（记录 degraded 并打指标）；`getAttempt` |
+| `service/TestCaseService.java` | 修改 | 生成/流式/追加生成出现 `rule_based` 用例时标记任务 degraded；Telemetry 回填任务上下文 |
+| `common/LlmCircuitBreaker.java` | 新增 | LLM 连续失败熔断（默认 5 次/30s），chat/stream/image 接入 |
+| `service/TelemetryService.java` | 修改 | `start` 支持 taskId/attempt；ThreadLocal 任务上下文 |
+| `entity/TaskTelemetry.java` + `db/migration/mysql/V9__add_task_telemetry_task_link.sql` | 修改/新增 | `task_telemetry` 增加 task_id/attempt |
+| `resources/application.yml` / `.env.example` / `docker-compose.yml` | 修改 | 新增 LLM 熔断配置 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `api/task.js` | 修改 | 新增 `listTasks/getTask/retryTask` |
+| `views/TaskCenter.vue` | 新增 | 任务中心：筛选/表格/分页/详情抽屉/重试 |
+| `router/index.js`、`App.vue` | 修改 | 新增 `/tasks` 路由与仅 ADMIN 导航入口 |
+
+### 验证结果
+
+- 后端 `mvn verify`（含 JaCoCo）BUILD SUCCESS
+- `LlmCircuitBreakerTest` / `AgentTaskServiceTest`（markDegraded/getAttempt）等通过
+- 前端 Vitest 7 个用例通过，`npm run build` 成功
+
+---
+
 ## v6.6 — 高可用 P1：执行接入与工具超时
 **日期**: 2026-08-22
 **基线**: v6.5
