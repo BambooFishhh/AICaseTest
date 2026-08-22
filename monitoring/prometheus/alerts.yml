@@ -40,3 +40,23 @@ groups:
         annotations:
           summary: "AICaseTest 任务队列积压"
           description: "生成/执行队列 queued 数量超过 20。"
+
+      - alert: AICaseTestDlqNonEmpty
+        expr: aicasetest_task_dlq_total > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AICaseTest 存在死信任务"
+          description: "agent_task 存在 DLQ 状态任务，需到任务中心处理。"
+
+      - alert: AICaseTestTaskFailureRateHigh
+        expr: |
+          sum(rate(aicasetest_task_failed_total[10m]))
+            / clamp_min(sum(rate(aicasetest_task_started_total[10m])), 1) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AICaseTest 任务失败率过高"
+          description: "近 10 分钟任务失败率超过 20%。"

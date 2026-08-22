@@ -14,6 +14,7 @@ import com.testagent.entity.StateMachine;
 import com.testagent.repository.CodeAnalysisRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.StateMachineRepository;
+import com.testagent.runtime.RuntimeStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -77,8 +78,8 @@ public class AnalysisService {
     @Autowired
     private AgentTaskService agentTaskService;
 
-    // v5.14: 同项目分析互斥，防止双击/并发触发多个分析任务
-    private final ConcurrentHashMap<String, Boolean> analysisRunning = new ConcurrentHashMap<>();
+    @Autowired
+    private RuntimeStore runtimeStore;
 
     // v5.3: 分析结果缓存（分析完成后失效）
     @Cacheable(value = "analysis", key = "#projectId")
@@ -124,14 +125,16 @@ public class AnalysisService {
 
     @Async("analysisExecutor")
     public void runAnalysis(String projectId, String sourcePath) {
-        if (analysisRunning.putIfAbsent(projectId, Boolean.TRUE) != null) {
+        String flag = "analysis:running:" + projectId;
+        if (runtimeStore.isFlagSet(flag)) {
             log.warn("Analysis already running for project {}, skip duplicate", projectId);
             return;
         }
+        runtimeStore.setFlag(flag, true);
         try {
             runAnalysisWithProgress(projectId, sourcePath, null);
         } finally {
-            analysisRunning.remove(projectId);
+            runtimeStore.setFlag(flag, false);
         }
     }
 
@@ -379,7 +382,8 @@ public class AnalysisService {
      */
     @Async("analysisExecutor")
     public void runAnalysisStream(String projectId, SseEmitter emitter) {
-        if (analysisRunning.putIfAbsent(projectId, Boolean.TRUE) != null) {
+        String flag = "analysis:running:" + projectId;
+        if (runtimeStore.isFlagSet(flag)) {
             try {
                 emitter.send(SseEmitter.event().name("error").data(
                         Map.of("message", "分析已在进行中，请勿重复点击"),
@@ -431,7 +435,7 @@ public class AnalysisService {
             }
             emitter.complete();
         } finally {
-            analysisRunning.remove(projectId);
+            runtimeStore.setFlag("analysis:running:" + projectId, false);
         }
     }
 

@@ -56,6 +56,9 @@ public class AgentTaskService {
     @Autowired(required = false)
     private MeterRegistry meterRegistry;
 
+    @Autowired(required = false)
+    private TaskEventStreamService taskEventStreamService;
+
     public String createTask(String taskType, String projectId, String requestId, String inputJson) {
         AgentTask latest = agentTaskRepository
                 .findFirstByRequestIdAndTaskTypeOrderByCreatedAtDesc(requestId, taskType)
@@ -78,7 +81,11 @@ public class AgentTaskService {
         task.setDegraded(false);
         task.setCreatedAt(LocalDateTime.now());
         task.setUpdatedAt(LocalDateTime.now());
-        return agentTaskRepository.save(task).getId();
+        String savedId = agentTaskRepository.save(task).getId();
+        if (taskEventStreamService != null) {
+            taskEventStreamService.publish(savedId);
+        }
+        return savedId;
     }
 
     /**
@@ -99,7 +106,24 @@ public class AgentTaskService {
         task.setDegraded(false);
         task.setCreatedAt(LocalDateTime.now());
         task.setUpdatedAt(LocalDateTime.now());
-        return agentTaskRepository.save(task).getId();
+        String savedId = agentTaskRepository.save(task).getId();
+        if (taskEventStreamService != null) {
+            taskEventStreamService.publish(savedId);
+        }
+        return savedId;
+    }
+
+    /**
+     * v6.8: CAS 抢占 QUEUED 任务。成功返回 true，被其他 worker 抢占则返回 false。
+     */
+    public boolean claimQueued(String taskId) {
+        LocalDateTime now = LocalDateTime.now();
+        int updated = agentTaskRepository.claimQueued(taskId, STATUS_RUNNING, "queued_claimed",
+                UUID.randomUUID().toString(), now.plusSeconds(taskLeaseSeconds), now, now);
+        if (updated > 0) {
+            metric("aicasetest.task.started");
+        }
+        return updated > 0;
     }
 
     public void start(String taskId) {

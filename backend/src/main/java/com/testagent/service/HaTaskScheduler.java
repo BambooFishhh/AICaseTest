@@ -23,6 +23,9 @@ public class HaTaskScheduler {
     @Autowired
     private TaskRetryDispatcher taskRetryDispatcher;
 
+    @Autowired
+    private TaskEventStreamService taskEventStreamService;
+
     @Scheduled(cron = "${app.ha.recovery-cron:0 */5 * * * *}")
     public void recoverStaleTasks() {
         agentTaskService.recoverStaleTasks();
@@ -38,13 +41,20 @@ public class HaTaskScheduler {
      */
     @Scheduled(fixedDelayString = "${app.ha.dispatch-delay-ms:15000}")
     public void dispatchQueuedTasks() {
+        for (String taskId : taskEventStreamService.consume(20)) {
+            dispatchQuietly(taskId);
+        }
         List<AgentTask> queued = agentTaskService.findQueued();
         for (AgentTask task : queued) {
-            try {
-                taskRetryDispatcher.dispatchQueued(task.getId());
-            } catch (Exception e) {
-                log.warn("Failed to dispatch queued task {}: {}", task.getId(), e.getMessage());
-            }
+            dispatchQuietly(task.getId());
+        }
+    }
+
+    private void dispatchQuietly(String taskId) {
+        try {
+            taskRetryDispatcher.dispatchQueued(taskId);
+        } catch (Exception e) {
+            log.warn("Failed to dispatch queued task {}: {}", taskId, e.getMessage());
         }
     }
 }

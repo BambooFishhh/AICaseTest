@@ -64,10 +64,6 @@ public class ExecutionService {
     @Autowired
     private ProjectExecutionLimiter projectExecutionLimiter;
 
-    // v5.2: 执行取消标志（executionId → RuntimeFlag），底层 Redis/内存
-    private final java.util.concurrent.ConcurrentHashMap<String, RuntimeFlag> executionCancellations =
-            new java.util.concurrent.ConcurrentHashMap<>();
-
     @Autowired
     private RuntimeStore runtimeStore;
 
@@ -375,7 +371,6 @@ public class ExecutionService {
             if (writeBack) {
                 updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
             }
-            executionCancellations.remove(executionId);
             runtimeStore.clearFlag("exec:cancel:" + executionId);
             runtimeStore.removeHeartbeat(executionId);
             taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, executionId);
@@ -506,7 +501,6 @@ public class ExecutionService {
         if (writeBack) {
             updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
         }
-        executionCancellations.remove(executionId);
         runtimeStore.clearFlag("exec:cancel:" + executionId);
         runtimeStore.removeHeartbeat(executionId);
 
@@ -574,7 +568,6 @@ public class ExecutionService {
             if (writeBack) {
                 updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
             }
-            executionCancellations.remove(executionId);
             runtimeStore.clearFlag("exec:cancel:" + executionId);
             runtimeStore.removeHeartbeat(executionId);
             taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, executionId);
@@ -807,7 +800,6 @@ public class ExecutionService {
         if (writeBack) {
             updateTestCaseExecutionStatus(testCase.getId(), "cancelled".equals(status) ? "not_executed" : status);
         }
-        executionCancellations.remove(executionId);
         runtimeStore.clearFlag("exec:cancel:" + executionId);
         runtimeStore.removeHeartbeat(executionId);
 
@@ -987,14 +979,12 @@ public class ExecutionService {
 
     // v4.2: 执行取消标志检查
     private boolean isExecutionCancelled(String executionId) {
-        RuntimeFlag flag = executionCancellations.get(executionId);
-        return flag != null && flag.isCancelled();
+        return runtimeStore.isFlagSet("exec:cancel:" + executionId);
     }
 
     // 标记运行中任务取消，并强制关闭其浏览器会话（让当前步骤尽快失败）
     private void markRunningCancelled(String executionId) {
-        RuntimeFlag flag = executionCancellations.computeIfAbsent(
-                executionId, k -> runtimeStore.newFlag("exec:cancel:" + k));
+        RuntimeFlag flag = runtimeStore.newFlag("exec:cancel:" + executionId);
         flag.cancel();
         // v6.0: 取消时先保存录像，避免浏览器提前关闭导致 WebM 丢失
         try {
@@ -1032,7 +1022,6 @@ public class ExecutionService {
         if (Boolean.TRUE.equals(record.getWriteBack())) {
             updateTestCaseExecutionStatus(record.getTestCaseId(), "not_executed");
         }
-        executionCancellations.remove(record.getId());
         runtimeStore.clearFlag("exec:cancel:" + record.getId());
         runtimeStore.removeHeartbeat(record.getId());
         runtimeStore.removeSession(record.getId());

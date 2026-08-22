@@ -4,6 +4,36 @@
 
 ---
 
+## v6.8 — 高可用 P3：队列与多实例
+**日期**: 2026-08-22
+**基线**: v6.7
+**主题**: Redis Streams 事件总线、QUEUED CAS 抢占、本地状态迁 Redis、DLQ/失败率告警
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/TaskEventStreamService.java` | 新增 | Redis Streams 事件总线（XADD/XREADGROUP），DB 轮询兜底 |
+| `repository/AgentTaskRepository.java` | 修改 | `claimQueued` CAS 更新（仅 QUEUED 可领取） |
+| `service/AgentTaskService.java` | 修改 | 创建任务后发布事件；`claimQueued` 抢占 |
+| `service/TaskRetryDispatcher.java` | 修改 | `dispatchQueued` 先 CAS 抢占，防双执行 |
+| `service/HaTaskScheduler.java` | 修改 | 调度先消费 Redis 事件，再做 DB 轮询 |
+| `service/AnalysisService.java` | 修改 | 分析互斥改 RuntimeStore flag，多实例自洽 |
+| `service/ExecutionService.java` | 修改 | 移除本地 executionCancellations Map，取消状态读 RuntimeStore |
+| `monitoring/prometheus/alerts.yml` | 修改 | 新增 DLQ 非空、任务失败率告警 |
+
+### 前端变更
+
+无业务代码变更，`npm run build` 回归通过。
+
+### 验证结果
+
+- 后端 `mvn verify` BUILD SUCCESS
+- `AgentTaskServiceTest.claimQueuedUsesCasUpdate` 等通过
+- 前端 `npm run build` 成功
+
+---
+
 ## v6.7 — 高可用 P2：断点续跑与降级闭环
 **日期**: 2026-08-22
 **基线**: v6.6

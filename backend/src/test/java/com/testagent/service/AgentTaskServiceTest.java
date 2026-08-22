@@ -176,4 +176,12 @@ class AgentTaskServiceTest {
 
         assertEquals(2, service.getAttempt("task-1"));
     }
+
+    @Test
+    void claimQueuedUsesCasUpdate() {
+        when(repository.claimQueued(anyString(), anyString(), anyString(), anyString(),
+                any(), any(), any())).thenReturn(1);
+
+        assertTrue(service.claimQueued("task-1"));
+    }
 }

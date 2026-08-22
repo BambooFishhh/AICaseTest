@@ -75,13 +75,16 @@ public class TaskRetryDispatcher {
         if (task == null || !AgentTaskService.STATUS_QUEUED.equals(task.getStatus())) {
             return Map.of("taskId", taskId, "dispatched", false, "message", "任务不在排队状态");
         }
+        if (!agentTaskService.claimQueued(taskId)) {
+            return Map.of("taskId", taskId, "dispatched", false, "message", "任务已被其他 worker 抢占");
+        }
         if (AgentTaskService.TYPE_APPEND_GENERATION.equals(task.getTaskType())) {
             agentTaskService.markNeedsReview(taskId, "MANUAL_RETRY",
                     "追加生成需要 SSE 客户端，请在前端重新触发");
             return Map.of("taskId", taskId, "dispatched", false,
                     "message", "追加生成需在前端重新触发");
         }
-        dispatch(task);
+        dispatch(agentTaskService.findById(taskId));
         return Map.of("taskId", taskId, "dispatched", true);
     }
 

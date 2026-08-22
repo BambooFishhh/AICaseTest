@@ -176,8 +176,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v6.7（高可用 P2：断点续跑与降级闭环）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v6.8（高可用 P3：队列与多实例）**，生产线基线为 vP5（压测与容量）。
 
+- v6.8 要点：Redis Streams 任务事件总线加速分发；QUEUED 领取改为 CAS 幂等；分析互斥与执行取消迁 Redis 运行态；新增 DLQ/失败率 Prometheus 告警。
 - v6.7 要点：分析断点续跑复用已完成结果；规则兜底生成标记 `degraded`；LLM provider 连续失败熔断；`task_telemetry` 关联 task_id/attempt；新增仅 ADMIN 的任务中心页面。
 - v6.6 要点：MCP 工具调用加超时并按幂等性自动重试；执行任务接入 `agent_task` 租约与 checkpoint；任务 TTL 与 QUEUED 兜底调度；新增任务/工具 Prometheus 指标。
 - v6.5 要点：分析/生成任务写入 `agent_task` 持久化状态机（phase/checkpoint/attempt/lease/heartbeat）；启动与定时恢复将租约过期任务标记 NEEDS_REVIEW；管理端 `/api/admin/tasks` 支持列表/详情/重试；LLM 重试改为错误分类 + 抖动，4xx 不再盲目重试。
@@ -216,6 +217,7 @@ AICaseTest/
 | v6.5 | 高可用 P0（任务状态持久化/租约恢复/LLM 重试分类） | ✅ 完成 |
 | v6.6 | 高可用 P1（执行接入 agent_task/MCP 工具超时/任务 TTL） | ✅ 完成 |
 | v6.7 | 高可用 P2（断点续跑/降级标记/LLM 熔断/任务中心） | ✅ 完成 |
+| v6.8 | 高可用 P3（Redis Streams 事件总线/CAS 抢占/状态迁 Redis） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |
