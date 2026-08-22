@@ -91,6 +91,9 @@ public class TestCaseService {
     private TaskQueueService taskQueueService;
 
     @Autowired
+    private AgentTaskService agentTaskService;
+
+    @Autowired
     private SemanticService semanticService;
 
     @Autowired
@@ -171,6 +174,7 @@ public class TestCaseService {
 
     @Async("generationExecutor")
     public void runGenerate(String projectId, GenerateRequest req) {
+        String taskId = null;
         try {
             // v5.13: 前置校验——生成必须基于 PRD
             Project project = projectRepository.findById(projectId)
@@ -182,10 +186,16 @@ public class TestCaseService {
 
             updateProjectStatus(projectId, "generating");
             taskQueueService.markRunning(TaskQueueService.GENERATION_QUEUE, projectId);
+            // v6.5: 任务状态持久化（request_id 复用项目 ID，避免同项目重复活跃任务）
+            taskId = agentTaskService.createTask(AgentTaskService.TYPE_GENERATION,
+                    projectId, projectId, toJson(req));
+            agentTaskService.start(taskId);
+            agentTaskService.checkpoint(taskId, "generate", null);
             // v1.10: 改由 OrchestratorAgent 编排（PrdAgent + 代码侧 → TestGeneratorAgent）
             List<TestCase> testCases = orchestratorAgent.generate(projectId,
                     progress -> projectRepository.updateProgress(projectId, progress));
 
+            agentTaskService.checkpoint(taskId, "persist", null);
             projectRepository.updateProgress(projectId, "正在保存用例...");
             // v5.6: 事务化落库（先删旧用例+版本，再统一写入）
             testCasePersistenceService.replaceAll(projectId, testCases);
@@ -193,10 +203,12 @@ public class TestCaseService {
             // v5.4/v5.6: 重新生成后重建语义索引
             semanticService.clearCases(projectId);
             semanticService.indexCases(projectId, testCases);
+            agentTaskService.checkpoint(taskId, "index", null);
 
             // v1.6: 完成时清除进度
             projectRepository.updateProgress(projectId, null);
             updateProjectStatus(projectId, "completed");
+            agentTaskService.succeed(taskId);
             log.info("Test case generation completed for project {}: {} cases",
                     projectId, testCases.size());
 
@@ -205,6 +217,9 @@ public class TestCaseService {
             // v1.6: 失败时存储错误详情，前端可展示具体失败原因
             String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             projectRepository.updateStatusWithError(projectId, "failed", errorMsg);
+            if (taskId != null) {
+                agentTaskService.fail(taskId, "GENERATION_FAILED", errorMsg);
+            }
         }
     }
 
@@ -216,6 +231,7 @@ public class TestCaseService {
      */
     @Async("generationExecutor")
     public void runGenerateStream(String projectId, SseEmitter emitter) {
+        String taskId = null;
         AtomicBoolean clientGone = new AtomicBoolean(false);
         // v5.8fix: 清除上次可能残留的取消标志，避免新任务被误取消
         runtimeStore.clearFlag("gen:cancel:" + projectId);
@@ -250,6 +266,10 @@ public class TestCaseService {
             }
 
             updateProjectStatus(projectId, "generating");
+            taskId = agentTaskService.createTask(AgentTaskService.TYPE_GENERATION,
+                    projectId, projectId, "{}");
+            agentTaskService.start(taskId);
+            agentTaskService.checkpoint(taskId, "generate", null);
 
             // 进度回调 → 推送 progress 事件 + 同步写 project.progress（兼容轮询）
             TestGeneratorAgent.ProgressCallback progressCb = msg -> {
@@ -261,6 +281,8 @@ public class TestCaseService {
                     sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
 
             List<TestCase> testCases = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled);
+
+            agentTaskService.checkpoint(taskId, "persist", null);
 
             // v3.3: 落库前最终检查（LLM 返回后可能已取消）
             if (cancelled.isCancelled()) {
@@ -274,6 +296,8 @@ public class TestCaseService {
             // v5.4/v5.6: 重新生成后重建语义索引
             semanticService.clearCases(projectId);
             semanticService.indexCases(projectId, testCases);
+            agentTaskService.checkpoint(taskId, "index", null);
+            agentTaskService.succeed(taskId);
 
             projectRepository.updateProgress(projectId, null);
             updateProjectStatus(projectId, "completed");
@@ -284,6 +308,9 @@ public class TestCaseService {
         } catch (GenerationCancelledException e) {
             // v3.3: 落库保护——跳过 deleteAll + save，保留旧用例
             log.info("Streaming generation cancelled for project {}", projectId);
+            if (taskId != null) {
+                agentTaskService.cancel(taskId);
+            }
             projectRepository.updateProgress(projectId, null);
             restoreProjectStatus(projectId);
             sendSseEvent(emitter, clientGone, "cancelled",
@@ -293,6 +320,9 @@ public class TestCaseService {
             log.error("Streaming generation failed for project {}", projectId, e);
             String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             projectRepository.updateStatusWithError(projectId, "failed", errorMsg);
+            if (taskId != null) {
+                agentTaskService.fail(taskId, "GENERATION_FAILED", errorMsg);
+            }
             sendSseEvent(emitter, clientGone, "error", Map.of("message", errorMsg));
             safeSseCompleteWithError(emitter, clientGone, e);
         } finally {
@@ -313,6 +343,7 @@ public class TestCaseService {
      */
     @Async("generationExecutor")
     public void runGenerateStreamAppend(String projectId, String type, SseEmitter emitter) {
+        String taskId = null;
         AtomicBoolean clientGone = new AtomicBoolean(false);
         runtimeStore.clearFlag("gen:cancel:" + projectId);
         RuntimeFlag cancelled = runtimeStore.newFlag("gen:cancel:" + projectId);
@@ -344,6 +375,10 @@ public class TestCaseService {
 
             updateProjectStatus(projectId, "generating");
             taskQueueService.markRunning(TaskQueueService.GENERATION_QUEUE, projectId);
+            taskId = agentTaskService.createTask(AgentTaskService.TYPE_APPEND_GENERATION,
+                    projectId, projectId, toJson(Map.of("type", type == null ? "" : type)));
+            agentTaskService.start(taskId);
+            agentTaskService.checkpoint(taskId, "generate", null);
 
             TestGeneratorAgent.ProgressCallback progressCb = msg -> {
                 sendSseEvent(emitter, clientGone, "progress", Map.of("message", msg));
@@ -353,6 +388,8 @@ public class TestCaseService {
                     sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
 
             List<TestCase> generated = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled);
+
+            agentTaskService.checkpoint(taskId, "persist", null);
 
             if (cancelled.isCancelled()) {
                 throw new GenerationCancelledException("用户取消追加生成");
@@ -406,6 +443,8 @@ public class TestCaseService {
 
             // v5.4: 追加用例写入语义索引
             semanticService.indexCases(projectId, toAppend);
+            agentTaskService.checkpoint(taskId, "index", null);
+            agentTaskService.succeed(taskId);
 
             projectRepository.updateProgress(projectId, null);
             updateProjectStatus(projectId, "completed");
@@ -424,6 +463,9 @@ public class TestCaseService {
                     projectId, total, appended, dropped);
         } catch (GenerationCancelledException e) {
             log.info("Append generation cancelled for project {}", projectId);
+            if (taskId != null) {
+                agentTaskService.cancel(taskId);
+            }
             projectRepository.updateProgress(projectId, null);
             restoreProjectStatus(projectId);
             sendSseEvent(emitter, clientGone, "cancelled",
@@ -433,6 +475,9 @@ public class TestCaseService {
             log.error("Append generation failed for project {}", projectId, e);
             String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             projectRepository.updateStatusWithError(projectId, "failed", errorMsg);
+            if (taskId != null) {
+                agentTaskService.fail(taskId, "APPEND_GENERATION_FAILED", errorMsg);
+            }
             sendSseEvent(emitter, clientGone, "error", Map.of("message", errorMsg));
             safeSseCompleteWithError(emitter, clientGone, e);
         } finally {

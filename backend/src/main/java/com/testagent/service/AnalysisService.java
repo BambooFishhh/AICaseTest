@@ -74,6 +74,9 @@ public class AnalysisService {
     @Autowired
     private TelemetryService telemetryService;
 
+    @Autowired
+    private AgentTaskService agentTaskService;
+
     // v5.14: 同项目分析互斥，防止双击/并发触发多个分析任务
     private final ConcurrentHashMap<String, Boolean> analysisRunning = new ConcurrentHashMap<>();
 
@@ -136,6 +139,11 @@ public class AnalysisService {
      * v4.4: 分析主流程（支持进度回调）。
      */
     public void runAnalysisWithProgress(String projectId, String sourcePath, ProgressCallback progressCb) {
+        // v6.5: 持久化任务（request_id 复用项目 ID，避免同项目重复活跃分析任务）
+        String taskId = agentTaskService.createTask(AgentTaskService.TYPE_ANALYSIS,
+                projectId, projectId, "{}");
+        agentTaskService.start(taskId);
+
         // v3.9fix: 删除旧的分析记录，避免多次分析导致 NonUniqueResult
         codeAnalysisRepository.findAllByProjectId(projectId).forEach(codeAnalysisRepository::delete);
 
@@ -149,11 +157,13 @@ public class AnalysisService {
         try {
             updateProjectStatus(projectId, "analyzing");
             report(progressCb, "正在扫描项目结构...");
+            agentTaskService.checkpoint(taskId, "scan", null);
 
             telemetryService.beginPhaseIfActive("scan");
             ScanResult scanResult = projectScanner.scan(sourcePath);
             telemetryService.endPhase();
             report(progressCb, "项目结构扫描完成，正在解析前后端代码...");
+            agentTaskService.checkpoint(taskId, "parse", null);
 
             FrontendResult frontendResult = null;
             BackendResult backendResult = null;
@@ -208,6 +218,7 @@ public class AnalysisService {
             analysis.setStatus("completed");
             codeAnalysisRepository.save(analysis);
             evictAnalysisCaches(projectId);
+            agentTaskService.checkpoint(taskId, "state_machine", null);
 
             // v5.4: 分析结果写入语义上下文（供生成前 RAG 检索）
             try {
@@ -229,6 +240,8 @@ public class AnalysisService {
                 updateProjectTechStack(projectId, objectMapper.writeValueAsString(scanResult.getTechStack()));
             }
 
+            agentTaskService.checkpoint(taskId, "index", null);
+
             if (backendResult != null) {
                 stateMachineRepository.deleteAll(stateMachineRepository.findByProjectId(projectId));
                 telemetryService.beginPhaseIfActive("state_machine");
@@ -244,6 +257,7 @@ public class AnalysisService {
             updateProjectStatus(projectId, "analyzed");
             report(progressCb, "分析完成");
             log.info("Analysis completed for project {}", projectId);
+            agentTaskService.succeed(taskId);
             telemetryOk = true;
 
         } catch (Exception e) {
@@ -253,6 +267,8 @@ public class AnalysisService {
             codeAnalysisRepository.save(analysis);
             evictAnalysisCaches(projectId);
             updateProjectStatus(projectId, "failed");
+            agentTaskService.fail(taskId, "ANALYSIS_FAILED",
+                    e.getMessage() != null ? e.getMessage() : "Unknown error");
         }
         telemetryService.finish(telemetryOk);
     }

@@ -158,6 +158,8 @@ services:
       - LLM_ENABLE_THINKING=${LLM_ENABLE_THINKING:-false}
       - LLM_THINKING_ANALYSIS=${LLM_THINKING_ANALYSIS:-true}
       - LLM_THINKING_GENERATION=${LLM_THINKING_GENERATION:-false}
+      # v6.5: LLM 重试次数（分类 + 抖动）
+      - LLM_RETRY_MAX_ATTEMPTS=${LLM_RETRY_MAX_ATTEMPTS:-3}
       # v6.1 (B 方案): 统一 prompt 上限与 LLM HTTP 超时
       - LLM_MAX_PROMPT_CHARS=${LLM_MAX_PROMPT_CHARS:-60000}
       - LLM_MAX_CONTEXT_CHARS=${LLM_MAX_CONTEXT_CHARS:-24000}
@@ -188,6 +190,8 @@ services:
       - APP_ADMIN_PASSWORD=${APP_ADMIN_PASSWORD:-}
       # v5.13fix: SSE 长连接超时（分钟），需与 frontend/nginx.conf proxy timeout 对齐
       - APP_SSE_TIMEOUT_MINUTES=${APP_SSE_TIMEOUT_MINUTES:-30}
+      # v6.5: 高可用任务租约（秒）
+      - APP_HA_TASK_LEASE_SECONDS=${APP_HA_TASK_LEASE_SECONDS:-600}
       # v5.13: tools MCP Server 访问后端桥接接口
       - MCP_BRIDGE_URL=http://backend:8000
       - MCP_BRIDGE_TOKEN=${MCP_BRIDGE_TOKEN:-aicasetest-mcp-local}

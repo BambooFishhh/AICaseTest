@@ -7,6 +7,7 @@ import com.testagent.repository.ExecutionRecordRepository;
 import com.testagent.repository.ProjectRepository;
 import com.testagent.repository.TestCaseRepository;
 import com.testagent.repository.UserRepository;
+import com.testagent.service.AgentTaskService;
 import com.testagent.service.TaskQueueService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +47,9 @@ public class DataInitializer implements CommandLineRunner {
     @Autowired
     private TaskQueueService taskQueueService;
 
+    @Autowired
+    private AgentTaskService agentTaskService;
+
     @Value("${app.admin.password:admin123}")
     private String adminPassword;
 
@@ -82,6 +86,11 @@ public class DataInitializer implements CommandLineRunner {
             log.info("v4.0: 已将 {} 个存量项目归属到默认管理员", orphanProjects.size());
         }
 
+        // v6.5: 先恢复租约过期的持久化任务（标记 NEEDS_REVIEW 供管理端人工重试）
+        int staleTasks = agentTaskService.recoverStaleTasks();
+        if (staleTasks > 0) {
+            log.info("v6.5: 启动恢复 {} 个租约过期任务，已在任务中心标记 NEEDS_REVIEW", staleTasks);
+        }
         // vP2: 启动恢复——清空残留任务队列，恢复卡死的分析/生成项目状态
         taskQueueService.recoverStaleTasks();
         List<Project> stuckProjects = projectRepository.findAll().stream()

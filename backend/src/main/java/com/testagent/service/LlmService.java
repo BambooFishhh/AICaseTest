@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.common.BusinessException;
 import com.testagent.common.GenerationCancelledException;
+import com.testagent.common.LlmRetryPolicy;
 import com.testagent.dto.LlmCallResult;
 import com.testagent.mcp.McpClientManager;
 import com.testagent.mcp.McpToolResult;
@@ -65,6 +66,10 @@ public class LlmService {
     @Value("${llm.max-prompt-chars:60000}")
     private int maxPromptChars;
 
+    // v6.5: LLM 重试次数（分类 + 抖动，4xx 不重试）
+    @Value("${llm.retry.max-attempts:3}")
+    private int maxRetries = 3;
+
     @Autowired
     private ChatClient.Builder chatClientBuilder;
 
@@ -80,8 +85,7 @@ public class LlmService {
     @Autowired
     private TelemetryService telemetryService;
 
-    // v1.4: 重试配置
-    private static final int MAX_RETRIES = 3;
+    // v1.4: 重试延迟基数（v6.5 起叠加随机抖动）
     private static final long[] RETRY_DELAYS_MS = {1000, 2000, 4000};
 
     // v6.0: 当前进行中的流式订阅，供取消生成使用（与旧版单 llm-stream 连接语义一致）
@@ -122,7 +126,7 @@ public class LlmService {
         log.info("[LLM] chat() 开始, provider={}, model={}, prompt长度={}, thinking={}",
                 provider, model, userPrompt == null ? 0 : userPrompt.length(), enableThinking);
         Exception lastException = null;
-        for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        for (int attempt = 0; attempt < maxRetries; attempt++) {
             try {
                 long start = System.currentTimeMillis();
                 OpenAiChatOptions options = buildOptions(temperature, enableThinking);
@@ -147,11 +151,16 @@ public class LlmService {
                 if (e instanceof GenerationCancelledException) {
                     throw (GenerationCancelledException) e;
                 }
+                if (!LlmRetryPolicy.isRetryable(e)) {
+                    log.warn("[LLM] 非可重试错误，停止重试: {}", e.getMessage());
+                    break;
+                }
             }
-            if (attempt < MAX_RETRIES - 1) {
+            if (attempt < maxRetries - 1) {
                 try {
-                    log.info("[LLM] 等待 {}ms 后重试...", RETRY_DELAYS_MS[attempt]);
-                    Thread.sleep(RETRY_DELAYS_MS[attempt]);
+                    long delay = retryDelayMs(attempt);
+                    log.info("[LLM] 等待 {}ms 后重试...", delay);
+                    Thread.sleep(delay);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     break;
@@ -159,7 +168,7 @@ public class LlmService {
             }
         }
         throw new BusinessException(50002,
-                "LLM调用失败（已重试" + MAX_RETRIES + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
+                "LLM调用失败（已尝试" + maxRetries + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
                 HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
@@ -190,7 +199,7 @@ public class LlmService {
         log.info("[LLM] chatStreaming() 开始, prompt长度={}, thinking={}",
                 userPrompt == null ? 0 : userPrompt.length(), enableThinking);
         Exception lastException = null;
-        for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        for (int attempt = 0; attempt < maxRetries; attempt++) {
             streamCancelled.set(false);
             try {
                 long start = System.currentTimeMillis();
@@ -267,11 +276,16 @@ public class LlmService {
                 if (e instanceof GenerationCancelledException) {
                     throw (GenerationCancelledException) e;
                 }
+                if (!LlmRetryPolicy.isRetryable(e)) {
+                    log.warn("[LLM] 流式调用出现非可重试错误，停止重试: {}", e.getMessage());
+                    break;
+                }
             }
-            if (attempt < MAX_RETRIES - 1) {
+            if (attempt < maxRetries - 1) {
                 try {
-                    log.info("[LLM] 等待 {}ms 后重试...", RETRY_DELAYS_MS[attempt]);
-                    Thread.sleep(RETRY_DELAYS_MS[attempt]);
+                    long delay = retryDelayMs(attempt);
+                    log.info("[LLM] 等待 {}ms 后重试...", delay);
+                    Thread.sleep(delay);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     break;
@@ -279,7 +293,7 @@ public class LlmService {
             }
         }
         throw new BusinessException(50002,
-                "LLM流式调用失败（已重试" + MAX_RETRIES + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
+                "LLM流式调用失败（已尝试" + maxRetries + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
                 HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
@@ -303,7 +317,7 @@ public class LlmService {
      */
     public String chatWithImage(String systemPrompt, String userText, String imageBase64) {
         Exception lastException = null;
-        for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        for (int attempt = 0; attempt < maxRetries; attempt++) {
             try {
                 long start = System.currentTimeMillis();
                 McpToolResult result = mcpClientManager.callToolWithMeta("llm", "llm_chat_with_image", Map.of(
@@ -320,10 +334,14 @@ public class LlmService {
             } catch (Exception e) {
                 lastException = e;
                 log.warn("LLM image call attempt {} failed: {}", attempt + 1, e.getMessage());
+                if (!LlmRetryPolicy.isRetryable(e)) {
+                    log.warn("[LLM] 多模态调用出现非可重试错误，停止重试: {}", e.getMessage());
+                    break;
+                }
             }
-            if (attempt < MAX_RETRIES - 1) {
+            if (attempt < maxRetries - 1) {
                 try {
-                    Thread.sleep(RETRY_DELAYS_MS[attempt]);
+                    Thread.sleep(retryDelayMs(attempt));
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     break;
@@ -331,7 +349,7 @@ public class LlmService {
             }
         }
         throw new BusinessException(50002,
-                "LLM多模态调用失败（已重试" + MAX_RETRIES + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
+                "LLM多模态调用失败（已尝试" + maxRetries + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
                 HttpStatus.INTERNAL_SERVER_ERROR);
     }
 
@@ -455,6 +473,14 @@ public class LlmService {
         log.warn("[LLM] prompt 超限 {} → 截断到 {}", userPrompt.length(), maxPromptChars);
         String head = userPrompt.substring(0, maxPromptChars);
         return head + "\n\n[system] 上下文已按 llm.max-prompt-chars 上限裁剪，请只使用剩余内容作答。";
+    }
+
+    // v6.5: 延迟 = 基数 * [0.8, 1.2) 抖动，避免多个任务同时重试再次撞限流
+    private long retryDelayMs(int attempt) {
+        int index = Math.min(attempt, RETRY_DELAYS_MS.length - 1);
+        long base = RETRY_DELAYS_MS[index];
+        double jitter = 0.8 + Math.random() * 0.4;
+        return (long) (base * jitter);
     }
 
     /**

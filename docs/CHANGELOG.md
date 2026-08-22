@@ -4,6 +4,41 @@
 
 ---
 
+## v6.5 — 高可用 P0：任务状态持久化与中断恢复
+**日期**: 2026-08-22
+**基线**: v6.4
+**主题**: agent_task 任务状态机、租约心跳与启动恢复、管理端任务重试、LLM 重试分类
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `db/migration/mysql/V8__add_agent_task.sql` | 新增 | agent_task 表（状态/phase/checkpoint/attempt/lease/heartbeat/error） |
+| `entity/AgentTask.java`、`repository/AgentTaskRepository.java` | 新增 | 任务实体与仓储（按状态租约查询、状态计数、Specification 分页） |
+| `service/AgentTaskService.java` | 新增 | create/start/checkpoint/succeed/fail/cancel/NEEDS_REVIEW/DLQ/requeue；启动+定时恢复 stale RUNNING |
+| `service/TaskRetryDispatcher.java` | 新增 | 管理端重试按任务类型分发分析/生成；追加生成提示前端重新触发 |
+| `controller/AgentTaskAdminController.java`、`dto/AgentTaskDTO.java` | 新增 | `/api/admin/tasks` 列表/详情/重试（仅 ADMIN） |
+| `common/LlmRetryPolicy.java` | 新增 | LLM 重试分类（超时/网络/429/5xx 可重试，4xx 与未知错误立即失败，带 4xx 模式识别） |
+| `service/TestCaseService.java` | 修改 | 普通/SSE/追加生成接入任务生命周期并按阶段 checkpoint |
+| `service/AnalysisService.java` | 修改 | 分析（含 SSE）接入任务生命周期：scan/parse/state_machine/index checkpoint |
+| `config/DataInitializer.java` | 修改 | 启动先恢复租约过期任务为 NEEDS_REVIEW，再原有项目/执行记录恢复 |
+| `controller/TaskController.java` | 修改 | `/api/tasks/stats` 增加 `agentTasks` 状态计数 |
+| `service/LlmService.java` | 修改 | chat/stream/image 重试循环接入分类与抖动（`llm.retry.max-attempts`） |
+| `resources/application.yml` / `.env.example` / `docker-compose.yml` | 修改 | 新增 `LLM_RETRY_MAX_ATTEMPTS`、`APP_HA_TASK_LEASE_SECONDS` 配置 |
+
+### 前端变更
+
+无业务代码变更，`npm run build` 回归通过。
+
+### 验证结果
+
+- 后端 `mvn compile`（Maven 3.9 + JDK 17）BUILD SUCCESS
+- 新增 `AgentTaskServiceTest`（5 个）与 `LlmRetryPolicyTest`（3 个）通过，`LlmServiceTest` 回归通过
+- 前端 `npm run build` 成功
+- 全量 `mvn test` 中既有 `JwtAuthFilterTest` / `ProductionGuardTest` 3 个环境相关失败保持基线状态（本版未改动相关文件）
+
+---
+
 ## v6.4 — RAG 切片化与多源检索增强
 **日期**: 2026-08-22
 **基线**: v6.3

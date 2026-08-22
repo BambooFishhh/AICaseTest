@@ -1,0 +1,27 @@
+-- v6.5: 高可用 P0 - 任务状态持久化与中断恢复
+CREATE TABLE agent_task (
+    id VARCHAR(64) NOT NULL,
+    request_id VARCHAR(128),
+    task_type VARCHAR(32) NOT NULL,
+    project_id VARCHAR(64),
+    status VARCHAR(32) NOT NULL,
+    phase VARCHAR(64),
+    attempts INT NOT NULL DEFAULT 0,
+    max_attempts INT NOT NULL DEFAULT 3,
+    input_json LONGTEXT,
+    checkpoint_json LONGTEXT,
+    error_code VARCHAR(32),
+    error_message TEXT,
+    degraded TINYINT(1) NOT NULL DEFAULT 0,
+    lease_owner VARCHAR(64),
+    lease_expire_at DATETIME(6),
+    heartbeat_at DATETIME(6),
+    started_at DATETIME(6),
+    ended_at DATETIME(6),
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_agent_task_status (status, created_at),
+    KEY idx_agent_task_project (project_id, created_at),
+    KEY idx_agent_task_request (request_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
