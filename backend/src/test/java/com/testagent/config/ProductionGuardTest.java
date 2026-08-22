@@ -15,6 +15,7 @@ class ProductionGuardTest {
         ReflectionTestUtils.setField(guard, "jwtSecret", ProductionGuard.DEFAULT_JWT_SECRET);
         ReflectionTestUtils.setField(guard, "adminPassword", ProductionGuard.DEFAULT_ADMIN_PASSWORD);
         ReflectionTestUtils.setField(guard, "llmApiKey", "test-key");
+        ReflectionTestUtils.setField(guard, "mcpBridgeToken", "custom-strong-mcp-token");
 
         IllegalStateException ex = assertThrows(IllegalStateException.class, guard::run);
         assertTrue(ex.getMessage().contains("APP_JWT_SECRET"));
@@ -29,6 +30,7 @@ class ProductionGuardTest {
                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
         ReflectionTestUtils.setField(guard, "adminPassword", "Strong-Admin-Pass-2026");
         ReflectionTestUtils.setField(guard, "llmApiKey", "test-key");
+        ReflectionTestUtils.setField(guard, "mcpBridgeToken", "custom-strong-mcp-token-2026");
 
         guard.run();
     }

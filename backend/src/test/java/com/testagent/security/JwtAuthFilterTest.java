@@ -40,6 +40,8 @@ class JwtAuthFilterTest {
         JwtAuthFilter filter = new JwtAuthFilter();
         ReflectionTestUtils.setField(filter, "jwtUtil", jwtUtil);
         ReflectionTestUtils.setField(filter, "userRepository", userRepository);
+        // v6.3: SSE 票据鉴权接入后，缺失该 Bean 会导致无 token 路径 NPE
+        ReflectionTestUtils.setField(filter, "sseTicketService", mock(SseTicketService.class));
         return filter;
     }
 
