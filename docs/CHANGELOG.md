@@ -4,6 +4,53 @@
 
 ---
 
+## v7.3 — LLM 组件稳定与生成质量约束
+**日期**: 2026-08-23
+**基线**: v7.2
+**主题**: 组件可信——并发流取消互不误杀、熔断通道隔离、SPA 生效判断不再重复点击、流式截断告警与抢救、预期结果语言约束（对应风险清单 L1/L2/L5/L8/G20层1+2）
+
+### 背景
+
+LLM 组件层存在 5 个稳定性/质量缺口：流式取消是全局单例（两个项目并发生成时 A 取消误杀 B 的流）；熔断器全局共享且 4xx 配置错误也计入（多模态故障连坐全部文本生成，API Key 填错 5 次全系统 503）；SPA 生效判断退化为 URL 比较（URL 不变几乎必判"未生效"→ DOM 兜底重复点击→重复下单）；流式 JSON 截断静默丢最后一条用例（无日志无提示）；生成的 expected 充斥"返回 401""errorMsg""status=PENDING_PAYMENT"等 API 语言（不是用户可感知现象，断言闭环无从落地）。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/LlmService.java` | 修改 | **L1**：删除全局 `activeStream`/`streamCancelled`/`cancelStreaming()`——取消信号改为 per-request `BooleanSupplier` 参数由调用方传入，并发生成流互不误杀；流内 doOnNext/等待循环只检查本次请求的信号。**L2**：熔断调用按通道拆分（chat/chatStreaming/chatJson → text，chatWithImage → multimodal），失败仅当 `LlmRetryPolicy.isRetryable` 为 true 时计入熔断（4xx 配置类错误直接失败不计数，Key 填错不再打满熔断）。**L8**：maxTokens 由硬编码 16384 改 `llm.max-tokens` 配置（默认不变） |
+| `common/LlmCircuitBreaker.java` | 修改 | **L2**：内部按 channel 维护独立 CircuitState（ConcurrentHashMap），新增带 channel 的 isOpen/allowRequest/onSuccess/onFailure；保留无参旧签名（默认 text）兼容现有测试 |
+| `agent/TestGeneratorAgent.java` | 修改 | **L1**：流式调用传入 `cancelled::isCancelled`（每项目独立 RuntimeFlag）。**L8**：StreamingTestCaseParser 新增 `finish()`——braceDepth 不归零时置截断标志 + warning 日志 + 截到最后一个字符串外逗号、按括号栈补齐闭合符重试解析（抢救最后一条，嵌套数组回退安全点）；GenerationReport 新增 `streamTruncated`/`truncatedRecovered` 随 complete 事件暴露。**G20层1**：两套 system prompt 追加"预期结果语言规范"（禁 HTTP 码/字段名/机器常量，api_call 步骤豁免但 UI 断言必须回到页面现象）；few-shot 示例 2/3 的 expectedResults 由"接口返回201/400""status=PENDING_PAYMENT"改为页面现象描述 |
+| `service/TestCaseService.java` | 修改 | **L1**：cancelGeneration 删除全局 `llmService.cancelStreaming()`（per-request 信号已覆盖，flag.cancel() 即流内检查点） |
+| `agent/ExecutionAgent.java` | 修改 | **L5**：askLlmIfEffective 无 LLM 兜底由"仅比 URL"改为 URL+title+textSnippet 三指纹比较（textSnippet 是 body 文本前 500 字符快照，零额外调用）；LLM 路径注入操作前后文本快照作证据（E6 最小版雏形）；点击后补 800ms 等待覆盖 SPA 异步渲染，避免"渲染未完成→指纹相同→误判未生效→DOM 兜底重复点击" |
+| `agent/UiLanguageLinter.java` | 新增 | **G20层2**：静态正则 lint——扫描 expectedResults 与 structuredSteps 中非 api_call 步骤的 expected，命中三类规则（HTTP 状态码形态/全大写下划线机器常量/后端字段赋值errorMsg=status=code=）输出人可读违规说明；保守设计宁可漏报不误报 |
+| `agent/TestCaseReviewAgent.java` | 修改 | **G20层2**：评审链路汇合处统一跑 lint，结果写入 `hints.uiLanguageViolations`（只标记不删改，前端展示后续版本） |
+| `test/LlmCircuitBreakerChannelTest.java` | 新增 | L2 通道隔离 5 用例（multimodal 打满不连坐 text/反向/onSuccess 只重置本通道/null 默认 text/旧签名兼容） |
+| `test/StreamingTestCaseParserTruncationTest.java` | 新增 | L8 截断检测与抢救 5 用例（完整响应无截断/半截对象抢救成功/嵌套数组内部截断回退安全点/无安全逗号只告警不抢救/空 buffer 无副作用） |
+| `test/UiLanguageLinterTest.java` | 新增 | G20层2 规则 8 用例（三类规则各命中/UI 语言零误报/api_call 步骤豁免/ui_action 步骤命中/"400 元"金额不误报/null 安全） |
+| `test/ExecutionAgentEffectivenessTest.java` | 新增 | L5 三指纹判断 6 用例（SPA URL 不变但内容变化→生效/标题变化/URL 变化/全不变→未生效/null 保守/缺失 textSnippet 键兜底） |
+
+### API 契约变化
+
+- 无 REST 接口变更
+- SSE `complete` 事件 report 对象新增 `streamTruncated`/`truncatedRecovered` 字段（前端未知字段自动忽略）
+- `executionHints` 新增可选 `uiLanguageViolations` 数组（前端本版不展示，数据已埋）
+- 配置新增 `llm.max-tokens`（默认 16384）
+
+### 验证结果
+
+- 后端 `mvn clean test`（JDK 17 + Maven 3.9.16）：**141 个测试全部通过，BUILD SUCCESS**（新增 24 个用例：ChannelTest 5 + TruncationTest 5 + LinterTest 8 + EffectivenessTest 6）
+- 前端 `npm run build`：通过（本版无前端改动，回归确认）
+
+### 预期影响（组件可信）
+
+- 多项目并发生成互不干扰：取消只作用于目标项目的流（此前 A 取消会误杀 B 并抛"用户取消"）
+- 多模态（图片定位）故障或 API Key 配置错误不再拖垮文本生成/评审/PRD 解析
+- SPA 执行不再系统性重复点击：页面内容变化即判生效，800ms 渲染窗口消除"未渲染完误判"
+- 长批次生成的尾部用例不再静默丢失：截断有告警有抢救，数量差异可解释
+- 新生成用例的 expected 逐步转向页面可感知现象（prompt 硬约束堵增量 + lint 标记存量），为 L6 断言闭环铺路
+
+---
+
 ## v7.2 — 度量与报告诚实化
 **日期**: 2026-08-23
 **基线**: v7.1

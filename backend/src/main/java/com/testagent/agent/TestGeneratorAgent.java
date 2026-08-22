@@ -79,6 +79,10 @@ public class TestGeneratorAgent {
         public boolean roundsNotConverged;
         /** 评审 LLM 失败降级为纯规则评审——真实降级信号 */
         public boolean reviewDegraded;
+        /** 流式响应发生截断（最后一条 JSON 未闭合，可能丢用例）——v7.3(L8) 真实降级信号 */
+        public boolean streamTruncated;
+        /** 截断后局部补全抢救成功的用例数（字段可能不完整） */
+        public int truncatedRecovered;
 
         public Map<String, Object> toMap() {
             Map<String, Object> map = new LinkedHashMap<>();
@@ -90,6 +94,8 @@ public class TestGeneratorAgent {
             map.put("finalCount", finalCount);
             map.put("roundsNotConverged", roundsNotConverged);
             map.put("reviewDegraded", reviewDegraded);
+            map.put("streamTruncated", streamTruncated);
+            map.put("truncatedRecovered", truncatedRecovered);
             return map;
         }
     }
@@ -197,6 +203,120 @@ public class TestGeneratorAgent {
         public int getParsedCount() {
             return parsedCount;
         }
+
+        // ==================== v7.3(L8): 截断检测与局部补全 ====================
+
+        private boolean truncated = false;
+        private int recovered = 0;
+
+        /**
+         * v7.3(L8): 流结束后调用。检测最后一条对象未闭合（braceDepth 不归零）时：
+         * ① 置截断标志（调用方记录 warning + report）；② 尝试截到最后一个安全逗号、
+         * 补齐闭合括号后重试解析，抢救字段基本完整的最后一条。返回是否发生截断。
+         */
+        public boolean finish() {
+            if (braceDepth > 0 && objStart >= 0) {
+                truncated = true;
+                String tail = buffer.substring(objStart);
+                String completed = completeTruncated(tail);
+                if (completed != null) {
+                    try {
+                        parseAndCallback(completed);
+                        recovered = 1;
+                        log.warn("流式响应截断：已局部补全抢救最后一条用例（字段可能不完整）: {}",
+                                tail.length() > 120 ? tail.substring(0, 120) + "..." : tail);
+                    } catch (Exception e) {
+                        log.warn("流式响应截断：局部补全解析失败，最后一条用例丢失: {}", e.getMessage());
+                    }
+                } else {
+                    log.warn("流式响应截断（maxTokens 不足或连接中断）：最后一条用例不完整已丢弃");
+                }
+            }
+            return truncated;
+        }
+
+        public boolean isTruncated() {
+            return truncated;
+        }
+
+        public int getRecovered() {
+            return recovered;
+        }
+
+        /**
+         * 截到最后一个字符串外逗号（不含），按括号栈补齐闭合符。
+         * 找不到安全截断点（如整段都处在一个未闭合字符串内）返回 null。
+         */
+        private String completeTruncated(String tail) {
+            int len = tail.length();
+            int lastComma = -1;
+            boolean inStr = false;
+            boolean esc = false;
+            for (int i = 0; i < len; i++) {
+                char c = tail.charAt(i);
+                if (inStr) {
+                    if (esc) {
+                        esc = false;
+                    } else if (c == '\\') {
+                        esc = true;
+                    } else if (c == '"') {
+                        inStr = false;
+                    }
+                    continue;
+                }
+                if (c == '"') {
+                    inStr = true;
+                } else if (c == ',') {
+                    lastComma = i;
+                }
+            }
+            // 截断发生在字符串内部时，仍可回退到最后一个字符串外逗号（安全点）；
+            // 仅当整段从头就无安全逗号（如 {"title":"半截 且之前无逗号）才放弃
+            // 截断点：最后一个字符串外逗号（截掉尾逗号）；无逗号且不在字符串内则整段
+            int cut;
+            if (lastComma > 0) {
+                cut = lastComma;
+            } else if (!inStr) {
+                cut = len;
+            } else {
+                return null;
+            }
+            String partial = tail.substring(0, cut);
+            if (partial.isBlank() || partial.length() <= 1) {
+                return null;
+            }
+            // 重新扫描 partial 的括号栈，逆序补闭合符
+            java.util.Deque<Character> restack = new java.util.ArrayDeque<>();
+            inStr = false;
+            esc = false;
+            for (int i = 0; i < partial.length(); i++) {
+                char c = partial.charAt(i);
+                if (inStr) {
+                    if (esc) {
+                        esc = false;
+                    } else if (c == '\\') {
+                        esc = true;
+                    } else if (c == '"') {
+                        inStr = false;
+                    }
+                    continue;
+                }
+                if (c == '"') {
+                    inStr = true;
+                } else if (c == '{' || c == '[') {
+                    restack.push(c);
+                } else if (c == '}' || c == ']') {
+                    if (!restack.isEmpty()) {
+                        restack.pop();
+                    }
+                }
+            }
+            StringBuilder sb = new StringBuilder(partial);
+            while (!restack.isEmpty()) {
+                sb.append(restack.pop() == '{' ? '}' : ']');
+            }
+            return sb.toString();
+        }
     }
 
     // v3.3: 取消检查。cancelled 为 null（非流式调用）或 false 时跳过。
@@ -239,6 +359,14 @@ public class TestGeneratorAgent {
             - state_assert 类型步骤的 expected 必须写可验证断言（页面 URL / 元素文本 / 状态提示）
             - api_call 类型步骤的 target 必须用真实接口路径，data 为该接口的入参
             - 每步的 target、expected 都不能为空
+
+            ## 预期结果语言规范（v7.3，必须严格遵守）
+            - expected / expectedResults 必须描述用户在页面上可感知的现象：
+              可见文案、toast/消息提示内容、页面跳转目标、元素出现/消失/禁用状态变化
+            - 禁止写 HTTP 状态码（如"返回401"）、后端字段名/变量名（如 errorMsg、orderId）、
+              机器常量（如 status=PENDING_PAYMENT）、响应体键名
+            - 仅 api_call 类型步骤的 expected 允许描述接口行为（如"接口返回 400"）；
+              含 UI 步骤的用例，最终断言步骤必须回到页面可感知现象
 
             ## coverageRefs 覆盖要求（v5.12）
             - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}
@@ -308,6 +436,14 @@ public class TestGeneratorAgent {
             - state_assert 的 expected 写可验证断言；api_call 的 target 用真实接口路径
             - target、expected 都不能为空；testData 含具体字段值
 
+            ## 预期结果语言规范（v7.3，必须严格遵守）
+            - expected / expectedResults 必须描述用户在页面上可感知的现象：
+              可见文案、toast/消息提示内容、页面跳转目标、元素出现/消失/禁用状态变化
+            - 禁止写 HTTP 状态码（如"返回401"）、后端字段名/变量名（如 errorMsg、orderId）、
+              机器常量（如 status=PENDING_PAYMENT）、响应体键名
+            - 仅 api_call 类型步骤的 expected 允许描述接口行为（如"接口返回 400"）；
+              含 UI 步骤的用例，最终断言步骤必须回到页面可感知现象
+
             ## coverageRefs 覆盖要求（v5.12）
             - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}
             - id 只能从 coverageChecklist 中选取真实存在的项：
@@ -353,10 +489,10 @@ public class TestGeneratorAgent {
                 "priority": "P0",
                 "preconditions": ["用户已登录", "购物车有商品"],
                 "steps": ["调用创建订单接口", "验证返回订单号", "验证订单状态为待支付"],
-                "expectedResults": ["接口返回201和订单号", "订单状态=PENDING_PAYMENT"],
+                "expectedResults": ["页面提示'下单成功'并显示订单号", "订单列表中该订单显示为'待支付'"],
                 "structuredSteps": [
-                  {"order":1,"action":"创建订单","target":"POST /api/order/create","expected":"返回201和orderId","data":{"userId":"U001","items":[{"skuId":"SKU001","quantity":2}],"amount":99.90},"type":"api_call"},
-                  {"order":2,"action":"验证订单状态","target":"GET /api/order/{orderId}","expected":"status=PENDING_PAYMENT","data":{},"type":"state_assert"}
+                  {"order":1,"action":"创建订单","target":"POST /api/order/create","expected":"接口返回201和订单号","data":{"userId":"U001","items":[{"skuId":"SKU001","quantity":2}],"amount":99.90},"type":"api_call"},
+                  {"order":2,"action":"验证订单状态","target":"订单列表页","expected":"该订单行显示'待支付'状态","data":{},"type":"state_assert"}
                 ],
                 "apiEndpoints": [{"method":"POST","path":"/api/order/create","description":"创建订单"}],
                 "testData": {"userId":"U001","amount":99.90},
@@ -371,9 +507,9 @@ public class TestGeneratorAgent {
                 "priority": "P1",
                 "preconditions": ["用户已登录"],
                 "steps": ["传入负数金额创建订单", "验证接口拒绝"],
-                "expectedResults": ["接口返回400","错误消息提示金额非法"],
+                "expectedResults": ["页面提示'金额非法，请重新输入'", "订单未创建，列表无新增记录"],
                 "structuredSteps": [
-                  {"order":1,"action":"传入负数金额创建订单","target":"POST /api/order/create","expected":"返回400错误","data":{"userId":"U001","amount":-1},"type":"api_call"}
+                  {"order":1,"action":"传入负数金额创建订单","target":"POST /api/order/create","expected":"接口返回400，页面出现'金额非法'错误提示","data":{"userId":"U001","amount":-1},"type":"api_call"}
                 ],
                 "apiEndpoints": [{"method":"POST","path":"/api/order/create","description":"创建订单"}],
                 "testData": {"userId":"U001","amount":-1},
@@ -873,7 +1009,7 @@ public class TestGeneratorAgent {
                 progressCallback.update(round == 1 ? "基于 PRD 生成用例..." : "第 " + round + " 轮补齐覆盖缺口...");
             }
             List<TestCase> roundCases = generatePrdRound(prdResult, stateMachines, backendResult, frontendResult,
-                    caseCb, cancelled, params, coverage, gaps, round);
+                    caseCb, cancelled, params, coverage, gaps, round, report);
             if (roundCases.isEmpty()) {
                 break;
             }
@@ -888,11 +1024,12 @@ public class TestGeneratorAgent {
         return all;
     }
 
+    // v7.3(L8): 新增 report 参数，流式截断时记录 streamTruncated/truncatedRecovered
     private List<TestCase> generatePrdRound(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                              BackendResult backendResult, FrontendResult frontendResult,
                                              CaseCallback caseCb, CancellationSignal cancelled,
                                              GenerationParams params, Map<String, Object> coverage,
-                                             Map<String, Object> gaps, int round) throws Exception {
+                                             Map<String, Object> gaps, int round, GenerationReport report) throws Exception {
         Map<String, Object> context = new LinkedHashMap<>();
 
         // PRD 为主上下文
@@ -994,8 +1131,15 @@ public class TestGeneratorAgent {
         // v3.7: caseCb 非空时启用流式调用 + 增量解析
         if (caseCb != null) {
             StreamingTestCaseParser parser = new StreamingTestCaseParser(caseCb);
+            // v7.3(L1): 取消信号 per-request 传入，避免全局取消误杀并发流
             String response = llmService.chatStreaming(
-                    buildPrdDrivenPrompt(params), userPrompt, resolveTemperature(params), parser::append);
+                    buildPrdDrivenPrompt(params), userPrompt, resolveTemperature(params), parser::append,
+                    cancelled == null ? null : cancelled::isCancelled);
+            // v7.3(L8): 流结束后检测截断——braceDepth 不归零时告警 + 局部补全抢救最后一条
+            if (parser.finish() && report != null) {
+                report.streamTruncated = true;
+                report.truncatedRecovered = parser.getRecovered();
+            }
             // 兜底：用完整响应重新解析，推送流式期间未推送的用例
             String json = extractJsonArray(response);
             List<TestCase> roundCases = parseTestCases(json, null);

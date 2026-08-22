@@ -28,7 +28,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -71,6 +70,10 @@ public class LlmService {
     @Value("${llm.retry.max-attempts:3}")
     private int maxRetries = 3;
 
+    // v7.3(L8): 输出上限配置化（原硬编码 16384）
+    @Value("${llm.max-tokens:16384}")
+    private int maxTokens = 16384;
+
     @Autowired
     private ChatClient.Builder chatClientBuilder;
 
@@ -92,9 +95,8 @@ public class LlmService {
     // v1.4: 重试延迟基数（v6.5 起叠加随机抖动）
     private static final long[] RETRY_DELAYS_MS = {1000, 2000, 4000};
 
-    // v6.0: 当前进行中的流式订阅，供取消生成使用（与旧版单 llm-stream 连接语义一致）
-    private final AtomicReference<Disposable> activeStream = new AtomicReference<>();
-    private final AtomicBoolean streamCancelled = new AtomicBoolean(false);
+    // v6.0: 全局单流取消字段已于 v7.3(L1) 删除——并发生成时全局取消会误杀其他请求的流。
+    // 取消信号改为 per-request 由调用方传入（BooleanSupplier），见 chatStreamingWithUsage。
 
     /**
      * v6.0: 检查 Spring AI ChatModel/EmbeddingModel 是否可用（替代旧版 MCP llm 可用性检查）。
@@ -129,7 +131,7 @@ public class LlmService {
         userPrompt = boundPrompt(userPrompt);
         log.info("[LLM] chat() 开始, provider={}, model={}, prompt长度={}, thinking={}",
                 provider, model, userPrompt == null ? 0 : userPrompt.length(), enableThinking);
-        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest()) {
+        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest(LlmCircuitBreaker.CHANNEL_TEXT)) {
             throw new BusinessException(50002, "LLM 熔断打开，请稍后重试", HttpStatus.SERVICE_UNAVAILABLE);
         }
         Exception lastException = null;
@@ -152,7 +154,7 @@ public class LlmService {
                         Map.of("prompt", call.getPromptTokens(), "completion", call.getCompletionTokens(),
                                 "total", call.getTotalTokens()));
                 if (llmCircuitBreaker != null) {
-                    llmCircuitBreaker.onSuccess();
+                    llmCircuitBreaker.onSuccess(LlmCircuitBreaker.CHANNEL_TEXT);
                 }
                 return call;
             } catch (Exception e) {
@@ -177,8 +179,9 @@ public class LlmService {
                 }
             }
         }
-        if (llmCircuitBreaker != null) {
-            llmCircuitBreaker.onFailure();
+        // v7.3(L2): 不可重试错误（4xx 配置类）不计入熔断——API Key 填错不应打满熔断拖垮全系统
+        if (llmCircuitBreaker != null && LlmRetryPolicy.isRetryable(lastException)) {
+            llmCircuitBreaker.onFailure(LlmCircuitBreaker.CHANNEL_TEXT);
         }
         throw new BusinessException(50002,
                 "LLM调用失败（已尝试" + maxRetries + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
@@ -188,11 +191,25 @@ public class LlmService {
     /**
      * v3.7: 流式调用 LLM。chunkConsumer 接收逐块文本，方法返回完整响应。
      * v6.0: 改为 Spring AI ChatClient.stream()，Flux<ChatResponse> 仅在本类内部适配。
+     * v7.3(L1): 该重载不支持中途取消（cancelSignal=null），仅供测试/内部使用；
+     *           生产链路请用带 cancelSignal 的重载，取消只作用于本次请求。
      */
     public String chatStreaming(String systemPrompt, String userPrompt,
                                 double temperature,
                                 Consumer<String> chunkConsumer) {
-        return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer, generationThinking).getText();
+        return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer,
+                null, generationThinking).getText();
+    }
+
+    /**
+     * v7.3(L1): 流式调用（支持 per-request 取消）。cancelSignal 返回 true 时中断本次流。
+     */
+    public String chatStreaming(String systemPrompt, String userPrompt,
+                                double temperature,
+                                Consumer<String> chunkConsumer,
+                                java.util.function.BooleanSupplier cancelSignal) {
+        return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer,
+                cancelSignal, generationThinking).getText();
     }
 
     /**
@@ -201,22 +218,23 @@ public class LlmService {
     public LlmCallResult chatStreamingWithUsage(String systemPrompt, String userPrompt,
                                                 double temperature,
                                                 Consumer<String> chunkConsumer) {
-        return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer, generationThinking);
+        return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer,
+                null, generationThinking);
     }
 
     private LlmCallResult chatStreamingWithUsage(String systemPrompt, String userPrompt,
                                                  double temperature,
                                                  Consumer<String> chunkConsumer,
+                                                 java.util.function.BooleanSupplier cancelSignal,
                                                  boolean enableThinking) {
         userPrompt = boundPrompt(userPrompt);
         log.info("[LLM] chatStreaming() 开始, prompt长度={}, thinking={}",
                 userPrompt == null ? 0 : userPrompt.length(), enableThinking);
-        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest()) {
+        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest(LlmCircuitBreaker.CHANNEL_TEXT)) {
             throw new BusinessException(50002, "LLM 熔断打开，请稍后重试", HttpStatus.SERVICE_UNAVAILABLE);
         }
         Exception lastException = null;
         for (int attempt = 0; attempt < maxRetries; attempt++) {
-            streamCancelled.set(false);
             try {
                 long start = System.currentTimeMillis();
                 AtomicLong firstTokenAt = new AtomicLong(0);
@@ -233,8 +251,9 @@ public class LlmService {
                         .stream()
                         .chatResponse();
 
+                // v7.3(L1): 取消只检查调用方传入的 per-request 信号，不再有全局标志
                 Disposable disposable = flux.doOnNext(response -> {
-                    if (streamCancelled.get()) {
+                    if (cancelSignal != null && cancelSignal.getAsBoolean()) {
                         throw new GenerationCancelledException("用户取消生成");
                     }
                     String delta = extractText(response);
@@ -253,23 +272,21 @@ public class LlmService {
                   .doOnComplete(done::countDown)
                   .doOnCancel(done::countDown)
                   .subscribe();
-                activeStream.set(disposable);
 
                 try {
                     while (!done.await(200, TimeUnit.MILLISECONDS)) {
-                        if (streamCancelled.get()) {
+                        if (cancelSignal != null && cancelSignal.getAsBoolean()) {
                             disposable.dispose();
                             throw new GenerationCancelledException("用户取消生成");
                         }
                     }
                 } finally {
-                    activeStream.set(null);
                     if (!disposable.isDisposed()) {
                         disposable.dispose();
                     }
                 }
 
-                if (streamCancelled.get()) {
+                if (cancelSignal != null && cancelSignal.getAsBoolean()) {
                     throw new GenerationCancelledException("用户取消生成");
                 }
                 Throwable error = errorRef.get();
@@ -286,7 +303,7 @@ public class LlmService {
                         Map.of("prompt", call.getPromptTokens(), "completion", call.getCompletionTokens(),
                                 "total", call.getTotalTokens()));
                 if (llmCircuitBreaker != null) {
-                    llmCircuitBreaker.onSuccess();
+                    llmCircuitBreaker.onSuccess(LlmCircuitBreaker.CHANNEL_TEXT);
                 }
                 return call;
             } catch (Exception e) {
@@ -311,8 +328,9 @@ public class LlmService {
                 }
             }
         }
-        if (llmCircuitBreaker != null) {
-            llmCircuitBreaker.onFailure();
+        // v7.3(L2): 不可重试错误不计入熔断（同 chat 链路）
+        if (llmCircuitBreaker != null && LlmRetryPolicy.isRetryable(lastException)) {
+            llmCircuitBreaker.onFailure(LlmCircuitBreaker.CHANNEL_TEXT);
         }
         throw new BusinessException(50002,
                 "LLM流式调用失败（已尝试" + maxRetries + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
@@ -320,25 +338,11 @@ public class LlmService {
     }
 
     /**
-     * v6.0: 取消当前进行中的 Spring AI 流式请求（由测试用例生成取消端点触发）。
-     */
-    public void cancelStreaming() {
-        streamCancelled.set(true);
-        Disposable disposable = activeStream.get();
-        if (disposable != null && !disposable.isDisposed()) {
-            try {
-                disposable.dispose();
-            } catch (Exception e) {
-                log.debug("Cancel Spring AI stream dispose failed: {}", e.getMessage());
-            }
-        }
-    }
-
-    /**
      * v2.6: 通过 MCP 协议调用 llm_chat_with_image 工具（保留 MCP 多模态）。
      */
     public String chatWithImage(String systemPrompt, String userText, String imageBase64) {
-        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest()) {
+        // v7.3(L2): 多模态通道独立熔断，与文本通道互不连坐
+        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest(LlmCircuitBreaker.CHANNEL_MULTIMODAL)) {
             throw new BusinessException(50002, "LLM 熔断打开，请稍后重试", HttpStatus.SERVICE_UNAVAILABLE);
         }
         Exception lastException = null;
@@ -356,7 +360,7 @@ public class LlmService {
                         start, null);
                 telemetryService.recordLlmCall(call);
                 if (llmCircuitBreaker != null) {
-                    llmCircuitBreaker.onSuccess();
+                    llmCircuitBreaker.onSuccess(LlmCircuitBreaker.CHANNEL_MULTIMODAL);
                 }
                 return call.getText();
             } catch (Exception e) {
@@ -376,8 +380,9 @@ public class LlmService {
                 }
             }
         }
-        if (llmCircuitBreaker != null) {
-            llmCircuitBreaker.onFailure();
+        // v7.3(L2): 不可重试错误不计入多模态通道熔断
+        if (llmCircuitBreaker != null && LlmRetryPolicy.isRetryable(lastException)) {
+            llmCircuitBreaker.onFailure(LlmCircuitBreaker.CHANNEL_MULTIMODAL);
         }
         throw new BusinessException(50002,
                 "LLM多模态调用失败（已尝试" + maxRetries + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
@@ -386,11 +391,12 @@ public class LlmService {
 
     private OpenAiChatOptions buildOptions(double temperature, boolean enableThinking) {
         // v6.0: OpenAI starter 不透传 enable_thinking；temperature/maxTokens 对齐旧版 MCP 请求。
+        // v7.3(L8): maxTokens 由硬编码 16384 改为 llm.max-tokens 配置（默认不变）。
         log.debug("[LLM] thinking flag={} (Spring AI OpenAI starter advisory only)", enableThinking);
         return OpenAiChatOptions.builder()
                 .model(model)
                 .temperature(temperature)
-                .maxTokens(16384)
+                .maxTokens(maxTokens)
                 .streamUsage(true)
                 .build();
     }

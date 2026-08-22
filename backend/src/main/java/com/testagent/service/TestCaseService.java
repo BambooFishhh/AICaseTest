@@ -599,12 +599,12 @@ public class TestCaseService {
     }
 
     // v3.3: 取消生成（供 Controller 调用）。返回是否成功取消（有进行中的生成任务）。
+    // v7.3(L1): 删除全局 llmService.cancelStreaming()——全局取消会误杀其他项目的并发生成流；
+    // flag 即生成链路 per-request 的 CancellationSignal，流式 LLM 调用内部直接检查它。
     public boolean cancelGeneration(String projectId) {
         RuntimeFlag flag = cancellationFlags.get(projectId);
         if (flag != null) {
             flag.cancel();
-            // v6.0: 立即中断 Spring AI 流式订阅，避免等待当前 LLM 调用跑完
-            llmService.cancelStreaming();
             // 保留对旧 MCP 流式连接的中断（vision/其他流兼容）
             mcpClientManager.cancelStreaming("llm-stream");
             return true;

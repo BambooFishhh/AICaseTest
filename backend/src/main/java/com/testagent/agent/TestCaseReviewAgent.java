@@ -81,6 +81,16 @@ public class TestCaseReviewAgent {
             log.info("Skip LLM review for {} cases (limit {})", cleaned.size(), MAX_LLM_CASES);
         }
         cleaned = applyEndpointMatching(cleaned, coverage);
+        // v7.3(G20层2): 预期结果 UI 语言 lint——零 LLM 成本静态扫描，只标记不删改，
+        // 结果入 hints.uiLanguageViolations（前端"需人工确认"展示后续版本）
+        for (TestCase tc : cleaned) {
+            List<String> violations = UiLanguageLinter.lint(tc);
+            if (!violations.isEmpty()) {
+                Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
+                hints.put("uiLanguageViolations", violations);
+                tc.setExecutionHints(toJson(hints));
+            }
+        }
         if (report != null) {
             report.reviewDropped = Math.max(0, before - cleaned.size());
             report.reviewDegraded = llmDegraded;

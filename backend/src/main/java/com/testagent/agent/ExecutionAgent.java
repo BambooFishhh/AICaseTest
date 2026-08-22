@@ -28,6 +28,9 @@ public class ExecutionAgent {
 
     private static final Logger log = LoggerFactory.getLogger(ExecutionAgent.class);
 
+    // v7.3(L5): 点击后等待 SPA 异步渲染的窗口（毫秒）
+    private static final long EFFECT_CHECK_DELAY_MS = 800;
+
     @Autowired
     private PlaywrightRecordSkill playwrightSkill;
 
@@ -180,6 +183,12 @@ public class ExecutionAgent {
 
             // 步骤 6: 验证点击是否生效（仅 visual_click 和 dom_click）
             if (!"skip".equals(strategy)) {
+                // v7.3(L5): 等待 SPA 异步渲染完成再取状态，避免"渲染未完成→指纹相同→误判未生效→DOM 兜底重复点击"
+                try {
+                    Thread.sleep(EFFECT_CHECK_DELAY_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
                 Map<String, String> statusAfter = playwrightSkill.getPageStatus(sessionId);
                 boolean effective = askLlmIfEffective(statusBefore, statusAfter, action);
                 touchHeartbeat(executionId);  // v7.0(E8): 生效判断调用后补心跳
@@ -352,20 +361,25 @@ public class ExecutionAgent {
 
     /**
      * LLM 判断操作是否生效。
-     * 未配置 LLM 时比较 URL 是否变化，变化则视为生效。
+     * v7.3(L5): 未配置 LLM 时退化为 URL+title+textSnippet 三指纹比较——
+     * 旧版仅比 URL 在 SPA（URL 不变）场景下几乎必判"未生效"，触发 DOM 兜底重复点击（重复下单/提交）。
+     * textSnippet 是页面 body 文本前 500 字符快照（MCP browser_get_page_status），零额外调用。
      */
     private boolean askLlmIfEffective(Map<String, String> statusBefore, Map<String, String> statusAfter, String action) {
         if (!llmService.isConfigured()) {
-            String urlBefore = statusBefore == null ? "" : statusBefore.getOrDefault("url", "");
-            String urlAfter = statusAfter == null ? "" : statusAfter.getOrDefault("url", "");
-            return !urlBefore.equals(urlAfter);
+            return pageChanged(statusBefore, statusAfter);
         }
         try {
-            String systemPrompt = "你是测试执行Agent。请判断操作是否生效。返回 JSON：{\"effective\": true/false, \"reason\": \"...\"}";
+            // v7.3(L5/E6最小版): 注入操作前后文本快照，让 LLM 有证据判断而非无据猜 URL
+            String systemPrompt = "你是测试执行Agent。请根据操作前后页面文本快照判断操作是否生效。"
+                    + "前后快照出现差异（新元素/提示/列表变化）即视为生效；SPA 页面 URL 不变不代表未生效。"
+                    + "返回 JSON：{\"effective\": true/false, \"reason\": \"...\"}";
             String userPrompt = "步骤: " + action
                     + "\n操作前URL: " + (statusBefore == null ? "" : statusBefore.get("url"))
                     + "\n操作后URL: " + (statusAfter == null ? "" : statusAfter.get("url"))
                     + "\n操作后标题: " + (statusAfter == null ? "" : statusAfter.get("title"))
+                    + "\n操作前页面文本快照: " + snippet(statusBefore)
+                    + "\n操作后页面文本快照: " + snippet(statusAfter)
                     + "\n请判断操作是否生效：";
             Map<String, Object> result = llmService.chatJson(systemPrompt, userPrompt, 0.2);
             Object effective = result.get("effective");
@@ -374,11 +388,28 @@ public class ExecutionAgent {
             }
             return Boolean.parseBoolean(String.valueOf(effective));
         } catch (Exception e) {
-            log.warn("askLlmIfEffective failed, fallback to URL compare: {}", e.getMessage());
-            String urlBefore = statusBefore == null ? "" : statusBefore.getOrDefault("url", "");
-            String urlAfter = statusAfter == null ? "" : statusAfter.getOrDefault("url", "");
-            return !urlBefore.equals(urlAfter);
+            log.warn("askLlmIfEffective failed, fallback to page fingerprint compare: {}", e.getMessage());
+            return pageChanged(statusBefore, statusAfter);
         }
+    }
+
+    /** v7.3(L5): 无 LLM 时的生效判断——URL/title/textSnippet 任一变化即生效 */
+    static boolean pageChanged(Map<String, String> before, Map<String, String> after) {
+        if (before == null || after == null) {
+            // 状态获取失败时保守判"未生效"（与旧行为一致，交由兜底逻辑处理）
+            return false;
+        }
+        return !before.getOrDefault("url", "").equals(after.getOrDefault("url", ""))
+                || !before.getOrDefault("title", "").equals(after.getOrDefault("title", ""))
+                || !before.getOrDefault("textSnippet", "").equals(after.getOrDefault("textSnippet", ""));
+    }
+
+    private String snippet(Map<String, String> status) {
+        if (status == null) {
+            return "";
+        }
+        String text = status.getOrDefault("textSnippet", "");
+        return text.length() > 300 ? text.substring(0, 300) : text;
     }
 
     /**
