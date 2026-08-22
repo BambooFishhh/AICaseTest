@@ -2,6 +2,7 @@ package com.testagent.analyzer;
 
 import com.testagent.analyzer.result.FrontendResult;
 import com.testagent.common.BusinessComponentPolicy;
+import com.testagent.service.LlmResultCacheService;
 import com.testagent.service.LlmService;
 import com.testagent.service.TelemetryService;
 import org.junit.jupiter.api.Test;
@@ -13,13 +14,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class VueAnalyzerTest {
@@ -30,13 +37,22 @@ class VueAnalyzerTest {
     private VueAnalyzer analyzerWithoutLlm() {
         LlmService llmService = mock(LlmService.class);
         when(llmService.isConfigured()).thenReturn(false);
-        return buildAnalyzer(llmService);
+        return buildAnalyzer(llmService, mock(LlmResultCacheService.class));
     }
 
     private VueAnalyzer buildAnalyzer(LlmService llmService) {
+        return buildAnalyzer(llmService, mock(LlmResultCacheService.class));
+    }
+
+    private VueAnalyzer buildAnalyzer(LlmService llmService, LlmResultCacheService cacheService) {
         VueAnalyzer analyzer = new VueAnalyzer();
         ReflectionTestUtils.setField(analyzer, "llmService", llmService);
-        ReflectionTestUtils.setField(analyzer, "telemetryService", mock(TelemetryService.class));
+        ReflectionTestUtils.setField(analyzer, "llmResultCacheService", cacheService);
+        TelemetryService telemetryService = mock(TelemetryService.class);
+        // bindPhase mock 默认不执行 task——组件摘要路径需要真实执行 supplier 才能走到 LLM/缓存
+        doAnswer(inv -> ((Supplier<?>) inv.getArgument(2)).get())
+                .when(telemetryService).bindPhase(any(), any(), any());
+        ReflectionTestUtils.setField(analyzer, "telemetryService", telemetryService);
         ReflectionTestUtils.setField(analyzer, "businessComponentPolicy", mock(BusinessComponentPolicy.class));
         ReflectionTestUtils.setField(analyzer, "llmConcurrency", 1);
         return analyzer;
@@ -219,6 +235,75 @@ class VueAnalyzerTest {
         assertNotNull(result.getWarnings());
         assertTrue(result.getWarnings().stream()
                 .anyMatch(w -> w.contains("rules 块括号不配对") && w.contains("BrokenForm.vue")));
+    }
+
+    // v7.5(A11): 组件摘要 LLM 结果缓存——同源码组件二次分析命中缓存不重复调 LLM
+    @Test
+    void componentSummaryCacheAvoidsRepeatLlmCalls() throws IOException {
+        String vue = """
+                <template>
+                  <div class="order-list">
+                    <el-button @click="loadOrders">刷新</el-button>
+                  </div>
+                </template>
+                <script>
+                import axios from 'axios';
+                export default {
+                  name: 'OrderList',
+                  data() { return { orders: [] }; },
+                  methods: {
+                    async loadOrders() {
+                      const res = await axios.get('/api/orders');
+                      this.orders = res.data;
+                    }
+                  }
+                }
+                </script>
+                """;
+        Path dirA = tempDir.resolve("a");
+        Path dirB = tempDir.resolve("b");
+        writeVueFile(dirA, "OrderList.vue", vue);
+        writeVueFile(dirB, "OrderList.vue", vue);
+
+        String summaryJson = """
+                {"summary": "订单列表页，支持刷新加载", "interactions": ["点击刷新"],
+                 "apiCalls": ["/api/orders"], "stateOps": [], "routeNavigations": [], "keywords": ["订单"]}
+                """;
+        LlmService llmService = mock(LlmService.class);
+        when(llmService.isConfigured()).thenReturn(true);
+        when(llmService.chat(anyString(), anyString(), anyDouble())).thenReturn(summaryJson);
+        LlmResultCacheService cacheService = mock(LlmResultCacheService.class);
+        when(cacheService.get(eq("component_summary"), anyString(), anyString()))
+                .thenReturn(null, summaryJson);
+
+        VueAnalyzer analyzer = new VueAnalyzer();
+        ReflectionTestUtils.setField(analyzer, "llmService", llmService);
+        ReflectionTestUtils.setField(analyzer, "llmResultCacheService", cacheService);
+        TelemetryService telemetryService = mock(TelemetryService.class);
+        doAnswer(inv -> ((Supplier<?>) inv.getArgument(2)).get())
+                .when(telemetryService).bindPhase(any(), any(), any());
+        ReflectionTestUtils.setField(analyzer, "telemetryService", telemetryService);
+        BusinessComponentPolicy policy = mock(BusinessComponentPolicy.class);
+        when(policy.needsLlmSummary(any())).thenReturn(true);
+        ReflectionTestUtils.setField(analyzer, "businessComponentPolicy", policy);
+        ReflectionTestUtils.setField(analyzer, "llmConcurrency", 1);
+
+        // 第一次分析：组件摘要调 1 次 LLM 并写缓存（另有 1 次 enhanceWithLlm 表单补充调用）
+        FrontendResult first = analyzer.analyze(dirA.toString());
+        verify(llmService, times(2)).chat(anyString(), anyString(), anyDouble());
+        verify(cacheService, times(1)).put(eq("component_summary"), anyString(), anyString(), eq(summaryJson));
+        assertTrue(first.getComponentSummaries().stream()
+                .anyMatch(s -> "OrderList".equals(s.get("component"))
+                        && String.valueOf(s.get("summary")).contains("订单列表")));
+
+        // 第二次分析（同内容不同目录）：组件摘要命中缓存，LLM 调用仅剩 enhanceWithLlm 的 1 次
+        // （首次 2 次 = 1 组件摘要 + 1 enhanceWithLlm；本次 = 1 enhanceWithLlm，摘要走缓存）
+        FrontendResult second = analyzer.analyze(dirB.toString());
+        verify(llmService, times(3)).chat(anyString(), anyString(), anyDouble());
+        verify(cacheService, times(1)).put(anyString(), anyString(), anyString(), anyString());
+        assertTrue(second.getComponentSummaries().stream()
+                .anyMatch(s -> "OrderList".equals(s.get("component"))
+                        && String.valueOf(s.get("summary")).contains("订单列表")));
     }
 
     private Map<String, Object> fieldByName(List<Map<String, Object>> fields, String name) {

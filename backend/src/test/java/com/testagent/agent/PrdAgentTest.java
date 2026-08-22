@@ -1,6 +1,7 @@
 package com.testagent.agent;
 
 import com.testagent.common.BusinessException;
+import com.testagent.service.LlmResultCacheService;
 import com.testagent.service.LlmService;
 import com.testagent.service.PromptSkillLoader;
 import org.junit.jupiter.api.Test;
@@ -25,6 +26,8 @@ class PrdAgentTest {
         PromptSkillLoader promptSkillLoader = mock(PromptSkillLoader.class);
         when(promptSkillLoader.load(anyString(), anyString())).thenReturn("system prompt");
         ReflectionTestUtils.setField(agent, "promptSkillLoader", promptSkillLoader);
+        // v7.5(A15): PrdAgent 新增缓存依赖——mock 后 get 默认返回 null（未命中），put 无操作
+        ReflectionTestUtils.setField(agent, "llmResultCacheService", mock(LlmResultCacheService.class));
         return agent;
     }
 

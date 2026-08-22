@@ -4,6 +4,48 @@
 
 ---
 
+## v7.5 — 缓存与可复现基线
+**日期**: 2026-08-23
+**基线**: v7.4
+**主题**: 基线可信——LLM 解析结果同输入同输出、同输入不重复付费（对应风险清单 A11/A15）
+
+### 背景
+
+v7.4 让分析输入可复现（A9 文件排序），但相同输入仍然重复付费调 LLM：**A15** 每次生成重新调 `prdAgent.analyze`（temp 0.2），同一 PRD 两次生成 requirements 列表本身漂移——追加生成与首次生成模块口径可能不一致；**A11** `VueAnalyzer` 每次分析对每个业务组件完整调 LLM（并发 4），文件没变也重跑，分析是高频操作，成本线性放大。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `entity/LlmResultCache.java` | 新增 | LLM 结果缓存表实体：`cache_key`（SHA-256）主键 / `cache_kind` / `result_text`（LLM 原始响应）/ `created_at` |
+| `repository/LlmResultCacheRepository.java` | 新增 | JPA Repository |
+| `service/LlmResultCacheService.java` | 新增 | 缓存层核心：键 = SHA-256(模型名 + systemPrompt + userPrompt)——换模型/prompt 模板演进/输入内容变化任一发生即新键自然失效，无 TTL；get 命中返回原始响应，put upsert（并发主键冲突静默忽略）；DB 异常降级为不缓存直调 LLM（get 返回 null / put 静默跳过），绝不阻断分析/生成 |
+| `agent/PrdAgent.java` | 修改 | **A15**：`analyzeByLlm` 接入缓存——先查缓存命中直接复用；未命中调 LLM 解析成功后写缓存；拆出 `parsePrdResponse` 解析段（缓存命中与 LLM 直调共用单一解析路径）；毒缓存（解析失败/空结果）自动落回 LLM 路径重新生成 |
+| `analyzer/VueAnalyzer.java` | 修改 | **A11**：`enhanceComponentSummary` 接入缓存——组件源码未变直接复用摘要；`mergeComponentSummary` 改返回 boolean（解析成功才写缓存，防毒缓存）；system prompt 提为常量供缓存键与 LLM 调用共用 |
+| `db/migration/mysql/V11__add_llm_result_cache.sql` | 新增 | MySQL 迁移脚本（H2 由 ddl-auto 自动建表） |
+| `test/LlmResultCacheServiceTest.java` | 新增 | 缓存层 8 用例（同输入往返/不同输入未命中/模型名入键/kind 校验/覆盖写/空响应不写/并发冲突静默/DB 异常降级） |
+| `test/agent/PrdAgentCacheTest.java` | 新增 | A15 5 用例（首次调 LLM 写缓存/同输入二次命中不调 LLM 且结果一致/PRD 改一字重新调/非法响应不缓存/毒缓存落回 LLM） |
+| `test/VueAnalyzerTest.java` | 修改 | A11 1 用例（同源码组件二次分析命中缓存不重复调 LLM，摘要内容一致） |
+
+### API 契约变化
+
+- 无 REST 接口变更
+- 新增 `llm_result_cache` 表（H2 自动建 / MySQL V11 迁移）
+
+### 验证结果
+
+- 后端 `mvn test`（JDK 17 + Maven 3.9.16）：全量测试通过，BUILD SUCCESS（新增 14 个用例：LlmResultCacheServiceTest 8 + PrdAgentCacheTest 5 + VueAnalyzerTest +1）
+
+### 预期影响（基线可信）
+
+- 同一 PRD 两次生成：第二次不调 LLM，requirements 与第一次完全一致——temp 0.2 漂移消除，追加生成与首次生成模块口径一致
+- 同一前端代码两次分析：业务组件摘要不重复调 LLM——分析是高频操作，此前每个业务组件一次调用成本线性放大，现在源码未变零调用
+- 失效精确：PRD 改一个字 / 组件源码变 / prompt 模板升级 / 换模型，任一发生对应缓存自然失效重新调 LLM；未变化的条目继续命中
+- 缓存 DB 故障时降级直调 LLM，分析/生成不受阻断（仅日志告警）
+- 毒缓存自愈：缓存内容解析失败自动落回 LLM 路径重新生成并覆盖写
+
+---
+
 ## v7.4 — 分析器规则层加固
 **日期**: 2026-08-23
 **基线**: v7.3

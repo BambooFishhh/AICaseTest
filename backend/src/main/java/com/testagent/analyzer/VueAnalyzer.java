@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.analyzer.result.FrontendResult;
 import com.testagent.common.BusinessComponentPolicy;
+import com.testagent.service.LlmResultCacheService;
 import com.testagent.service.LlmService;
 import com.testagent.service.TelemetryService;
 import org.slf4j.Logger;
@@ -37,6 +38,11 @@ public class VueAnalyzer {
 
     @Autowired
     private LlmService llmService;
+
+    // v7.5(A11): 组件摘要 LLM 结果缓存——按 prompt hash（含组件源码）缓存，
+    // 文件没变不重复调 LLM（分析是高频操作，此前成本线性放大）
+    @Autowired
+    private LlmResultCacheService llmResultCacheService;
 
     @Autowired
     private TelemetryService telemetryService;
@@ -1264,6 +1270,9 @@ public class VueAnalyzer {
         }
     }
 
+    // 组件摘要 system prompt 常量——v7.5(A11) 缓存键与 LLM 调用必须共用同一字符串
+    private static final String SUMMARY_SYSTEM_PROMPT = "你是前端代码分析助手，只输出合法 JSON。";
+
     // v6.1: 单组件 LLM 语义增强——完整读文件生成语义摘要，不截断源码。
     private void enhanceComponentSummary(File dir, Map<String, Object> m) {
         String file = String.valueOf(m.get("file"));
@@ -1289,12 +1298,28 @@ public class VueAnalyzer {
                 源码：
                 %s
                 只返回 JSON。""".formatted(component, path, content);
-        String response = llmService.chat(
-                "你是前端代码分析助手，只输出合法 JSON。", prompt, 0.2);
-        mergeComponentSummary(response, m);
+
+        // v7.5(A11): 先查缓存——组件源码未变直接复用摘要，不重复调 LLM
+        String cached = llmResultCacheService.get("component_summary", SUMMARY_SYSTEM_PROMPT, prompt);
+        if (cached != null) {
+            if (mergeComponentSummary(cached, m)) {
+                log.debug("Component summary cache hit: {}", component);
+                return;
+            }
+            log.debug("Component summary cache parse failed, fallback to LLM: {}", component);
+        }
+
+        String response = llmService.chat(SUMMARY_SYSTEM_PROMPT, prompt, 0.2);
+        // v7.5(A11): 解析成功才写缓存（解析失败的响应不缓存，防毒缓存）
+        if (mergeComponentSummary(response, m)) {
+            llmResultCacheService.put("component_summary", SUMMARY_SYSTEM_PROMPT, prompt, response);
+        }
     }
 
-    private void mergeComponentSummary(String response, Map<String, Object> m) {
+    /**
+     * v7.5(A11): 返回解析是否成功——成功才写缓存；命中缓存解析失败时调用方落回 LLM 路径。
+     */
+    private boolean mergeComponentSummary(String response, Map<String, Object> m) {
         String json = response == null ? "" : response.trim();
         if (json.startsWith("```")) {
             int start = json.indexOf("{");
@@ -1313,8 +1338,10 @@ public class VueAnalyzer {
             mergeStringArray(root.path("stateOps"), "stateOps", m);
             mergeStringArray(root.path("routeNavigations"), "routeNavigations", m);
             mergeStringArray(root.path("keywords"), "keywords", m);
+            return true;
         } catch (Exception e) {
             log.debug("Failed to parse component summary for {}: {}", m.get("component"), e.getMessage());
+            return false;
         }
     }
 

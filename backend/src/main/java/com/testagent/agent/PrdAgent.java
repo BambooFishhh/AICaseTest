@@ -3,6 +3,7 @@ package com.testagent.agent;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.common.BusinessException;
 import com.testagent.dto.PrdAnalysisResult;
+import com.testagent.service.LlmResultCacheService;
 import com.testagent.service.LlmService;
 import com.testagent.service.PromptSkillLoader;
 import org.apache.pdfbox.Loader;
@@ -37,6 +38,11 @@ public class PrdAgent {
 
     @Autowired
     private PromptSkillLoader promptSkillLoader;
+
+    // v7.5(A15): PRD 解析结果缓存——同输入（模型+prompt+文档内容）复用解析结果，
+    // 消除 temp 0.2 的 requirements 漂移（追加生成与首次生成模块口径不一致）+ 省调用
+    @Autowired
+    private LlmResultCacheService llmResultCacheService;
 
     // v1.10: PRD 文本最大长度（防止 LLM token 超限）
     private static final int MAX_PRD_LENGTH = 12000;
@@ -164,19 +170,51 @@ public class PrdAgent {
                 只返回 JSON，不要其他文字。
                 """);
         String userPrompt = "需求资料：\n" + requirementText;
+
+        // v7.5(A15): 先查缓存——同输入直接复用，不重复调 LLM（temp 0.2 漂移同时消除）
+        String cached = llmResultCacheService.get("prd_analysis", systemPrompt, userPrompt);
+        if (cached != null) {
+            PrdAnalysisResult cachedResult = parsePrdResponse(cached);
+            if (cachedResult != null && !cachedResult.isEmpty()) {
+                log.info("[PRD] 缓存命中，复用解析结果（跳过 LLM 调用）");
+                return cachedResult;
+            }
+            log.warn("[PRD] 缓存内容解析失败或为空，落回 LLM 路径");
+        }
+
         log.info("[PRD] 调用 LlmService.chat() ...");
         long start = System.currentTimeMillis();
         String response = llmService.chatWithAnalysis(systemPrompt, userPrompt, 0.2);
         long elapsed = System.currentTimeMillis() - start;
         log.info("[PRD] LLM 返回, 耗时={}ms, 响应长度={}", elapsed, response == null ? 0 : response.length());
-        String json = extractJsonObject(response);
-        PrdAnalysisResult result = objectMapper.readValue(json, PrdAnalysisResult.class);
+        PrdAnalysisResult result = parsePrdResponse(response);
+        if (result == null) {
+            return null;
+        }
         log.info("PRD analyzed: modules={}, requirements={}, rules={}, flows={}",
                 result.getModules() == null ? 0 : result.getModules().size(),
                 result.getRequirements() == null ? 0 : result.getRequirements().size(),
                 result.getBusinessRules() == null ? 0 : result.getBusinessRules().size(),
                 result.getStateFlows() == null ? 0 : result.getStateFlows().size());
+        // v7.5(A15): 解析成功才写缓存（失败/空响应不缓存，防毒缓存）
+        if (!result.isEmpty()) {
+            llmResultCacheService.put("prd_analysis", systemPrompt, userPrompt, response);
+        }
         return result;
+    }
+
+    /**
+     * v7.5(A15): 从 LLM 原始响应解析 PrdAnalysisResult。解析失败返回 null（不抛异常），
+     * 缓存命中与 LLM 直调两条路径共用此解析段。
+     */
+    private PrdAnalysisResult parsePrdResponse(String response) {
+        try {
+            String json = extractJsonObject(response);
+            return objectMapper.readValue(json, PrdAnalysisResult.class);
+        } catch (Exception e) {
+            log.warn("[PRD] 解析 LLM 响应失败: {}", e.getMessage());
+            return null;
+        }
     }
 
     /**
