@@ -110,6 +110,14 @@ app:
     password: ${MILVUS_PASSWORD:aicasetest-milvus}
     dimension: ${MILVUS_DIMENSION:1024}
     duplicate-threshold: ${MILVUS_DUPLICATE_THRESHOLD:0.92}
+  # v6.4: RAG 切片与多路检索
+  rag:
+    chunk-size: ${RAG_CHUNK_SIZE:900}
+    chunk-overlap: ${RAG_CHUNK_OVERLAP:150}
+    rrf-k: ${RAG_RRF_K:60}
+    context-topk: ${RAG_CONTEXT_TOPK:6}
+    failure-topk: ${RAG_FAILURE_TOPK:3}
+    max-queries: ${RAG_MAX_QUERIES:12}
   # vT6: 测试环境可关闭 MCP 子进程
   mcp:
     enabled: ${APP_MCP_ENABLED:true}

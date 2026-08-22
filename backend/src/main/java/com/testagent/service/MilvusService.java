@@ -214,14 +214,19 @@ public class MilvusService {
     }
 
     public List<SearchHit> search(String collection, String projectId, List<Float> vector, int topK) {
+        return search(collection, projectId, vector, topK, null);
+    }
+
+    // v6.4: 支持按 module 集合过滤，生成侧 RAG 只召回需求类上下文
+    public List<SearchHit> search(String collection, String projectId, List<Float> vector, int topK,
+                                  List<String> modules) {
         MilvusServiceClient c = client();
         if (c == null || vector == null || vector.isEmpty()) {
             return List.of();
         }
         try {
             List<String> outFields = List.of("id", "title", "module", "text");
-            String expr = projectId == null || projectId.isBlank()
-                    ? "" : "project_id == \"" + projectId + "\"";
+            String expr = buildSearchExpr(projectId, modules);
             SearchParam param = SearchParam.newBuilder()
                     .withCollectionName(collection)
                     .withVectorFieldName("embedding")
@@ -240,6 +245,7 @@ public class MilvusService {
             for (SearchResultsWrapper.IDScore score : wrapper.getIDScore(0)) {
                 hits.add(new SearchHit(score.getStrID(),
                         field(score, "title"),
+                        field(score, "module"),
                         field(score, "text"),
                         score.getScore()));
             }
@@ -248,6 +254,21 @@ public class MilvusService {
             log.warn("Milvus search failed: {}", e.getMessage());
             return List.of();
         }
+    }
+
+    private String buildSearchExpr(String projectId, List<String> modules) {
+        StringBuilder sb = new StringBuilder();
+        if (projectId != null && !projectId.isBlank()) {
+            sb.append("project_id == \"").append(projectId).append("\"");
+        }
+        if (modules != null && !modules.isEmpty()) {
+            List<String> quoted = modules.stream().map(m -> "\"" + m + "\"").toList();
+            if (sb.length() > 0) {
+                sb.append(" and ");
+            }
+            sb.append("module in [").append(String.join(",", quoted)).append("]");
+        }
+        return sb.toString();
     }
 
     public void deleteByProject(String collection, String projectId) {
@@ -336,6 +357,6 @@ public class MilvusService {
         }
     }
 
-    public record SearchHit(String id, String title, String text, double score) {
+    public record SearchHit(String id, String title, String module, String text, double score) {
     }
 }

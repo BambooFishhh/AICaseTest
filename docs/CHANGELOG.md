@@ -4,6 +4,38 @@
 
 ---
 
+## v6.4 — RAG 切片化与多源检索增强
+**日期**: 2026-08-22
+**基线**: v6.3
+**主题**: 需求类文档切片索引、contextDocs/补充需求入 Milvus、多路 RRF 重排、失败经验闭环、生成前按需重建
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/RagTextChunker.java` | 新增 | Markdown 标题 + 段落切片，支持重叠窗口与章节标题元数据 |
+| `service/SemanticService.java` | 修改 | 需求类上下文切片索引、RRF 融合检索、失败经验检索、按文档指纹按需重建 |
+| `service/MilvusService.java` | 修改 | `SearchHit` 增加 module，支持 module 过滤检索 |
+| `service/ProjectService.java` | 修改 | PRD/上下文文档/补充需求保存时统一重建切片索引 |
+| `agent/OrchestratorAgent.java` | 修改 | 去掉整段 PRD 自我检索，查询段改为模块/需求/上下文文档/补充需求，检索并注入失败经验 |
+| `agent/TestGeneratorAgent.java` | 修改 | prompt 注入 `ragFailures`，`ragContexts` 预算调整为 6×1200 |
+| `dto/PrdAnalysisResult.java` | 修改 | 新增 `ragFailures` |
+| `resources/application.yml` / `.env.example` / `docker-compose.yml` | 修改 | 新增 RAG 切片/RRF/topK 配置 |
+| `resources/skills/test-generation-prd-footer.md` | 修改 | 补充 ragContexts/ragFailures 使用说明 |
+| `service/RagTextChunkerTest.java` / `service/SemanticServiceRrfTest.java` | 新增 | 切片与 RRF 单测 |
+
+### 前端变更
+
+无业务代码变更，`npm run build` 回归通过。
+
+### 验证结果
+
+- 后端 `mvn compile`（Maven 3.9 + JDK 17）BUILD SUCCESS
+- 新增单测 6 个全部通过
+- 前端 `npm run build` 成功
+
+---
+
 ## v6.3 — 本地代码审查整改：安全与工程健壮性补强
 **日期**: 2026-08-21
 **基线**: v6.2

@@ -282,8 +282,8 @@ public class ProjectService {
         p.setPrdSourceType("text");
         p.setPrdSourceRef(null);
         projectRepository.save(p);
-        // v5.4: PRD 写入语义上下文库
-        semanticService.replaceContext(projectId, "prd", p.getPrdContent());
+        // v5.4/v6.4: PRD/上下文文档/补充需求统一切片写入语义上下文库
+        reindexRequirementContexts(p);
         return ProjectDTO.from(p);
     }
 
@@ -303,7 +303,7 @@ public class ProjectService {
         p.setPrdSourceType("pdf");
         p.setPrdSourceRef(file.getOriginalFilename());
         projectRepository.save(p);
-        semanticService.replaceContext(projectId, "prd", p.getPrdContent());
+        reindexRequirementContexts(p);
         return ProjectDTO.from(p);
     }
 
@@ -328,7 +328,7 @@ public class ProjectService {
         p.setPrdSourceType("link");
         p.setPrdSourceRef(url);
         projectRepository.save(p);
-        semanticService.replaceContext(projectId, "prd", p.getPrdContent());
+        reindexRequirementContexts(p);
         return ProjectDTO.from(p);
     }
 
@@ -411,7 +411,6 @@ public class ProjectService {
                 p.setPrdContent(joinedPrd == null ? null : joinedPrd);
                 p.setPrdSourceType("multi");
                 p.setPrdSourceRef("多篇需求文档");
-                semanticService.replaceContext(projectId, "prd", joinedPrd == null ? "" : joinedPrd);
             } else {
                 Object contextDocs = payload == null ? null : payload.get("contextDocs");
                 if (contextDocs != null) {
@@ -420,6 +419,8 @@ public class ProjectService {
             }
             p.setSettings(objectMapper.writeValueAsString(settings));
             projectRepository.save(p);
+            // v6.4: 需求类上下文统一切片重建
+            reindexRequirementContexts(p);
             Map<String, Object> r = new LinkedHashMap<>();
             String saved = readSettingsField(p.getSettings(), "otherContextInfo");
             if (saved.isBlank()) {
@@ -458,6 +459,26 @@ public class ProjectService {
             reqDocs.add(doc);
         }
         return reqDocs;
+    }
+
+    // v6.4: 需求类文档统一切片索引；失败只记录日志，不阻塞保存
+    private void reindexRequirementContexts(Project p) {
+        try {
+            List<Map<String, Object>> reqDocs = loadReqDocs(p);
+            List<Map<String, Object>> prdDocs = reqDocs.stream()
+                    .filter(d -> "prd".equals(d.get("docType")))
+                    .toList();
+            List<Map<String, Object>> contextDocs = reqDocs.stream()
+                    .filter(d -> !"prd".equals(d.get("docType")))
+                    .toList();
+            String supplementary = readSettingsField(p.getSettings(), "otherContextInfo");
+            if (supplementary.isBlank()) {
+                supplementary = readSettingsField(p.getSettings(), "extraPrompt");
+            }
+            semanticService.ensureRequirementContexts(p.getId(), prdDocs, contextDocs, supplementary);
+        } catch (Exception e) {
+            log.warn("Failed to reindex requirement contexts for project {}: {}", p.getId(), e.getMessage());
+        }
     }
 
     private List<Map<String, Object>> normalizeReqDocs(List<?> raw) {

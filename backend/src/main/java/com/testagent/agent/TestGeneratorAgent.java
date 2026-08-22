@@ -246,6 +246,10 @@ public class TestGeneratorAgent {
 
     private static final String SYSTEM_PROMPT_PRD_FOOTER = """
 
+            ## ragContexts / ragFailures（v6.4 补充）
+            - ragContexts：检索到的相关需求/上下文切片，作为 PRD 之外的补充约束
+            - ragFailures：历史执行失败经验；生成时避免重复失败路径，必要时增加对应校验与断言
+
             ## 代码信息用于补充（不作为用例来源，只增强可执行性）
             - endpoints：用例 structuredSteps 的 target 用真实接口路径（如 POST /api/order/create）
             - stateMachines：用例的 stateMachineRef 引用真实状态流转
@@ -952,8 +956,10 @@ public class TestGeneratorAgent {
 
         // PRD 为主上下文
         context.put("prd", objectMapper.convertValue(prdResult, Map.class));
-        // v5.4: RAG 语义检索上下文（v6.1 降采样，避免大块上下文撑爆 prompt）
-        context.put("ragContexts", truncateStrings(prdResult.getRagContexts(), 1500, 4));
+        // v5.4: RAG 语义检索上下文（v6.4 切片化后按切片限流，避免大块上下文撑爆 prompt）
+        context.put("ragContexts", truncateStrings(prdResult.getRagContexts(), 1200, 6));
+        // v6.4: 历史失败经验注入，避免生成时重复已知失败路径
+        context.put("ragFailures", truncateStrings(prdResult.getRagFailures(), 800, 3));
         // v5.10/v5.11: 补充需求与 PRD/上下文文档（随需求上下文一起注入，来源保持区分）
         if (prdResult.getOtherContextInfo() != null && !prdResult.getOtherContextInfo().isBlank()) {
             context.put("supplementaryRequirements", prdResult.getOtherContextInfo());

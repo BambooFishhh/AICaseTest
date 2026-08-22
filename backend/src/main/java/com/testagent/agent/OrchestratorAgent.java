@@ -20,6 +20,7 @@ import com.testagent.repository.StateMachineRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
@@ -39,8 +40,17 @@ public class OrchestratorAgent {
 
     private static final Logger log = LoggerFactory.getLogger(OrchestratorAgent.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
-    // v6.1: 分段查询数量上限，控制 embedding/检索开销
-    private static final int MAX_RAG_QUERY_SEGMENTS = 8;
+    // v6.4: 生成侧 RAG 只召回需求类切片，避免自我检索整段代码分析 JSON
+    private static final List<String> RAG_CONTEXT_MODULES = List.of("prd", "context", "supplementary");
+
+    @Value("${app.rag.context-topk:6}")
+    private int ragContextTopK;
+
+    @Value("${app.rag.failure-topk:3}")
+    private int ragFailureTopK;
+
+    @Value("${app.rag.max-queries:12}")
+    private int ragMaxQueries;
 
     @Autowired
     private ProjectRepository projectRepository;
@@ -200,15 +210,27 @@ public class OrchestratorAgent {
             throw new BusinessException(50015, "PRD 解析失败：未能从需求文档中提取有效需求",
                     HttpStatus.INTERNAL_SERVER_ERROR);
         }
+        prdResult.setOtherContextInfo(supplementary);
+        prdResult.setContextDocs(contextDocs);
+        prdResult.setPrdDocs(prdDocs);
         // v5.4: 生成前 RAG 上下文检索（Milvus 未启用时返回空，不影响原流程）
         String ragText = ragTextBuilder.toString();
         if (!ragText.isBlank()) {
-            // v6.1: 按 module/requirement 分段查询并合并，避免整段 PRD 揉成单一向量带来的检索噪声
-            List<String> ragQueries = buildRagQueries(ragText, prdResult);
-            List<String> ragContexts = semanticService.retrieveContexts(projectId, ragQueries, 5);
+            // v6.4: 存量项目首次生成时自动重建需求类切片，内容未变化则跳过
+            semanticService.ensureRequirementContexts(projectId, prdDocs, contextDocs, supplementary);
+            // v6.4: 模块/需求/上下文文档/补充需求分段查询，RRF 融合，且只召回需求类切片
+            List<String> ragQueries = buildRagQueries(prdResult);
+            List<String> ragContexts = semanticService.retrieveContexts(
+                    projectId, ragQueries, ragContextTopK, RAG_CONTEXT_MODULES);
             prdResult.setRagContexts(ragContexts);
             if (!ragContexts.isEmpty()) {
                 log.info("RAG retrieved {} contexts for project {}", ragContexts.size(), projectId);
+            }
+            // v6.4: 历史失败经验闭环——生成前检索相似失败并注入 prompt
+            List<String> ragFailures = semanticService.retrieveFailures(projectId, ragQueries, ragFailureTopK);
+            prdResult.setRagFailures(ragFailures);
+            if (!ragFailures.isEmpty()) {
+                log.info("RAG retrieved {} failures for project {}", ragFailures.size(), projectId);
             }
             // v6.1 (前端 Agentic RAG): 用需求文本定位相关组件摘要，供端到端生成融合 UI 语义
             List<Map<String, Object>> frontendComponents =
@@ -218,9 +240,6 @@ public class OrchestratorAgent {
                 log.info("Frontend RAG hit {} components for project {}", frontendComponents.size(), projectId);
             }
         }
-        prdResult.setOtherContextInfo(supplementary);
-        prdResult.setContextDocs(contextDocs);
-        prdResult.setPrdDocs(prdDocs);
         log.info("Requirement docs analyzed for project {}: prdDocs={}, contextDocs={}, modules={}, requirements={}",
                 projectId, prdDocs.size(), contextDocs.size(),
                 prdResult.getModules() == null ? 0 : prdResult.getModules().size(),
@@ -247,12 +266,9 @@ public class OrchestratorAgent {
         return new GenContext(prdResult, stateMachines, backendResult, frontendResult, params);
     }
 
-    // v6.1: 构建检索查询段：整段兜底 + 各模块 + 各需求（title+description），并截断到数量上限。
-    private List<String> buildRagQueries(String ragText, PrdAnalysisResult prdResult) {
+    // v6.4: 构建检索查询段：各模块 + 各需求 + 上下文文档片段 + 补充需求，不再用整段 PRD 自我检索。
+    private List<String> buildRagQueries(PrdAnalysisResult prdResult) {
         List<String> queries = new ArrayList<>();
-        if (ragText != null && !ragText.isBlank()) {
-            queries.add(ragText);
-        }
         if (prdResult != null) {
             if (prdResult.getModules() != null) {
                 for (Map<String, Object> m : prdResult.getModules()) {
@@ -270,9 +286,29 @@ public class OrchestratorAgent {
                     }
                 }
             }
+            if (prdResult.getContextDocs() != null) {
+                for (Map<String, Object> doc : prdResult.getContextDocs()) {
+                    Object contentObj = doc == null ? null : doc.get("content");
+                    if (contentObj instanceof String content && !content.isBlank()) {
+                        String title = doc.get("title") == null ? "" : String.valueOf(doc.get("title"));
+                        String q = (title.isBlank() ? "" : title + "：") + truncate(content, 600);
+                        if (!q.isBlank()) {
+                            queries.add(q);
+                        }
+                    }
+                }
+            }
+            String supplementary = prdResult.getOtherContextInfo();
+            if (supplementary != null && !supplementary.isBlank()) {
+                queries.add(truncate(supplementary, 600));
+            }
         }
-        return queries.size() > MAX_RAG_QUERY_SEGMENTS
-                ? new ArrayList<>(queries.subList(0, MAX_RAG_QUERY_SEGMENTS)) : queries;
+        return queries.size() > ragMaxQueries
+                ? new ArrayList<>(queries.subList(0, ragMaxQueries)) : queries;
+    }
+
+    private String truncate(String s, int maxLen) {
+        return s.length() > maxLen ? s.substring(0, maxLen) : s;
     }
 
     private String joinFields(Map<String, Object> map, List<String> fields) {

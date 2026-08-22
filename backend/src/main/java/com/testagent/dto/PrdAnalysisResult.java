@@ -26,6 +26,9 @@ public class PrdAnalysisResult {
     // v6.1 (前端 Agentic RAG): 按需求检索命中的 Top-K 前端组件语义摘要
     private List<Map<String, Object>> frontendComponents;
 
+    // v6.4: 历史执行失败经验（RRF 检索 Top-K，生成时注入避免重复失败路径）
+    private List<String> ragFailures;
+
     public boolean isEmpty() {
         return (modules == null || modules.isEmpty())
                 && (requirements == null || requirements.isEmpty())

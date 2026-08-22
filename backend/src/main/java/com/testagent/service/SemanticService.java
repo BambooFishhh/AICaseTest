@@ -9,6 +9,7 @@ import com.testagent.service.MilvusService.SearchHit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -20,6 +21,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * v5.4: 语义检索服务——embedding + Milvus，支撑语义去重、RAG、语义搜索与失败经验库。
@@ -29,6 +31,7 @@ public class SemanticService {
 
     private static final Logger log = LoggerFactory.getLogger(SemanticService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Map<String, String> requirementContextFingerprint = new ConcurrentHashMap<>();
 
     @Autowired
     private EmbeddingService embeddingService;
@@ -38,6 +41,15 @@ public class SemanticService {
 
     @Autowired
     private TestCaseRepository testCaseRepository;
+
+    @Value("${app.rag.chunk-size:900}")
+    private int chunkSize;
+
+    @Value("${app.rag.chunk-overlap:150}")
+    private int chunkOverlap;
+
+    @Value("${app.rag.rrf-k:60}")
+    private double rrfK;
 
     public boolean isAvailable() {
         return milvusService.isEnabled() && embeddingService.isConfigured();
@@ -104,6 +116,116 @@ public class SemanticService {
         indexContext(projectId, module, text);
     }
 
+    // v6.4: 需求类上下文统一切片重建（PRD/上下文文档/补充需求），按 module 先清旧再写入
+    public void replaceRequirementContexts(String projectId, List<Map<String, Object>> prdDocs,
+                                           List<Map<String, Object>> contextDocs, String supplementary) {
+        if (!milvusService.isEnabled()) {
+            return;
+        }
+        replaceRequirementContextsInternal(projectId, prdDocs, contextDocs, supplementary);
+        requirementContextFingerprint.put(projectId, requirementFingerprint(prdDocs, contextDocs, supplementary));
+    }
+
+    // v6.4: 生成前按需重建。索引内容未变化时跳过，避免每次生成都重复 embedding。
+    public void ensureRequirementContexts(String projectId, List<Map<String, Object>> prdDocs,
+                                          List<Map<String, Object>> contextDocs, String supplementary) {
+        if (!milvusService.isEnabled()) {
+            return;
+        }
+        String fingerprint = requirementFingerprint(prdDocs, contextDocs, supplementary);
+        if (fingerprint.equals(requirementContextFingerprint.get(projectId))) {
+            return;
+        }
+        replaceRequirementContextsInternal(projectId, prdDocs, contextDocs, supplementary);
+        requirementContextFingerprint.put(projectId, fingerprint);
+    }
+
+    private void replaceRequirementContextsInternal(String projectId, List<Map<String, Object>> prdDocs,
+                                                    List<Map<String, Object>> contextDocs, String supplementary) {
+        milvusService.deleteByModule(MilvusService.COLLECTION_CONTEXTS, projectId, "prd");
+        milvusService.deleteByModule(MilvusService.COLLECTION_CONTEXTS, projectId, "context");
+        milvusService.deleteByModule(MilvusService.COLLECTION_CONTEXTS, projectId, "supplementary");
+        if (prdDocs != null) {
+            for (Map<String, Object> doc : prdDocs) {
+                indexDocChunks(projectId, "prd", "PRD", doc);
+            }
+        }
+        if (contextDocs != null) {
+            for (Map<String, Object> doc : contextDocs) {
+                indexDocChunks(projectId, "context", "上下文", doc);
+            }
+        }
+        if (supplementary != null && !supplementary.isBlank()) {
+            indexTextChunks(projectId, "supplementary", "supplementary", "补充需求", supplementary);
+        }
+    }
+
+    private String requirementFingerprint(List<Map<String, Object>> prdDocs,
+                                          List<Map<String, Object>> contextDocs, String supplementary) {
+        try {
+            return objectMapper.writeValueAsString(Map.of(
+                    "prd", prdDocs == null ? List.of() : prdDocs,
+                    "context", contextDocs == null ? List.of() : contextDocs,
+                    "supplementary", supplementary == null ? "" : supplementary));
+        } catch (Exception e) {
+            return String.valueOf(prdDocs) + "|" + contextDocs + "|" + supplementary;
+        }
+    }
+
+    private void indexDocChunks(String projectId, String module, String sourceLabel, Map<String, Object> doc) {
+        if (doc == null) {
+            return;
+        }
+        Object contentObj = doc.get("content");
+        if (!(contentObj instanceof String content) || content.isBlank()) {
+            return;
+        }
+        String docId = stringValue(doc.get("id"), "doc");
+        String docTitle = stringValue(doc.get("title"), "未命名文档");
+        String idPrefix = module + "-" + sanitizeId(docId);
+        List<RagTextChunker.Chunk> chunks = RagTextChunker.chunk(content, chunkSize, chunkOverlap);
+        for (int i = 0; i < chunks.size(); i++) {
+            RagTextChunker.Chunk c = chunks.get(i);
+            String chunkTitle = sourceLabel + "｜" + docTitle
+                    + (c.title() == null || c.title().isBlank() ? "" : "｜" + c.title());
+            insertContextChunk(projectId, module, idPrefix + "-" + (i + 1), chunkTitle, c.text());
+        }
+    }
+
+    private void indexTextChunks(String projectId, String module, String idPrefix, String sourceLabel, String text) {
+        List<RagTextChunker.Chunk> chunks = RagTextChunker.chunk(text, chunkSize, chunkOverlap);
+        int n = 0;
+        for (RagTextChunker.Chunk c : chunks) {
+            n++;
+            String chunkTitle = sourceLabel
+                    + (c.title() == null || c.title().isBlank() ? "" : "｜" + c.title());
+            insertContextChunk(projectId, module, sanitizeId(idPrefix) + "-" + n, chunkTitle, c.text());
+        }
+    }
+
+    private void insertContextChunk(String projectId, String module, String id, String title, String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        List<Float> vector = embeddingService.embed(text);
+        if (vector.isEmpty()) {
+            return;
+        }
+        milvusService.insert(MilvusService.COLLECTION_CONTEXTS, projectId, id, title, module, text, vector);
+    }
+
+    private String stringValue(Object value, String fallback) {
+        return value == null || String.valueOf(value).isBlank() ? fallback : String.valueOf(value);
+    }
+
+    private String sanitizeId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "doc";
+        }
+        String s = raw.replaceAll("[^\\p{L}\\p{N}_-]", "-");
+        return s.length() > 80 ? s.substring(0, 80) : s;
+    }
+
     public boolean isDuplicate(String projectId, TestCase tc) {
         if (!isAvailable() || tc == null) {
             return false;
@@ -146,16 +268,20 @@ public class SemanticService {
     }
 
     public List<String> retrieveContexts(String projectId, String query, int topK) {
-        return retrieveContexts(projectId, query == null ? List.of() : List.of(query), topK);
+        return retrieveContexts(projectId, query == null ? List.of() : List.of(query), topK, null);
     }
 
-    // v6.1: 按多个查询段（整段 PRD + 各 module/requirement）分别检索上下文，
-    // 按命中 id 保留最高分去重后返回 topK。避免整段 PRD 揉成一个向量带来的噪声。
     public List<String> retrieveContexts(String projectId, List<String> queries, int topK) {
+        return retrieveContexts(projectId, queries, topK, null);
+    }
+
+    // v6.4: 按多个查询段分别召回，RRF 融合去重后返回 topK；
+    // modules 非空时限定命中 module，生成侧只取需求类上下文，避免自我检索代码分析 JSON。
+    public List<String> retrieveContexts(String projectId, List<String> queries, int topK, List<String> modules) {
         if (!isAvailable() || queries == null || queries.isEmpty() || topK <= 0) {
             return List.of();
         }
-        Map<String, SearchHit> best = new LinkedHashMap<>();
+        List<List<SearchHit>> ranked = new ArrayList<>();
         for (String query : queries) {
             if (query == null || query.isBlank()) {
                 continue;
@@ -165,22 +291,21 @@ public class SemanticService {
             if (vector.isEmpty()) {
                 continue;
             }
-            for (SearchHit hit : milvusService.search(MilvusService.COLLECTION_CONTEXTS,
-                    projectId, vector, topK)) {
+            List<SearchHit> hits = milvusService.search(MilvusService.COLLECTION_CONTEXTS,
+                    projectId, vector, Math.max(topK * 3, 15), modules);
+            List<SearchHit> clean = new ArrayList<>();
+            for (SearchHit hit : hits) {
                 if (hit.id() == null || hit.id().isBlank() || hit.text() == null || hit.text().isBlank()) {
                     continue;
                 }
-                SearchHit existing = best.get(hit.id());
-                if (existing == null || hit.score() > existing.score()) {
-                    best.put(hit.id(), hit);
-                }
+                clean.add(hit);
+            }
+            if (!clean.isEmpty()) {
+                ranked.add(clean);
             }
         }
-        return best.values().stream()
-                .sorted(Comparator.comparingDouble(SearchHit::score).reversed())
-                .limit(topK)
-                .map(SearchHit::text)
-                .toList();
+        List<SearchHit> merged = mergeByRrf(ranked, topK);
+        return merged.stream().map(this::formatContextHit).toList();
     }
 
     // v6.1 (前端 Agentic RAG): 全量替换组件语义索引（先删同项目旧向量再写入）。
@@ -378,17 +503,82 @@ public class SemanticService {
     }
 
     public List<String> searchFailures(String projectId, String error, int topK) {
-        if (!isAvailable() || error == null || error.isBlank()) {
+        return retrieveFailures(projectId, error == null ? List.of() : List.of(error), topK);
+    }
+
+    // v6.4: 失败经验多路检索 + RRF 融合，供生成阶段注入 prompt
+    public List<String> retrieveFailures(String projectId, List<String> queries, int topK) {
+        if (!isAvailable() || queries == null || queries.isEmpty() || topK <= 0) {
             return List.of();
         }
-        List<Float> vector = embeddingService.embed(error);
-        if (vector.isEmpty()) {
-            return List.of();
+        List<List<SearchHit>> ranked = new ArrayList<>();
+        for (String query : queries) {
+            if (query == null || query.isBlank()) {
+                continue;
+            }
+            String limited = query.length() > 2000 ? query.substring(0, 2000) : query;
+            List<Float> vector = embeddingService.embed(limited);
+            if (vector.isEmpty()) {
+                continue;
+            }
+            List<SearchHit> hits = milvusService.search(MilvusService.COLLECTION_FAILURES,
+                    projectId, vector, Math.max(topK * 3, 9), null);
+            if (!hits.isEmpty()) {
+                ranked.add(hits);
+            }
         }
-        List<SearchHit> hits = milvusService.search(MilvusService.COLLECTION_FAILURES, projectId, vector, topK);
-        return hits.stream().map(SearchHit::text)
-                .filter(s -> s != null && !s.isBlank())
+        List<SearchHit> merged = mergeByRrf(ranked, topK);
+        return merged.stream().map(this::formatContextHit).toList();
+    }
+
+    private String formatContextHit(SearchHit hit) {
+        String title = hit.title();
+        String text = hit.text();
+        if (title != null && !title.isBlank() && (text == null || !text.startsWith(title))) {
+            return title + "\n" + text;
+        }
+        return text;
+    }
+
+    // RRF：多路召回按排名融合，消除单一 cosine 排序对某一路结果的偏置
+    List<SearchHit> mergeByRrf(List<List<SearchHit>> ranked, int topK) {
+        Map<String, RrfAccumulator> acc = new LinkedHashMap<>();
+        for (List<SearchHit> hits : ranked) {
+            int rank = 0;
+            for (SearchHit hit : hits) {
+                rank++;
+                final int r = rank;
+                acc.compute(hit.id(), (id, a) -> {
+                    if (a == null) {
+                        a = new RrfAccumulator(hit);
+                    }
+                    a.rrf += 1.0 / (rrfK + r);
+                    if (hit.score() > a.cosine) {
+                        a.cosine = hit.score();
+                        a.hit = hit;
+                    }
+                    return a;
+                });
+            }
+        }
+        return acc.values().stream()
+                .sorted((a, b) -> {
+                    int c = Double.compare(b.rrf, a.rrf);
+                    return c != 0 ? c : Double.compare(b.cosine, a.cosine);
+                })
+                .limit(topK)
+                .map(a -> a.hit)
                 .toList();
+    }
+
+    private static final class RrfAccumulator {
+        private SearchHit hit;
+        private double rrf;
+        private double cosine = Double.NEGATIVE_INFINITY;
+
+        private RrfAccumulator(SearchHit hit) {
+            this.hit = hit;
+        }
     }
 
     private String buildCaseText(TestCase tc) {

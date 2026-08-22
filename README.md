@@ -30,7 +30,7 @@
 
 v6.0 起 LLM 文本、流式、JSON 与 Embedding 层由 Spring AI（`spring-ai-starter-model-openai`，兼容 DashScope/MAAS 端点）承载；MCP 继续承担 Playwright 浏览器执行、多模态视觉定位（`multimodal_element_locate`）、`chatWithImage` 与 tools 后端能力桥接。详见 [docs/spring-ai-migration.md](docs/spring-ai-migration.md)。
 
-v6.1 起新增前端 Agentic RAG（逐组件语义摘要落 Milvus，按 requirement 检索命中组件）与后端 SAINT 操作依赖图，生成端到端用例时融合 UI 交互与后端调用链；v6.2 将前后端分析、逐组件 LLM 摘要改为有界并发并把状态机提取合并为单次调用。默认 LLM 模型切为 `mimo-v2.5`（`opencode.ai/zen/go/v1`），并统一 prompt 上限与 HTTP 超时。
+v6.1 起新增前端 Agentic RAG（逐组件语义摘要落 Milvus，按 requirement 检索命中组件）与后端 SAINT 操作依赖图，生成端到端用例时融合 UI 交互与后端调用链；v6.2 将前后端分析、逐组件 LLM 摘要改为有界并发并把状态机提取合并为单次调用；v6.4 将 PRD/上下文文档/补充需求按章节切片索引，生成前多路检索 + RRF 融合，并把历史失败经验注入 prompt。默认 LLM 模型切为 `mimo-v2.5`（`opencode.ai/zen/go/v1`），并统一 prompt 上限与 HTTP 超时。
 
 ## 快速开始
 
@@ -85,6 +85,7 @@ LLM_MODEL=your-model-name
 - `REDIS_HOST` / `REDIS_PORT`
 - `MILVUS_HOST` / `MILVUS_PORT` / `MILVUS_DIMENSION`
 - `APP_REDIS_ENABLED` / `APP_MILVUS_ENABLED`
+- `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP` / `RAG_RRF_K` / `RAG_CONTEXT_TOPK` / `RAG_FAILURE_TOPK` / `RAG_MAX_QUERIES`（v6.4 RAG 切片与多路检索）
 - `RETENTION_EXECUTION_DAYS`（执行数据保留天数，0 关闭）
 - `HIKARI_MAX_POOL` / `HIKARI_MIN_IDLE`（MySQL 连接池）
 
@@ -172,8 +173,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v6.3（本地代码审查整改：安全与工程健壮性补强）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v6.4（RAG 切片化与多源检索增强）**，生产线基线为 vP5（压测与容量）。
 
+- v6.4 要点：PRD/上下文文档/补充需求切片进 Milvus、生成侧去掉整段 PRD 自我检索、多路查询 RRF 融合、历史失败经验注入生成、存量项目首次生成自动重建切片。
 - v6.3 要点：本地代码审查整改——首登强制改密、SSE 票据化鉴权（长期 JWT 不再进 URL）、业务组件口径统一（0 分/异常分组件不进覆盖清单）、项目列表 N+1 优化、Telemetry 线程清理、H2 Console 仅 dev 开放、MCP 默认 token 收紧。
 - v5.13 要点：语义检索/需求解析/状态机/评审/代码分析拆为 `tools-mcp-server` 工具；Agent Prompt 抽为 Skill 模板；生成强制基于 PRD，代码仅作辅助。
 - v5.12 要点：AI 评审历史独立落库；单条重评异步化，前端轮询不再 30s 超时；采纳真正应用建议并同步人工评审状态；覆盖率统一为计划引用 + 实际执行口径。
@@ -200,6 +202,11 @@ AICaseTest/
 | v5.11 | 生成链路 AI 评审与前端体验（需求文档合并/coverageRefs/评审操作/暗色主题/脑图导出） | ✅ 完成 |
 | v5.12 | AI 评审闭环与覆盖引用收口（历史落库/异步重评/采纳语义/覆盖率口径） | ✅ 完成 |
 | v5.13 | 能力分层：MCP 工具化与 Prompt Skill 化（tools-mcp-server/桥接接口/Skill 模板/PRD 必需） | ✅ 完成 |
+| v6.0 | Spring AI 迁移（文本/流式/JSON/Embedding） | ✅ 完成 |
+| v6.1 | 前端 Agentic RAG + 后端 SAINT 操作依赖图 | ✅ 完成 |
+| v6.2 | 分析并行化与状态机收口 | ✅ 完成 |
+| v6.3 | 本地代码审查整改（安全与工程健壮性补强） | ✅ 完成 |
+| v6.4 | RAG 切片化与多源检索增强 | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

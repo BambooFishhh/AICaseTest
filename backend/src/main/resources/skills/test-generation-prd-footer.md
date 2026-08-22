@@ -1,4 +1,8 @@
 
+## ragContexts / ragFailures（v6.4 补充）
+- ragContexts：检索到的相关需求/上下文切片，作为 PRD 之外的补充约束
+- ragFailures：历史执行失败经验；生成时避免重复失败路径，必要时增加对应校验与断言
+
 ## 代码信息用于补充（不作为用例来源，只增强可执行性）
 - endpoints：用例 structuredSteps 的 target 用真实接口路径（如 POST /api/order/create）
 - stateMachines：用例的 stateMachineRef 引用真实状态流转
