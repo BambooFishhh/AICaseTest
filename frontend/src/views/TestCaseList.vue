@@ -159,6 +159,7 @@
           <el-option label="执行中" value="running" />
           <el-option label="通过" value="passed" />
           <el-option label="失败" value="failed" />
+          <el-option label="已跳过" value="skipped" />
         </el-select>
         <el-input
           v-model="filters.keyword"
@@ -1261,14 +1262,14 @@ function reviewText(status) {
   return { draft: '草稿', reviewed: '已评审', approved: '已批准', rejected: '已拒绝' }[status] || status || '草稿'
 }
 
-// v3.12: 执行状态展示
+// v3.12: 执行状态展示（v7.2 R10: 补 skipped——全步骤跳过的用例不再被静默映射成"未执行"）
 function executionStatusKey(status) {
   const key = status || 'not_executed'
-  return ['not_executed', 'running', 'passed', 'failed', 'blocked'].includes(key) ? key : 'not_executed'
+  return ['not_executed', 'running', 'passed', 'failed', 'blocked', 'skipped'].includes(key) ? key : 'not_executed'
 }
 
 function executionStatusText(status) {
-  return { not_executed: '未执行', running: '执行中', passed: '通过', failed: '失败', blocked: '阻塞' }[status] || '未执行'
+  return { not_executed: '未执行', running: '执行中', passed: '通过', failed: '失败', blocked: '阻塞', skipped: '已跳过' }[status] || '未执行'
 }
 
 // 手动标记执行状态
@@ -2676,6 +2677,7 @@ onUnmounted(() => {
   &.status-running { color: var(--color-warning); }
   &.status-not_executed { color: var(--text-tertiary); }
   &.status-blocked { color: var(--text-tertiary); }
+  &.status-skipped { color: var(--text-tertiary); }
 }
 
 .module-label {

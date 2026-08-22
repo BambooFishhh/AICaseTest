@@ -21,11 +21,23 @@ import java.util.List;
 @Service
 public class ReportService {
 
+    /** v7.2(R12): 报告版本收敛为单一常量（旧实现两处 footer 硬编码 v2.4，从未随迭代更新） */
+    private static final String APP_VERSION = "v7.2";
+
     @Autowired
     private ExecutionRecordRepository recordRepo;
 
     @Autowired
     private ExecutionStepRepository stepRepo;
+
+    /**
+     * v7.2(R10): 通过率口径统一——分母 = passed + failed（跳过不计入，对齐 Allure 惯例）。
+     * 旧实现分母含 skipped，产生"passed 徽章 + 0% 通过率"的自相矛盾呈现。
+     */
+    static double passRateOf(long passed, long failed) {
+        long judged = passed + failed;
+        return judged == 0 ? 0 : (double) passed / judged * 100;
+    }
 
     /**
      * 生成单次执行报告。
@@ -44,7 +56,7 @@ public class ReportService {
         long passedSteps = steps.stream().filter(s -> "passed".equals(s.getResult())).count();
         long failedSteps = steps.stream().filter(s -> "failed".equals(s.getResult())).count();
         long skippedSteps = steps.stream().filter(s -> "skipped".equals(s.getResult())).count();
-        double passRate = totalSteps > 0 ? (double) passedSteps / totalSteps * 100 : 0;
+        double passRate = passRateOf(passedSteps, failedSteps);
 
         String duration = formatDuration(record.getStartTime(), record.getEndTime());
 
@@ -74,7 +86,9 @@ public class ReportService {
             .append("（通过 ").append(passedSteps)
             .append(" / 失败 ").append(failedSteps)
             .append(" / 跳过 ").append(skippedSteps).append("）</td></tr>");
-        html.append("<tr><th>通过率</th><td>").append(String.format("%.1f%%", passRate)).append("</td></tr>");
+        html.append("<tr><th>通过率</th><td>").append(String.format("%.1f%%", passRate))
+            .append(skippedSteps > 0 ? "（跳过 " + skippedSteps + " 步未计入分母）" : "")
+            .append("</td></tr>");
         html.append("<tr><th>摘要</th><td>").append(escapeHtml(safe(record.getSummary()))).append("</td></tr>");
         if (record.getErrorMessage() != null && !record.getErrorMessage().isBlank()) {
             html.append("<tr><th>错误信息</th><td class=\"error\">").append(escapeHtml(record.getErrorMessage())).append("</td></tr>");
@@ -141,7 +155,7 @@ public class ReportService {
             html.append("</table>");
         }
 
-        html.append("<div class=\"footer\">AICaseTest v2.4 报告</div>");
+        html.append("<div class=\"footer\">AICaseTest ").append(APP_VERSION).append(" 报告</div>");
         html.append("</body></html>");
         return html.toString();
     }
@@ -162,7 +176,11 @@ public class ReportService {
         long failed = records.stream().filter(r -> "failed".equals(r.getStatus())).count();
         long running = records.stream().filter(r -> "running".equals(r.getStatus())).count();
         long pending = records.stream().filter(r -> "pending".equals(r.getStatus())).count();
-        double passRate = total > 0 ? (double) passed / total * 100 : 0;
+        long skipped = records.stream().filter(r -> "skipped".equals(r.getStatus())).count();
+        // v7.2(R12): 分母 = passed + failed——running/pending/cancelled/skipped 均未形成判定，
+        // 旧实现"报告生成瞬间还有任务在跑"会把通过率稀释
+        double passRate = passRateOf(passed, failed);
+        long undecided = total - passed - failed;
 
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"UTF-8\">");
@@ -184,7 +202,10 @@ public class ReportService {
         html.append("<tr><th>失败</th><td>").append(failed).append("</td></tr>");
         html.append("<tr><th>运行中</th><td>").append(running).append("</td></tr>");
         html.append("<tr><th>待执行</th><td>").append(pending).append("</td></tr>");
-        html.append("<tr><th>通过率</th><td>").append(String.format("%.1f%%", passRate)).append("</td></tr>");
+        html.append("<tr><th>已跳过</th><td>").append(skipped).append("</td></tr>");
+        html.append("<tr><th>通过率</th><td>").append(String.format("%.1f%%", passRate))
+            .append(undecided > 0 ? "（" + undecided + " 条未判定记录未计入分母）" : "")
+            .append("</td></tr>");
         html.append("</table>");
 
         // 用例列表
@@ -221,7 +242,7 @@ public class ReportService {
             html.append("</table>");
         }
 
-        html.append("<div class=\"footer\">AICaseTest v2.4 报告</div>");
+        html.append("<div class=\"footer\">AICaseTest ").append(APP_VERSION).append(" 报告</div>");
         html.append("</body></html>");
         return html.toString();
     }

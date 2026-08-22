@@ -1156,11 +1156,11 @@ function goExecution(row) {
 }
 
 function executionStatusType(status) {
-  return { passed: 'success', failed: 'danger', running: 'warning', pending: 'info', cancelled: 'info' }[status] || 'info'
+  return { passed: 'success', failed: 'danger', running: 'warning', pending: 'info', cancelled: 'info', skipped: 'info' }[status] || 'info'
 }
 
 function executionStatusLabel(status) {
-  return { passed: '通过', failed: '失败', running: '执行中', pending: '排队中', cancelled: '已取消' }[status] || status || '-'
+  return { passed: '通过', failed: '失败', running: '执行中', pending: '排队中', cancelled: '已取消', skipped: '已跳过' }[status] || status || '-'
 }
 
 function formatExecTime(time) {

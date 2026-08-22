@@ -55,6 +55,13 @@
           <div class="stat-label">运行中</div>
         </div>
       </div>
+      <div class="stat-card stat-skipped">
+        <div class="stat-icon"><el-icon :size="20"><Remove /></el-icon></div>
+        <div class="stat-body">
+          <div class="stat-value">{{ stats.skipped || 0 }}</div>
+          <div class="stat-label">已跳过</div>
+        </div>
+      </div>
       <div class="stat-card stat-rate">
         <div class="stat-icon"><el-icon :size="20"><TrendCharts /></el-icon></div>
         <div class="stat-body">
@@ -186,7 +193,8 @@ import {
   TrendCharts,
   VideoPlay,
   View,
-  Download
+  Download,
+  Remove
 } from '@element-plus/icons-vue'
 import { getExecutions, cancelExecution } from '@/api/execution'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -278,7 +286,8 @@ const statusLabel = (status) => {
     failed: '失败',
     running: '执行中',
     pending: '排队中',
-    cancelled: '已取消'
+    cancelled: '已取消',
+    skipped: '已跳过'
   }
   return map[status] || status || '-'
 }
@@ -326,7 +335,8 @@ async function loadExecutions() {
       total: list.length,
       passed: list.filter((r) => r.status === 'passed').length,
       failed: list.filter((r) => r.status === 'failed').length,
-      running: list.filter((r) => r.status === 'running').length
+      running: list.filter((r) => r.status === 'running').length,
+      skipped: list.filter((r) => r.status === 'skipped').length
     }
     trendData.value = data?.trend || []
   } catch {
@@ -500,12 +510,14 @@ onBeforeUnmount(() => {
 .stat-passed .stat-icon { background: linear-gradient(135deg, #34d399, #10b981); }
 .stat-failed .stat-icon { background: linear-gradient(135deg, #f87171, #ef4444); }
 .stat-running .stat-icon { background: linear-gradient(135deg, #fbbf24, #f59e0b); }
+.stat-skipped .stat-icon { background: linear-gradient(135deg, #94a3b8, #64748b); }
 .stat-rate .stat-icon { background: linear-gradient(135deg, #22d3ee, #06b6d4); }
 
 .stat-total .stat-value { color: var(--brand-primary); }
 .stat-passed .stat-value { color: var(--color-success); }
 .stat-failed .stat-value { color: var(--color-danger); }
 .stat-running .stat-value { color: var(--color-warning); }
+.stat-skipped .stat-value { color: var(--text-secondary); }
 .stat-rate .stat-value { color: #06b6d4; }
 
 /* ===== v3.15: 通过率趋势 ===== */
@@ -580,6 +592,7 @@ onBeforeUnmount(() => {
     .status-dot { animation: pulse 1.5s ease-in-out infinite; }
   }
   &.status-pending { color: var(--text-tertiary); }
+  &.status-skipped { color: var(--text-tertiary); }
 }
 
 @keyframes pulse {

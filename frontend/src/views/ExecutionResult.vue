@@ -461,7 +461,8 @@ const statusTagType = (status) => {
     failed: 'danger',
     running: 'warning',
     pending: 'info',
-    cancelled: 'info'
+    cancelled: 'info',
+    skipped: 'info'
   }
   return map[status] || 'info'
 }
@@ -471,7 +472,8 @@ const statusLabel = (status) => {
     failed: '失败',
     running: '执行中',
     pending: '等待中',
-    cancelled: '已取消'
+    cancelled: '已取消',
+    skipped: '已跳过'
   }
   return map[status] || status || '-'
 }
@@ -727,6 +729,7 @@ onUnmounted(() => {
   &.status-failed { color: var(--color-danger); background: var(--color-danger-bg); }
   &.status-running { color: var(--color-warning); background: var(--color-warning-bg); }
   &.status-pending { color: var(--text-secondary); background: #f1f5f9; }
+  &.status-skipped { color: var(--text-secondary); background: #f1f5f9; }
 }
 
 .overview-grid {

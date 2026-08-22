@@ -265,17 +265,33 @@ public class TestCaseReviewAgent {
         return suggestions;
     }
 
-    private Map<String, Object> mergeCoverageRefs(Map<String, Object> existing, Map<String, Object> review) {
+    /**
+     * v7.2(R2): 评审 refs 与既有 refs 取保序并集。
+     * 旧实现是"评审非空即整体替换"——生成阶段正确的 requirementIds
+     * 会被评审 LLM 的不完整返回覆盖丢失。
+     */
+    Map<String, Object> mergeCoverageRefs(Map<String, Object> existing, Map<String, Object> review) {
         Map<String, Object> merged = new LinkedHashMap<>(existing == null ? Map.of() : existing);
         for (String key : List.of("requirementIds", "transitionIds", "endpointIds", "ruleIds")) {
-            Object value = review.get(key);
-            if (value instanceof List && !((List<?>) value).isEmpty()) {
-                merged.put(key, value);
-            } else if (!merged.containsKey(key)) {
-                merged.put(key, new ArrayList<String>());
-            }
+            List<String> union = new ArrayList<>();
+            collectIds(merged.get(key), union);
+            collectIds(review == null ? null : review.get(key), union);
+            merged.put(key, union);
         }
         return merged;
+    }
+
+    private void collectIds(Object value, List<String> union) {
+        if (value instanceof List) {
+            for (Object item : (List<?>) value) {
+                if (item != null) {
+                    String id = String.valueOf(item);
+                    if (!id.isBlank() && !union.contains(id)) {
+                        union.add(id);
+                    }
+                }
+            }
+        }
     }
 
     private boolean isEmptyRefs(Map<String, Object> refs) {

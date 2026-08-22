@@ -15,7 +15,6 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 
 @Service
@@ -34,6 +33,17 @@ public class CoverageService {
     public Map<String, Object> getCoverageMatrix(String projectId) {
         List<StateMachine> stateMachines = stateMachineRepository.findByProjectId(projectId);
         List<TestCase> testCases = testCaseRepository.findByProjectId(projectId);
+
+        // v7.2(R8): 每条用例只解析一次 JSON——旧实现在 transition×testCase 双重内循环里
+        // 反复反序列化同一条 executionHints/stateMachineRef（50 SM×20 tran×500 case ≈ 50 万次 parse）
+        Map<String, Set<String>> refTransitionsByCase = new LinkedHashMap<>();
+        Map<String, Set<String>> smRefTransitionsByCase = new LinkedHashMap<>();
+        for (TestCase tc : testCases) {
+            refTransitionsByCase.put(tc.getId(), parseCoverageRefTransitions(tc));
+            if (isExecuted(tc) && tc.getStateMachineRef() != null) {
+                smRefTransitionsByCase.put(tc.getId(), parseSmRefTransitionIds(tc));
+            }
+        }
 
         List<Map<String, Object>> smList = new ArrayList<>();
         int totalTransitions = 0;
@@ -55,34 +65,16 @@ public class CoverageService {
                 log.warn("Failed to parse transitions for SM {}", sm.getId(), e);
             }
 
-            // 对每个 transition 检查是否被用例覆盖
+            // 对每个 transition 检查是否被用例覆盖（双重循环内只做集合查找）
             for (Map<String, Object> tran : transitions) {
                 String from = tran.get("from") != null ? tran.get("from").toString() : "";
                 String to = tran.get("to") != null ? tran.get("to").toString() : "";
+                String transitionKey = from + "->" + to;
 
                 List<String> coveringIds = new ArrayList<>();
                 for (TestCase tc : testCases) {
-                    boolean covered = parseCoverageRefTransitions(tc).contains(from + "->" + to);
-                    if (!covered && isExecuted(tc) && tc.getStateMachineRef() != null) {
-                        try {
-                            Map<String, Object> ref = objectMapper.readValue(
-                                    tc.getStateMachineRef(), Map.class);
-                            List<Map<String, Object>> tcTransitions =
-                                    (List<Map<String, Object>>) ref.get("transitions");
-                            if (tcTransitions != null) {
-                                for (Map<String, Object> tcTran : tcTransitions) {
-                                    String tcFrom = tcTran.get("from") != null ? tcTran.get("from").toString() : "";
-                                    String tcTo = tcTran.get("to") != null ? tcTran.get("to").toString() : "";
-                                    if (Objects.equals(tcFrom, from) && Objects.equals(tcTo, to)) {
-                                        covered = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        } catch (Exception e) {
-                            // skip
-                        }
-                    }
+                    boolean covered = refTransitionsByCase.get(tc.getId()).contains(transitionKey)
+                            || smRefTransitionsByCase.getOrDefault(tc.getId(), Set.of()).contains(transitionKey);
                     if (covered) {
                         coveringIds.add(tc.getId());
                     }
@@ -137,5 +129,27 @@ public class CoverageService {
     private boolean isExecuted(TestCase tc) {
         String status = tc.getExecutionStatus();
         return "passed".equals(status) || "failed".equals(status);
+    }
+
+    // v7.2(R8): 从 stateMachineRef.transitions 提取 "from->to" 集合（原内联兜底逻辑提取为独立方法）
+    private Set<String> parseSmRefTransitionIds(TestCase tc) {
+        Set<String> result = new HashSet<>();
+        try {
+            Map<String, Object> ref = objectMapper.readValue(tc.getStateMachineRef(), Map.class);
+            Object tcTransitions = ref.get("transitions");
+            if (tcTransitions instanceof List) {
+                for (Object item : (List<?>) tcTransitions) {
+                    if (item instanceof Map) {
+                        Map<?, ?> tran = (Map<?, ?>) item;
+                        String from = tran.get("from") != null ? tran.get("from").toString() : "";
+                        String to = tran.get("to") != null ? tran.get("to").toString() : "";
+                        result.add(from + "->" + to);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse stateMachineRef for test case {}", tc.getId());
+        }
+        return result;
     }
 }

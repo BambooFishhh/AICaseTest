@@ -52,8 +52,9 @@ public class StatsController {
         typeCounts.put("data", 0L);
 
         List<Map<String, Object>> projectCoverage = new ArrayList<>();
-        double stateRateSum = 0, apiRateSum = 0;
-        int coverageCount = 0;
+        // v7.2(R9): 平均覆盖率按转换总数加权——2 条转换的小项目不再与 200 条的大项目同权重
+        double weightedRateSum = 0;
+        long weightSum = 0;
 
         for (Project p : projects) {
             List<TestCase> cases = testCaseRepository.findByProjectId(p.getId());
@@ -68,22 +69,26 @@ public class StatsController {
             } catch (Exception ignored) {
                 // 无覆盖率数据
             }
-            double stateRate = 0, apiRate = 0;
+            double stateRate = 0;
             if (cov != null) {
                 Map<String, Object> summary = (Map<String, Object>) cov.get("summary");
                 if (summary != null) {
                     Object rateObj = summary.get("rate");
                     if (rateObj instanceof Number) stateRate = ((Number) rateObj).doubleValue();
+                    Object totalObj = summary.get("totalTransitions");
+                    if (totalObj instanceof Number) {
+                        long totalTransitions = ((Number) totalObj).longValue();
+                        if (totalTransitions > 0) {
+                            weightedRateSum += stateRate * totalTransitions;
+                            weightSum += totalTransitions;
+                        }
+                    }
                 }
-                coverageCount++;
-                stateRateSum += stateRate;
-                apiRateSum += apiRate;
             }
             Map<String, Object> pc = new LinkedHashMap<>();
             pc.put("id", p.getId());
             pc.put("name", p.getName());
             pc.put("stateRate", Math.round(stateRate * 100));
-            pc.put("apiRate", Math.round(apiRate * 100));
             projectCoverage.add(pc);
         }
 
@@ -99,8 +104,9 @@ public class StatsController {
         result.put("passRate", Math.round(passRate * 10) / 10.0);
         result.put("typeCounts", typeCounts);
         result.put("projectCoverage", projectCoverage);
-        result.put("avgStateRate", coverageCount == 0 ? 0 : Math.round(stateRateSum / coverageCount * 100));
-        result.put("avgApiRate", coverageCount == 0 ? 0 : Math.round(apiRateSum / coverageCount * 100));
+        result.put("avgStateRate", weightSum == 0 ? 0 : Math.round(weightedRateSum / weightSum * 100));
+        // v7.2(R6): 删除从未真实赋值的 apiRate/avgApiRate 假字段（真实接口覆盖的分母
+        // ——checklist endpoints——仅存在于生成时上下文，未持久化，不应呈现口径不全的统计）
         return ApiResponse.success(result);
     }
 }

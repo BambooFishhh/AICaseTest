@@ -4,6 +4,60 @@
 
 ---
 
+## v7.2 — 度量与报告诚实化
+**日期**: 2026-08-23
+**基线**: v7.1
+**主题**: 数字可信——删除假字段、状态与通过率同口径、合并不丢数据、覆盖率提速与加权（对应风险清单 R6/R10/R2/R8/R9/R12）
+
+### 背景
+
+度量与报告层存在 6 个"数字不可信"问题：仪表盘 apiRate 是从未实现的假字段；全 skipped 用例挂 passed 徽章但报告显示 0% 通过率（同屏自相矛盾）；报告通过率分母含 skipped/运行中/待执行（与 Allure 惯例不一致）；评审 coverageRefs 整体替换而非合并（丢失生成阶段的正确引用）；覆盖率矩阵在双重循环内反复反序列化同一条 JSON（50 万次 parse）；项目间覆盖率简单平均被小项目噪声拉偏；报告 footer 版本硬编码 v2.4 从未更新。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/ExecutionService.java` | 修改 | **R10**：两处执行收尾（Agent 路径/程序化路径）状态判定统一收敛为 `determineStatus(passed, failed, skipped)`——全 skipped 记 `skipped` 终态，不再挂 passed 徽章；执行历史 stats 新增 skipped 计数 |
+| `service/ReportService.java` | 修改 | **R10/R12**：新增 `passRateOf`——单次/批次报告通过率分母统一为 passed+failed（跳过/运行中/待执行/取消不计入）；有跳过或未判定记录时单元格追加说明；批次汇总表新增"已跳过"行；footer 版本收敛为单一常量 APP_VERSION（两处硬编码 v2.4 → v7.2，后续迭代只改一处） |
+| `agent/TestCaseReviewAgent.java` | 修改 | **R2**：mergeCoverageRefs 由"评审非空即整体替换"改为**保序并集**（existing 在前、review 新增在后、去重）——生成阶段正确的 requirementIds 不再被评审 LLM 的不完整返回覆盖丢失 |
+| `service/CoverageService.java` | 修改 | **R8**：循环外预解析每条用例的 coverageRefs.transitionIds 与（已执行用例的）stateMachineRef.transitions，双重循环内只做集合查找——旧实现 50 SM×20 转换×500 用例 ≈ 50 万次 JSON parse 归零；判定语义（计划覆盖 + isExecuted 兜底）保持不变 |
+| `controller/StatsController.java` | 修改 | **R6**：删除从未真实赋值的 apiRate/avgApiRate 假字段（真实接口覆盖的分母 checklist endpoints 未持久化，不应呈现口径不全的统计）。**R9**：avgStateRate 由项目间简单平均改为按转换总数加权平均（totalTransitions=0 的项目不参与） |
+| `test/ExecutionServiceStatusTest.java` | 新增 | R10 终态判定 5 用例（全 skipped→skipped/有 failed→failed/有 passed→passed/部分跳过有通过→passed/零步骤无错误→passed） |
+| `test/ReportServicePassRateTest.java` | 新增 | R10/R12 通过率口径 4 用例（跳过不计分母/全 skipped→0 非 NaN/零记录→0/运行中待执行不稀释） |
+| `test/TestCaseReviewAgentMergeRefsTest.java` | 新增 | R2 并集语义 4 用例（并集不替换/去重保序/空评审不清空/null 兜底） |
+| `test/CoverageServicePreparseTest.java` | 新增 | R8 预解析等价性 2 用例（coverageRefs 命中 + isExecuted 兜底语义保持/无覆盖数据零速率） |
+| `test/StatsControllerOverviewTest.java` | 新增 | R6/R9 仪表盘 2 用例（加权平均 42 vs 旧简单平均 25 + 假字段已删/零转换项目不参与加权避免 0/0） |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `src/views/TestCaseList.vue` | 修改 | **R10**：执行状态白名单/文案补 skipped（"已跳过"，旧实现静默映射成"未执行"）；执行状态筛选下拉新增"已跳过"选项；status-pill 补中性色 |
+| `src/components/TestCaseCard.vue` | 修改 | **R10**：执行历史标签映射补 skipped |
+| `src/views/ExecutionHistory.vue` | 修改 | **R10**：记录状态标签补"已跳过"；统计卡新增"已跳过"（后端 stats.skipped + 本地兜底统计）；status-pill 补色 |
+| `src/views/ExecutionResult.vue` | 修改 | **R10**：详情页状态标签映射与 status-pill 补 skipped |
+
+### API 契约变化
+
+- `GET /api/stats/overview`：响应**删除** `avgApiRate` 与 `projectCoverage[].apiRate`（从未真实赋值的假字段，前端无消费方）；`avgStateRate` 口径改为按转换总数加权
+- 执行记录状态枚举：新增 `skipped`（全步骤跳过）；执行历史接口 stats 新增 `skipped` 字段
+- 其余接口无契约变化（覆盖率矩阵为纯内部提速）
+
+### 验证结果
+
+- 后端 `mvn clean test`（JDK 17 + Maven 3.9.16）：**117 个测试全部通过，BUILD SUCCESS**（新增 17 个用例：StatusTest 5 + PassRateTest 4 + MergeRefsTest 4 + PreparseTest 2 + OverviewTest 2）
+- 前端 `npm run build`：通过
+
+### 预期影响（度量校准）
+
+- 全 skipped 用例（如纯 api_call）状态列如实显示"已跳过"，不再与 0% 通过率同屏矛盾
+- 报告通过率反映真实判定质量（跳过不再稀释），有跳过时明示口径
+- 评审后的 coverageRefs 只增不减，覆盖率引用不回退
+- 覆盖率页与仪表盘在大数据量下显著提速（JSON 反序列化次数从 O(转换×用例) 降为 O(用例)）
+- 仪表盘平均覆盖率反映转换数加权后的真实水平，不被小项目拉偏
+
+---
+
 ## v7.1 — 生成链路一致性修复
 **日期**: 2026-08-23
 **基线**: v7.0

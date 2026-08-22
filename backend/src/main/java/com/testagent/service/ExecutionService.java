@@ -478,7 +478,7 @@ public class ExecutionService {
         } else {
             // v7.0(E3): 基础设施故障（浏览器启动失败/导航异常/无步骤）不再记 passed
             if (errorMessage != null && failed == 0) failed++;
-            status = failed > 0 ? "failed" : "passed";
+            status = determineStatus(passed, failed, skipped);
             summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped)
                     + (errorMessage != null ? "（" + errorMessage + "）" : "");
         }
@@ -802,7 +802,7 @@ public class ExecutionService {
         } else {
             // v7.0(E3): 基础设施故障（浏览器启动失败/导航异常/无步骤）不再记 passed
             if (errorMessage != null && failed == 0) failed++;
-            status = failed > 0 ? "failed" : "passed";
+            status = determineStatus(passed, failed, skipped);
             summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped)
                     + (errorMessage != null ? "（" + errorMessage + "）" : "");
         }
@@ -876,6 +876,18 @@ public class ExecutionService {
         return record;
     }
 
+    /**
+     * v7.2(R10): 执行终态判定统一收敛——全 skipped 不再记 passed。
+     * 背景：纯 api_call 用例 10 步全跳过，旧逻辑挂 passed 徽章，
+     * 报告却是"通过 0/失败 0/跳过 10, 通过率 0%"，同屏自相矛盾。
+     * 注意：errorMessage 已在调用方折算为 failed（v7.0 E3），此处只看三个计数。
+     */
+    static String determineStatus(int passed, int failed, int skipped) {
+        if (failed > 0) return "failed";
+        if (passed == 0 && skipped > 0) return "skipped";
+        return "passed";
+    }
+
     // v5.7: 执行历史分页 + 全量统计/趋势
     public Map<String, Object> getExecutionsByProject(String projectId, int page, int pageSize) {
         return getExecutionsByProject(projectId, page, pageSize, null);
@@ -898,11 +910,13 @@ public class ExecutionService {
         long passed = all.stream().filter(r -> "passed".equals(r.getStatus())).count();
         long failed = all.stream().filter(r -> "failed".equals(r.getStatus())).count();
         long running = all.stream().filter(r -> "running".equals(r.getStatus())).count();
+        long skipped = all.stream().filter(r -> "skipped".equals(r.getStatus())).count();
         Map<String, Long> stats = new LinkedHashMap<>();
         stats.put("total", (long) all.size());
         stats.put("passed", passed);
         stats.put("failed", failed);
         stats.put("running", running);
+        stats.put("skipped", skipped);
 
         // 最近 20 次已结束执行的滚动通过率（旧→新）
         List<ExecutionRecord> completed = all.stream()
