@@ -29,6 +29,8 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 
@@ -265,6 +267,9 @@ public class ExecutionService {
                 r.setEndTime(LocalDateTime.now());
                 r.setSummary("已取消（未开始）");
                 executionRecordRepository.save(r);
+                // v7.0(E1): 仅改 DB 状态拦不住 worker（worker 只查运行时标志），
+                // 必须同时置运行时取消标志，否则任务照跑并把 cancelled 覆盖成 passed/failed
+                runtimeStore.newFlag("exec:cancel:" + r.getId()).cancel();
                 agentTaskService.cancel(r.getId());
                 cancelledPending++;
                 // 恢复用例执行状态（复制执行不回写）
@@ -302,6 +307,8 @@ public class ExecutionService {
             record.setEndTime(LocalDateTime.now());
             record.setSummary("已取消（未开始）");
             executionRecordRepository.save(record);
+            // v7.0(E1): 同 cancelBatch，补运行时取消标志防止 worker 复活
+            runtimeStore.newFlag("exec:cancel:" + executionId).cancel();
             agentTaskService.cancel(executionId);
             if (Boolean.TRUE.equals(record.getWriteBack())) {
                 updateTestCaseExecutionStatus(record.getTestCaseId(), "not_executed");
@@ -456,17 +463,28 @@ public class ExecutionService {
         }
 
         // 更新执行记录
+        // v7.0(E1): 收尾前复查——用户可能在最后一步之后、收尾之前点取消（此时循环检查点已过）
+        if (!cancelled) {
+            ExecutionRecord probe = executionRecordRepository.findById(executionId).orElse(null);
+            if (probe != null && "cancelled".equals(probe.getStatus())) {
+                cancelled = true;
+            }
+        }
         String status;
         String summary;
         if (cancelled) {
             status = "cancelled";
             summary = "已取消";
         } else {
+            // v7.0(E3): 基础设施故障（浏览器启动失败/导航异常/无步骤）不再记 passed
+            if (errorMessage != null && failed == 0) failed++;
             status = failed > 0 ? "failed" : "passed";
-            summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped);
+            summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped)
+                    + (errorMessage != null ? "（" + errorMessage + "）" : "");
         }
         ExecutionRecord finalRecord = executionRecordRepository.findById(executionId).orElse(null);
-        if (finalRecord != null) {
+        if (finalRecord != null && !"cancelled".equals(finalRecord.getStatus())) {
+            // v7.0(E1): 已被取消的记录不被 worker 覆盖（取消与收尾的竞态）
             finalRecord.setStatus(status);
             finalRecord.setEndTime(LocalDateTime.now());
             finalRecord.setSummary(summary);
@@ -686,13 +704,28 @@ public class ExecutionService {
                                 }
                                 break;
 
-                            case "state_assert":
-                                Map<String, String> status = playwrightSkill.getPageStatus(sessionId);
+                            case "state_assert": {
+                                Map<String, String> pageState = playwrightSkill.getPageStatus(sessionId);
+                                String expected = node.path("expected").asText("");
+                                // v7.0(E4): 状态断言诚实化——此前无条件 passed 是假通过
+                                String verdict = assertExpected(expected, pageState);
                                 stepBuilder.strategy("manual")
-                                        .result("passed")
-                                        .coordinates("url=" + status.get("url"));
-                                passed++;
+                                        .result(verdict)
+                                        .coordinates("url=" + pageState.get("url"));
+                                switch (verdict) {
+                                    case "passed" -> passed++;
+                                    case "failed" -> {
+                                        stepBuilder.error("断言不匹配: 期望[" + expected + "] 实际[url="
+                                                + pageState.get("url") + ", title=" + pageState.get("title") + "]");
+                                        failed++;
+                                    }
+                                    default -> {
+                                        stepBuilder.error("UI 层暂无法验证: " + expected);
+                                        skipped++;
+                                    }
+                                }
                                 break;
+                            }
 
                             case "api_call":
                                 stepBuilder.strategy("skipped")
@@ -754,18 +787,29 @@ public class ExecutionService {
         }
 
         // 更新执行记录
+        // v7.0(E1): 收尾前复查——用户可能在最后一步之后、收尾之前点取消（此时循环检查点已过）
+        if (!cancelled) {
+            ExecutionRecord probe = executionRecordRepository.findById(executionId).orElse(null);
+            if (probe != null && "cancelled".equals(probe.getStatus())) {
+                cancelled = true;
+            }
+        }
         String status;
         String summary;
         if (cancelled) {
             status = "cancelled";
             summary = "已取消";
         } else {
+            // v7.0(E3): 基础设施故障（浏览器启动失败/导航异常/无步骤）不再记 passed
+            if (errorMessage != null && failed == 0) failed++;
             status = failed > 0 ? "failed" : "passed";
-            summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped);
+            summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped)
+                    + (errorMessage != null ? "（" + errorMessage + "）" : "");
         }
 
         ExecutionRecord finalRecord = executionRecordRepository.findById(executionId).orElse(null);
-        if (finalRecord != null) {
+        if (finalRecord != null && !"cancelled".equals(finalRecord.getStatus())) {
+            // v7.0(E1): 已被取消的记录不被 worker 覆盖（取消与收尾的竞态）
             finalRecord.setStatus(status);
             finalRecord.setEndTime(LocalDateTime.now());
             finalRecord.setSummary(summary);
@@ -980,6 +1024,56 @@ public class ExecutionService {
     // v4.2: 执行取消标志检查
     private boolean isExecutionCancelled(String executionId) {
         return runtimeStore.isFlagSet("exec:cancel:" + executionId);
+    }
+
+    // ==================== v7.0(E4): state_assert 最小诚实断言 ====================
+
+    /** URL/标题语义触发词：expected 中出现这些词才尝试与页面 url/title 比较 */
+    private static final Pattern ASSERT_URLISH = Pattern.compile("(?i)(url|地址|标题|title|页面显示|跳转到|显示)");
+
+    /** 可比较片段：英文/斜杠开头的标识符（>=3 字符），如 /order/list、Dashboard、login */
+    private static final Pattern ASSERT_TOKEN = Pattern.compile("[/a-zA-Z][a-zA-Z0-9/_.-]{2,}");
+
+    /** 触发词与通用虚词，不参与比较 */
+    private static final Set<String> ASSERT_STOPWORDS = Set.of("url", "http", "https", "www", "com", "cn",
+            "and", "or", "the", "of", "to", "page", "title", "spa");
+
+    /**
+     * v7.0(E4): state_assert 最小诚实断言。
+     * 仅当 expected 含 URL/标题语义（如"URL 包含 /order/list""标题显示 Dashboard"）时，
+     * 提取英文片段与页面 url+title 做包含比较：全部命中 → passed；有关键词未命中 → failed；
+     * 无语义触发词（API 形态如 status=XXX）或提取不到可比片段 → skipped（未验证，不误报失败）。
+     */
+    static String assertExpected(String expected, Map<String, String> pageState) {
+        if (expected == null || expected.isBlank()) {
+            return "skipped";
+        }
+        if (!ASSERT_URLISH.matcher(expected).find()) {
+            return "skipped";  // API 形态/纯语义描述，UI 层暂无法验证
+        }
+        if (pageState == null) {
+            return "skipped";  // 页面状态读取失败时不误报失败
+        }
+        String url = pageState == null ? "" : pageState.getOrDefault("url", "");
+        String title = pageState == null ? "" : pageState.getOrDefault("title", "");
+        String pageText = (url + " " + title).toLowerCase();
+        List<String> keywords = new ArrayList<>();
+        Matcher m = ASSERT_TOKEN.matcher(expected);
+        while (m.find()) {
+            String kw = m.group().toLowerCase();
+            if (!ASSERT_STOPWORDS.contains(kw)) {
+                keywords.add(kw);
+            }
+        }
+        if (keywords.isEmpty()) {
+            return "skipped";  // 如"URL 跳转首页"（中文目标，url/title 无法机械比较）
+        }
+        for (String kw : keywords) {
+            if (!pageText.contains(kw)) {
+                return "failed";
+            }
+        }
+        return "passed";
     }
 
     // 标记运行中任务取消，并强制关闭其浏览器会话（让当前步骤尽快失败）

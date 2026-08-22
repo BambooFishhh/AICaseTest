@@ -75,6 +75,11 @@ public class TaskRetryDispatcher {
         if (task == null || !AgentTaskService.STATUS_QUEUED.equals(task.getStatus())) {
             return Map.of("taskId", taskId, "dispatched", false, "message", "任务不在排队状态");
         }
+        // v7.0(E2): 执行任务由 executionExecutor 专属路径驱动；QUEUED→worker start() 的窗口内
+        // 被通用分发 CAS 抢占会误标 NEEDS_REVIEW(UNSUPPORTED_RETRY)，必须在 claim 前跳过
+        if (AgentTaskService.TYPE_EXECUTION.equals(task.getTaskType())) {
+            return Map.of("taskId", taskId, "dispatched", false, "message", "执行任务由专属执行器驱动，跳过通用分发");
+        }
         if (!agentTaskService.claimQueued(taskId)) {
             return Map.of("taskId", taskId, "dispatched", false, "message", "任务已被其他 worker 抢占");
         }

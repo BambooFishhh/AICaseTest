@@ -3,6 +3,7 @@ package com.testagent.agent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.testagent.dto.LocateResult;
 import com.testagent.entity.ExecutionStep;
+import com.testagent.runtime.RuntimeStore;
 import com.testagent.service.LlmService;
 import com.testagent.service.McpBridgeService;
 import com.testagent.skill.PlaywrightRecordSkill;
@@ -35,6 +36,9 @@ public class ExecutionAgent {
 
     @Autowired
     private LlmService llmService;
+
+    @Autowired
+    private RuntimeStore runtimeStore;
 
     /**
      * Agent 的 agentic loop，对单个测试步骤执行完整流程。
@@ -94,6 +98,7 @@ public class ExecutionAgent {
             }
             // 步骤 1: LLM 生成元素查找描述
             String elementDesc = askLlmForElementDescription(action, testCaseContext);
+            touchHeartbeat(executionId);  // v7.0(E8): 单步内补心跳，防慢步骤被误判 worker 已死
 
             // 步骤 2: 截图（操作前）
             screenshotBefore = playwrightSkill.takeScreenshot(sessionId);
@@ -114,6 +119,7 @@ public class ExecutionAgent {
                     log.warn("MCP multimodal locate exception, treat as not found: {}", e.getMessage());
                     locateResult = LocateResult.fail("MCP 调用异常: " + e.getMessage());
                 }
+                touchHeartbeat(executionId);  // v7.0(E8): 每轮定位后补心跳
                 if (locateResult != null && locateResult.isFound()) {
                     break;
                 }
@@ -121,6 +127,7 @@ public class ExecutionAgent {
 
             // 步骤 4: LLM 决策执行策略
             Map<String, Object> decision = askLlmForStrategy(action, target, step, locateResult);
+            touchHeartbeat(executionId);  // v7.0(E8): 决策调用后补心跳
             strategy = String.valueOf(decision.getOrDefault("strategy", "skip"));
 
             // 操作前页面状态（用于步骤 6 验证点击是否生效）
@@ -162,7 +169,12 @@ public class ExecutionAgent {
                 case "skip":
                 default:
                     result = "skipped";
-                    error = "LLM 决策跳过该步骤";
+                    // v7.0(E12): 错误信息按来源区分——LLM 决策带真实理由；defaultStrategy 兜底
+                    // 的 reason（如"MCP 未找到且无 DOM 选择器"）不再被统一栽赃为"LLM 决策跳过"
+                    Object skipReason = decision.get("reason");
+                    error = (skipReason == null || String.valueOf(skipReason).isBlank())
+                            ? "跳过（决策未提供理由）"
+                            : "跳过: " + skipReason;
                     break;
             }
 
@@ -170,6 +182,7 @@ public class ExecutionAgent {
             if (!"skip".equals(strategy)) {
                 Map<String, String> statusAfter = playwrightSkill.getPageStatus(sessionId);
                 boolean effective = askLlmIfEffective(statusBefore, statusAfter, action);
+                touchHeartbeat(executionId);  // v7.0(E8): 生效判断调用后补心跳
 
                 if (!effective) {
                     // 兜底：LLM 决策是否用 DOM 重试
@@ -270,7 +283,16 @@ public class ExecutionAgent {
         }
 
         try {
-            String systemPrompt = "你是测试执行Agent。根据视觉识别结果，决定下一步执行策略。返回 JSON：{\"strategy\": \"visual_click|dom_click|skip\", \"reason\": \"...\", \"x\": 0, \"y\": 0, \"selectorType\": \"\", \"selectorValue\": \"\"}";
+            // v7.0(E12): 增加决策规则引导——无决策规则时 LLM 见"未找到"倾向保守 skip，
+            // 即使备用 DOM 选择器可用，导致大量本可执行的步骤被放弃
+            String systemPrompt = "你是测试执行Agent。根据视觉识别结果，决定下一步执行策略。返回 JSON："
+                    + "{\"strategy\": \"visual_click|dom_click|skip\", \"reason\": \"...\", \"x\": 0, \"y\": 0, "
+                    + "\"selectorType\": \"\", \"selectorValue\": \"\"}\n"
+                    + "决策规则：\n"
+                    + "1. found=true 且置信度>=0.5 → visual_click（用 MCP 返回的坐标）\n"
+                    + "2. found=false 但备用DOM选择器非空 → 优先 dom_click，不要轻易放弃\n"
+                    + "3. 仅当 found=false 且备用DOM选择器为空，或页面明确不存在该元素时才 skip\n"
+                    + "4. reason 必须说明具体原因，skip 时尤其要说清为什么";
             String userPrompt = "步骤: " + action
                     + "\nMCP结果: found=" + locateResult.isFound()
                     + ", clickX=" + locateResult.getClickX()
@@ -286,6 +308,19 @@ public class ExecutionAgent {
         } catch (Exception e) {
             log.warn("askLlmForStrategy failed, fallback to default: {}", e.getMessage());
             return defaultStrategy(locateResult, step);
+        }
+    }
+
+    /**
+     * v7.0(E8): 单步内补心跳。Agent 模式单步 = 最多 5 轮定位 + 4 次 LLM 调用，
+     * 常超 HEARTBEAT_STALE_MS(30s)，期间取消会被误判 worker 已死触发复活竞态。
+     * 失败不影响执行。
+     */
+    private void touchHeartbeat(String executionId) {
+        try {
+            runtimeStore.putHeartbeat(executionId, System.currentTimeMillis());
+        } catch (Exception e) {
+            log.debug("touchHeartbeat failed for {}: {}", executionId, e.getMessage());
         }
     }
 

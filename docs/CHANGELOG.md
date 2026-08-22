@@ -4,6 +4,40 @@
 
 ---
 
+## v7.0 — 执行可信度修复（v7.x 系列首版：基于全链路代码审查）
+**日期**: 2026-08-22
+**基线**: v6.9
+**主题**: 执行链路诚实化——取消复活、调度器误伤、假通过、skip 决策引导（对应风险清单 E1/E2/E3/E4/E8/E12）
+
+### 背景
+
+v7.x 系列基于《docs/代码审查风险清单.md》（80 项，L/A/G/R/E/C 六系列）按"诚实化 → 闭环 → 精准投喂 → 效率收尾"三波推进。v7.0 聚焦执行链路 4 个 P0"结果不可信"问题。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/ExecutionService.java` | 修改 | **E1**：cancelBatch/cancelExecution 的 pending 分支补运行时取消标志（此前仅改 DB 状态拦不住 worker）；两处收尾前复查 cancelled 状态、已取消记录不被覆盖。**E3**：errorMessage 参与最终状态判定，浏览器启动失败/导航异常/无步骤不再记 passed，summary 附原因。**E4**：state_assert 诚实断言（新增 `assertExpected` 静态方法：expected 含 URL/标题语义时提取关键词与页面 url/title 包含比较，无法比较时如实标 skipped 不误报） |
+| `agent/ExecutionAgent.java` | 修改 | **E8**：注入 RuntimeStore，单步内 4 个耗时点补心跳（元素描述/每轮定位/策略决策/生效判断后），防慢步骤被误判 worker 已死。**E12**：策略决策 prompt 增加决策规则（found=false 且有备用选择器 → 优先 dom_click）；skip 的 error 按来源取真实 reason，不再统一栽赃"LLM 决策跳过" |
+| `service/TaskRetryDispatcher.java` | 修改 | **E2**：dispatchQueued 在 CAS claim 前跳过执行类型任务——修复 v6.6 引入的回归（HaTaskScheduler 每 15s 扫 QUEUED 会抢占执行任务的 QUEUED→start() 窗口并误标 NEEDS_REVIEW(UNSUPPORTED_RETRY)） |
+| `test/ExecutionServiceAssertTest.java` | 新增 | assertExpected 纯函数 7 用例（URL 命中/未命中/API 形态 skipped/中文目标 skipped/null 状态 skipped 等） |
+| `test/TaskRetryDispatcherExecutionFilterTest.java` | 新增 | E2 回归测试 3 用例（执行任务 claim 前跳过/普通任务照常分发/非 QUEUED 忽略） |
+
+### 前端变更
+
+无（状态枚举不变，error/summary 内容更丰富由现有 UI 自动展示）。
+
+### 验证结果
+
+- 后端 `mvn test`：**97 个测试全部通过，BUILD SUCCESS**
+- 前端 `npm run build` 通过（无代码改动，例行验证）
+
+### 预期影响（度量校准）
+
+基础设施故障的执行记录将如实显示 failed（此前显示 passed"通过 0, 失败 0"）；批量执行不再产生 NEEDS_REVIEW 误报；agent 模式步骤 skip 率预期下降（有备用选择器的步骤改走 dom_click）。
+
+---
+
 ## v6.9 — 高可用收口：故障演练与容量
 **日期**: 2026-08-22
 **基线**: v6.8
