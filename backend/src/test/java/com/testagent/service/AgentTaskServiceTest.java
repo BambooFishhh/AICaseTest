@@ -19,6 +19,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentCaptor;
 
 class AgentTaskServiceTest {
 
@@ -57,6 +59,20 @@ class AgentTaskServiceTest {
 
         assertNotNull(id);
         verify(repository).save(any(AgentTask.class));
+    }
+
+    @Test
+    void createTaskWithIdUsesProvidedTaskId() {
+        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        String id = service.createTaskWithId("exec-1", AgentTaskService.TYPE_EXECUTION,
+                "p1", "exec-1", "{}");
+
+        assertEquals("exec-1", id);
+        ArgumentCaptor<AgentTask> captor = ArgumentCaptor.forClass(AgentTask.class);
+        verify(repository).save(captor.capture());
+        assertEquals("exec-1", captor.getValue().getId());
+        assertEquals(AgentTaskService.STATUS_QUEUED, captor.getValue().getStatus());
     }
 
     @Test
@@ -104,5 +120,36 @@ class AgentTaskServiceTest {
 
         assertEquals(AgentTaskService.STATUS_QUEUED, task.getStatus());
         assertNull(task.getErrorMessage());
+    }
+
+    @Test
+    void expireTasksByTtlMarksNeedsReview() {
+        AgentTask stale = new AgentTask();
+        stale.setId("task-1");
+        stale.setStatus(AgentTaskService.STATUS_RUNNING);
+        stale.setStartedAt(LocalDateTime.now().minusMinutes(90));
+        when(repository.findByStatusAndStartedAtBefore(anyString(), any()))
+                .thenReturn(List.of(stale));
+
+        int count = service.expireTasksByTtl();
+
+        assertEquals(1, count);
+        assertEquals(AgentTaskService.STATUS_NEEDS_REVIEW, stale.getStatus());
+        assertEquals("TTL_EXCEEDED", stale.getErrorCode());
+        verify(repository).save(stale);
+    }
+
+    @Test
+    void findQueuedReadsQueuedTasks() {
+        AgentTask queued = new AgentTask();
+        queued.setId("task-q");
+        queued.setStatus(AgentTaskService.STATUS_QUEUED);
+        when(repository.findTop20ByStatusOrderByCreatedAtAsc(AgentTaskService.STATUS_QUEUED))
+                .thenReturn(List.of(queued));
+
+        List<AgentTask> result = service.findQueued();
+
+        assertEquals(1, result.size());
+        assertEquals("task-q", result.get(0).getId());
     }
 }

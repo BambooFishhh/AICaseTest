@@ -67,6 +67,24 @@ public class TaskRetryDispatcher {
                 "dispatched", true);
     }
 
+    /**
+     * v6.6: 调度器入口，只处理 QUEUED 任务；追加生成保持人工重试语义。
+     */
+    public Map<String, Object> dispatchQueued(String taskId) {
+        AgentTask task = agentTaskService.findById(taskId);
+        if (task == null || !AgentTaskService.STATUS_QUEUED.equals(task.getStatus())) {
+            return Map.of("taskId", taskId, "dispatched", false, "message", "任务不在排队状态");
+        }
+        if (AgentTaskService.TYPE_APPEND_GENERATION.equals(task.getTaskType())) {
+            agentTaskService.markNeedsReview(taskId, "MANUAL_RETRY",
+                    "追加生成需要 SSE 客户端，请在前端重新触发");
+            return Map.of("taskId", taskId, "dispatched", false,
+                    "message", "追加生成需在前端重新触发");
+        }
+        dispatch(task);
+        return Map.of("taskId", taskId, "dispatched", true);
+    }
+
     private void dispatch(AgentTask task) {
         try {
             switch (task.getTaskType()) {

@@ -192,6 +192,11 @@ services:
       - APP_SSE_TIMEOUT_MINUTES=${APP_SSE_TIMEOUT_MINUTES:-30}
       # v6.5: 高可用任务租约（秒）
       - APP_HA_TASK_LEASE_SECONDS=${APP_HA_TASK_LEASE_SECONDS:-600}
+      # v6.6: 任务 TTL（分钟）与 QUEUED 兜底调度
+      - APP_HA_TASK_TTL_MINUTES=${APP_HA_TASK_TTL_MINUTES:-60}
+      - APP_HA_DISPATCH_DELAY_MS=${APP_HA_DISPATCH_DELAY_MS:-15000}
+      # v6.6: MCP 工具请求超时（秒）
+      - APP_MCP_REQUEST_TIMEOUT_SECONDS=${APP_MCP_REQUEST_TIMEOUT_SECONDS:-60}
       # v5.13: tools MCP Server 访问后端桥接接口
       - MCP_BRIDGE_URL=http://backend:8000
       - MCP_BRIDGE_TOKEN=${MCP_BRIDGE_TOKEN:-aicasetest-mcp-local}

@@ -75,6 +75,9 @@ public class ExecutionService {
     private TaskQueueService taskQueueService;
 
     @Autowired
+    private AgentTaskService agentTaskService;
+
+    @Autowired
     @Qualifier("executionExecutor")
     private java.util.concurrent.Executor executionExecutor;
 
@@ -142,6 +145,20 @@ public class ExecutionService {
             log.warn("Failed to build test case snapshot for {}", testCaseId, e);
         }
         executionRecordRepository.save(record);
+
+        // v6.6: 执行任务接入 agent_task（taskId = executionId，可被租约恢复/管理端查询）
+        try {
+            Map<String, Object> input = new LinkedHashMap<>();
+            input.put("testCaseId", testCaseId);
+            input.put("mode", mode);
+            input.put("batchId", batchId == null ? "" : batchId);
+            input.put("targetUrl", targetUrl == null ? "" : targetUrl);
+            input.put("writeBack", writeBack);
+            agentTaskService.createTaskWithId(executionId, AgentTaskService.TYPE_EXECUTION,
+                    projectId, executionId, objectMapper.writeValueAsString(input));
+        } catch (Exception e) {
+            log.warn("Failed to create agent task for execution {}: {}", executionId, e.getMessage());
+        }
 
         // v5.3: 执行任务进入队列统计
         taskQueueService.enqueue(TaskQueueService.EXECUTION_QUEUE, executionId);
@@ -252,6 +269,7 @@ public class ExecutionService {
                 r.setEndTime(LocalDateTime.now());
                 r.setSummary("已取消（未开始）");
                 executionRecordRepository.save(r);
+                agentTaskService.cancel(r.getId());
                 cancelledPending++;
                 // 恢复用例执行状态（复制执行不回写）
                 if (Boolean.TRUE.equals(r.getWriteBack())) {
@@ -288,6 +306,7 @@ public class ExecutionService {
             record.setEndTime(LocalDateTime.now());
             record.setSummary("已取消（未开始）");
             executionRecordRepository.save(record);
+            agentTaskService.cancel(executionId);
             if (Boolean.TRUE.equals(record.getWriteBack())) {
                 updateTestCaseExecutionStatus(record.getTestCaseId(), "not_executed");
             }
@@ -336,6 +355,11 @@ public class ExecutionService {
         } catch (Exception e) {
             log.warn("Failed to mark execution {} running", executionId, e);
         }
+        try {
+            agentTaskService.start(executionId);
+        } catch (Exception e) {
+            log.warn("Failed to start agent task for execution {}: {}", executionId, e.getMessage());
+        }
 
         // 启动前已被取消：直接收尾，不开浏览器
         if (isExecutionCancelled(executionId)) {
@@ -355,6 +379,7 @@ public class ExecutionService {
             runtimeStore.clearFlag("exec:cancel:" + executionId);
             runtimeStore.removeHeartbeat(executionId);
             taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, executionId);
+            agentTaskService.cancel(executionId);
             return;
         }
 
@@ -362,6 +387,7 @@ public class ExecutionService {
             // 1. 启动浏览器（Playwright 自动开始录屏）
             sessionId = playwrightSkill.browserLaunch(true, 1280, 800);
             runtimeStore.putSession(executionId, sessionId);
+            agentTaskService.checkpoint(executionId, "browser_launch", null);
             // 注入项目级登录 Cookie，跳过登录界面
             injectCookies(testCase.getProjectId(), sessionId);
 
@@ -390,6 +416,7 @@ public class ExecutionService {
                         ExecutionStep step = executionAgent.executeStep(sessionId, stepNode, testCaseContext, i + 1, executionId);
                         steps.add(step);
                         executionStepRepository.save(step);
+                        agentTaskService.checkpoint(executionId, "step_" + (i + 1), null);
                         pauseForRecording();
                         switch (step.getResult()) {
                             case "passed" -> passed++;
@@ -453,6 +480,18 @@ public class ExecutionService {
             finalRecord.setRecordingVideoPath(videoPath);
             executionRecordRepository.save(finalRecord);
         }
+        try {
+            if (cancelled) {
+                agentTaskService.cancel(executionId);
+            } else if ("failed".equals(status) || errorMessage != null) {
+                agentTaskService.fail(executionId, "EXECUTION_FAILED",
+                        errorMessage == null ? "执行失败" : errorMessage);
+            } else {
+                agentTaskService.succeed(executionId);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to finalize agent task for execution {}: {}", executionId, e.getMessage());
+        }
 
         // v5.4: 失败步骤写入语义失败经验库
         if ("failed".equals(status)) {
@@ -515,6 +554,11 @@ public class ExecutionService {
         } catch (Exception e) {
             log.warn("Failed to mark execution {} running", executionId, e);
         }
+        try {
+            agentTaskService.start(executionId);
+        } catch (Exception e) {
+            log.warn("Failed to start agent task for execution {}: {}", executionId, e.getMessage());
+        }
 
         // 启动前已被取消：直接收尾，不开浏览器
         if (isExecutionCancelled(executionId)) {
@@ -534,6 +578,7 @@ public class ExecutionService {
             runtimeStore.clearFlag("exec:cancel:" + executionId);
             runtimeStore.removeHeartbeat(executionId);
             taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, executionId);
+            agentTaskService.cancel(executionId);
             return;
         }
 
@@ -541,6 +586,7 @@ public class ExecutionService {
             // 1. 启动浏览器（Playwright 自动开始录屏）
             sessionId = playwrightSkill.browserLaunch(true, 1280, 800);
             runtimeStore.putSession(executionId, sessionId);
+            agentTaskService.checkpoint(executionId, "browser_launch", null);
             // 注入项目级登录 Cookie，跳过登录界面
             injectCookies(testCase.getProjectId(), sessionId);
 
@@ -687,6 +733,7 @@ public class ExecutionService {
                     ExecutionStep step = stepBuilder.build();
                     steps.add(step);
                     executionStepRepository.save(step);
+                    agentTaskService.checkpoint(executionId, "step_" + (i + 1), null);
                     pauseForRecording();
                 }
             }
@@ -733,6 +780,18 @@ public class ExecutionService {
             // v2.8: 保存录屏视频路径
             finalRecord.setRecordingVideoPath(videoPath);
             executionRecordRepository.save(finalRecord);
+        }
+        try {
+            if (cancelled) {
+                agentTaskService.cancel(executionId);
+            } else if ("failed".equals(status) || errorMessage != null) {
+                agentTaskService.fail(executionId, "EXECUTION_FAILED",
+                        errorMessage == null ? "执行失败" : errorMessage);
+            } else {
+                agentTaskService.succeed(executionId);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to finalize agent task for execution {}: {}", executionId, e.getMessage());
         }
 
         // v5.4: 失败步骤写入语义失败经验库
@@ -978,5 +1037,6 @@ public class ExecutionService {
         runtimeStore.removeHeartbeat(record.getId());
         runtimeStore.removeSession(record.getId());
         taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, record.getId());
+        agentTaskService.cancel(record.getId());
     }
 }

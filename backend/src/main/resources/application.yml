@@ -95,6 +95,10 @@ app:
   ha:
     task-lease-seconds: ${APP_HA_TASK_LEASE_SECONDS:600}
     recovery-cron: ${APP_HA_RECOVERY_CRON:0 */5 * * * *}
+    # v6.6: 任务 TTL 与 QUEUED 兜底调度
+    task-ttl-minutes: ${APP_HA_TASK_TTL_MINUTES:60}
+    ttl-cron: ${APP_HA_TTL_CRON:0 */10 * * * *}
+    dispatch-delay-ms: ${APP_HA_DISPATCH_DELAY_MS:15000}
   # v6.6: 业务组件判定口径（Analyzer/Generator 共用）
   business:
     llm-summary-threshold: ${APP_BUSINESS_LLM_SUMMARY_THRESHOLD:0.3}
@@ -130,6 +134,8 @@ app:
     enabled: ${APP_MCP_ENABLED:true}
     bridge-url: ${MCP_BRIDGE_URL:http://127.0.0.1:8000}
     bridge-token: ${MCP_BRIDGE_TOKEN:aicasetest-mcp-local}
+    # v6.6: MCP 工具请求超时（秒），超时抛 TOOL_TIMEOUT 并支持幂等工具重试
+    request-timeout-seconds: ${APP_MCP_REQUEST_TIMEOUT_SECONDS:60}
   # v5.8: 数据保留策略（0=关闭）
   retention:
     execution-days: ${RETENTION_EXECUTION_DAYS:0}

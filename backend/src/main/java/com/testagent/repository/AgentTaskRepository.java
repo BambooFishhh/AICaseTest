@@ -19,6 +19,10 @@ public interface AgentTaskRepository extends JpaRepository<AgentTask, String>,
 
     List<AgentTask> findByStatusAndLeaseExpireAtBefore(String status, LocalDateTime cutoff);
 
+    List<AgentTask> findByStatusAndStartedAtBefore(String status, LocalDateTime cutoff);
+
+    List<AgentTask> findTop20ByStatusOrderByCreatedAtAsc(String status);
+
     @Query("select t.status, count(t) from AgentTask t group by t.status")
     List<Object[]> countGroupByStatus();
 }

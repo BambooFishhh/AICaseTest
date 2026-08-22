@@ -17,6 +17,8 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -37,6 +39,7 @@ public class McpConnection {
     private final String scriptPath;
     private final List<String> extraArgs;
     private final Map<String, String> env;
+    private final long requestTimeoutSeconds;
 
     private Process process;
     private BufferedWriter stdin;
@@ -48,11 +51,17 @@ public class McpConnection {
 
     public McpConnection(String name, String nodePath, String scriptPath,
                          List<String> extraArgs, Map<String, String> env) {
+        this(name, nodePath, scriptPath, extraArgs, env, 60);
+    }
+
+    public McpConnection(String name, String nodePath, String scriptPath,
+                         List<String> extraArgs, Map<String, String> env, long requestTimeoutSeconds) {
         this.name = name;
         this.nodePath = nodePath;
         this.scriptPath = scriptPath;
         this.extraArgs = extraArgs != null ? extraArgs : new ArrayList<>();
         this.env = env != null ? env : new HashMap<>();
+        this.requestTimeoutSeconds = requestTimeoutSeconds > 0 ? requestTimeoutSeconds : 60;
     }
 
     public void start() {
@@ -236,7 +245,14 @@ public class McpConnection {
             log.info("MCP [{}] → callToolStreaming: {}, id={}, stream=true", name, toolName, id);
             JsonNode response;
             try {
-                response = future.get();
+                response = future.get(requestTimeoutSeconds, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                log.warn("MCP [{}] 流式请求超时: tool={}, id={}, timeout={}s",
+                        name, toolName, id, requestTimeoutSeconds);
+                if (activeStreamingId == id && process != null && process.isAlive()) {
+                    process.destroyForcibly();
+                }
+                throw new IOException("MCP [" + name + "] 请求超时: " + toolName);
             } catch (ExecutionException e) {
                 if (cancelledStreamingId == id) {
                     throw new GenerationCancelledException("用户取消生成");
@@ -332,7 +348,12 @@ public class McpConnection {
         log.info("MCP [{}] → sendRequest method={}, id={}, 等待响应...", name, method, id);
         try {
             writeLine(json);
-            return future.get();
+            return future.get(requestTimeoutSeconds, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            pending.remove(id);
+            log.warn("MCP [{}] 请求超时: method={}, id={}, timeout={}s",
+                    name, method, id, requestTimeoutSeconds);
+            throw new IOException("MCP [" + name + "] 请求超时: " + method);
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
             if (cause instanceof Exception ex) {

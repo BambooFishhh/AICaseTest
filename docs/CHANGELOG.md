@@ -4,6 +4,36 @@
 
 ---
 
+## v6.6 — 高可用 P1：执行接入与工具超时
+**日期**: 2026-08-22
+**基线**: v6.5
+**主题**: MCP 工具超时/错误分类/幂等重试，执行任务接入 agent_task+租约，任务 TTL 与 QUEUED 调度，任务/工具指标
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `common/ToolRetryPolicy.java` | 新增 | 工具错误分类与幂等性判定（截图/状态/滚动/只读查询可重试） |
+| `mcp/McpConnection.java` | 修改 | 普通/流式 MCP 调用加请求超时，超时清理 pending 并抛 TOOL_TIMEOUT |
+| `mcp/McpClientManager.java` | 修改 | 幂等工具超时/进程不可用自动重试 1 次；新增 `aicasetest.tool.failures_total` 指标 |
+| `service/AgentTaskService.java` | 修改 | 新增执行任务类型、`createTaskWithId`、TTL 过期、QUEUED 查询、任务生命周期指标 |
+| `service/ExecutionService.java` | 修改 | 执行任务接入 agent_task，browser_launch/step{N} checkpoint，终态与取消同步 |
+| `service/HaTaskScheduler.java` | 新增 | 租约恢复、TTL 过期、QUEUED 兜底分发定时任务 |
+| `service/TaskRetryDispatcher.java` | 修改 | 新增 `dispatchQueued`，供调度器分发排队任务 |
+| `resources/application.yml` / `.env.example` / `docker-compose.yml` | 修改 | 新增 MCP 超时、任务 TTL、调度间隔配置 |
+
+### 前端变更
+
+无业务代码变更，`npm test` / `npm run build` 回归通过。
+
+### 验证结果
+
+- 后端 `mvn verify`（含 JaCoCo）BUILD SUCCESS
+- `ToolRetryPolicyTest` / `AgentTaskServiceTest` 等新增与回归单测通过
+- 前端 Vitest 7 个用例通过，`npm run build` 成功
+
+---
+
 ## v6.5 — 高可用 P0：任务状态持久化与中断恢复
 **日期**: 2026-08-22
 **基线**: v6.4

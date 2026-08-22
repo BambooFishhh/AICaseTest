@@ -2,8 +2,11 @@ package com.testagent.mcp;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import com.testagent.common.ToolRetryPolicy;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -66,6 +69,12 @@ public class McpClientManager {
     @Value("${app.mcp.bridge-token:aicasetest-mcp-local}")
     private String mcpBridgeToken;
 
+    @Value("${app.mcp.request-timeout-seconds:60}")
+    private long requestTimeoutSeconds;
+
+    @Autowired(required = false)
+    private MeterRegistry meterRegistry;
+
     // vT6: 测试环境可关闭 MCP 子进程启动
     @Value("${app.mcp.enabled:true}")
     private boolean mcpEnabled;
@@ -86,13 +95,14 @@ public class McpClientManager {
         llmEnv.put("LLM_ENABLE_THINKING", String.valueOf(llmEnableThinking));
 
         // 多模态/视觉识别继续使用原 "llm" 连接
-        McpConnection llmConn = new McpConnection("llm", llmNodePath, llmScriptPath, null, llmEnv);
+        McpConnection llmConn = new McpConnection("llm", llmNodePath, llmScriptPath, null, llmEnv,
+                requestTimeoutSeconds);
         llmConn.start();
         connections.put("llm", llmConn);
 
         // v2.7: 创建并启动 "playwright" Server
         McpConnection playwrightConn = new McpConnection("playwright",
-                playwrightNodePath, playwrightScriptPath, null, new HashMap<>());
+                playwrightNodePath, playwrightScriptPath, null, new HashMap<>(), requestTimeoutSeconds);
         playwrightConn.start();
         connections.put("playwright", playwrightConn);
 
@@ -100,7 +110,8 @@ public class McpClientManager {
         Map<String, String> toolsEnv = new HashMap<>();
         toolsEnv.put("MCP_BRIDGE_URL", mcpBridgeUrl);
         toolsEnv.put("MCP_BRIDGE_TOKEN", mcpBridgeToken);
-        McpConnection toolsConn = new McpConnection("tools", toolsNodePath, toolsScriptPath, null, toolsEnv);
+        McpConnection toolsConn = new McpConnection("tools", toolsNodePath, toolsScriptPath, null, toolsEnv,
+                requestTimeoutSeconds);
         toolsConn.start();
         connections.put("tools", toolsConn);
 
@@ -116,22 +127,14 @@ public class McpClientManager {
      * @return 工具返回的文本内容
      */
     public String callTool(String serverName, String toolName, Map<String, Object> args) throws Exception {
-        McpConnection conn = connections.get(serverName);
-        if (conn == null) {
-            throw new IllegalArgumentException("未知 MCP Server: " + serverName);
-        }
-        return conn.callTool(toolName, args);
+        return invokeTool(serverName, toolName, args, false, null).getText();
     }
 
     /**
      * v5.14: 调用工具并返回文本 + usage 元数据。
      */
     public McpToolResult callToolWithMeta(String serverName, String toolName, Map<String, Object> args) throws Exception {
-        McpConnection conn = connections.get(serverName);
-        if (conn == null) {
-            throw new IllegalArgumentException("未知 MCP Server: " + serverName);
-        }
-        return conn.callToolWithMeta(toolName, args);
+        return invokeTool(serverName, toolName, args, false, null);
     }
 
     /**
@@ -140,11 +143,7 @@ public class McpClientManager {
     public String callToolStreaming(String serverName, String toolName,
                                     Map<String, Object> args,
                                     Consumer<String> chunkConsumer) throws Exception {
-        McpConnection conn = connections.get(serverName);
-        if (conn == null) {
-            throw new IllegalArgumentException("未知 MCP Server: " + serverName);
-        }
-        return conn.callToolStreaming(toolName, args, chunkConsumer);
+        return invokeTool(serverName, toolName, args, true, chunkConsumer).getText();
     }
 
     /**
@@ -153,11 +152,56 @@ public class McpClientManager {
     public McpToolResult callToolStreamingWithMeta(String serverName, String toolName,
                                                    Map<String, Object> args,
                                                    Consumer<String> chunkConsumer) throws Exception {
+        return invokeTool(serverName, toolName, args, true, chunkConsumer);
+    }
+
+    private McpToolResult invokeTool(String serverName, String toolName, Map<String, Object> args,
+                                     boolean streaming, Consumer<String> chunkConsumer) throws Exception {
         McpConnection conn = connections.get(serverName);
         if (conn == null) {
             throw new IllegalArgumentException("未知 MCP Server: " + serverName);
         }
-        return conn.callToolStreamingWithMeta(toolName, args, chunkConsumer);
+        Exception last = null;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                return streaming
+                        ? conn.callToolStreamingWithMeta(toolName, args, chunkConsumer)
+                        : conn.callToolWithMeta(toolName, args);
+            } catch (Exception e) {
+                last = e;
+                countToolFailure(serverName, toolName, classify(e));
+                boolean idempotent = ToolRetryPolicy.isIdempotentTool(serverName, toolName);
+                if (attempt == 0 && idempotent && ToolRetryPolicy.isRetryable(e)) {
+                    long delay = 500 + (long) (Math.random() * 300);
+                    log.warn("MCP [{}] tool {} failed ({}), retry once in {}ms",
+                            serverName, toolName, e.getMessage(), delay);
+                    Thread.sleep(delay);
+                    continue;
+                }
+                throw e;
+            }
+        }
+        throw last;
+    }
+
+    private String classify(Throwable e) {
+        String message = e.getMessage() == null ? "" : e.getMessage();
+        if (message.contains("请求超时") || message.contains("timeout")) {
+            return "TOOL_TIMEOUT";
+        }
+        if (e instanceof java.io.IOException || message.contains("未启动") || message.contains("已停止")) {
+            return "TOOL_UNAVAILABLE";
+        }
+        return "TOOL_ERROR";
+    }
+
+    private void countToolFailure(String serverName, String toolName, String errorCode) {
+        if (meterRegistry == null) {
+            return;
+        }
+        meterRegistry.counter("aicasetest.tool.failures_total",
+                        "server", serverName, "tool", toolName, "error_code", errorCode)
+                .increment();
     }
 
     /**

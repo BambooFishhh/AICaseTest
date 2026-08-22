@@ -2,6 +2,7 @@ package com.testagent.service;
 
 import com.testagent.entity.AgentTask;
 import com.testagent.repository.AgentTaskRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,7 +12,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -33,6 +33,7 @@ public class AgentTaskService {
     public static final String TYPE_ANALYSIS = "analysis";
     public static final String TYPE_GENERATION = "generation";
     public static final String TYPE_APPEND_GENERATION = "append_generation";
+    public static final String TYPE_EXECUTION = "execution";
 
     public static final String STATUS_CREATED = "CREATED";
     public static final String STATUS_QUEUED = "QUEUED";
@@ -49,6 +50,12 @@ public class AgentTaskService {
     @Value("${app.ha.task-lease-seconds:600}")
     private int taskLeaseSeconds = 600;
 
+    @Value("${app.ha.task-ttl-minutes:60}")
+    private int taskTtlMinutes = 60;
+
+    @Autowired(required = false)
+    private MeterRegistry meterRegistry;
+
     public String createTask(String taskType, String projectId, String requestId, String inputJson) {
         AgentTask latest = agentTaskRepository
                 .findFirstByRequestIdAndTaskTypeOrderByCreatedAtDesc(requestId, taskType)
@@ -60,6 +67,27 @@ public class AgentTaskService {
 
         AgentTask task = new AgentTask();
         task.setId(UUID.randomUUID().toString());
+        task.setRequestId(requestId);
+        task.setTaskType(taskType);
+        task.setProjectId(projectId);
+        task.setStatus(STATUS_QUEUED);
+        task.setPhase("created");
+        task.setAttempts(0);
+        task.setMaxAttempts(3);
+        task.setInputJson(inputJson);
+        task.setDegraded(false);
+        task.setCreatedAt(LocalDateTime.now());
+        task.setUpdatedAt(LocalDateTime.now());
+        return agentTaskRepository.save(task).getId();
+    }
+
+    /**
+     * v6.6: 执行任务使用固定 taskId（= executionId），便于执行链路直接按 executionId 收尾。
+     */
+    public String createTaskWithId(String id, String taskType, String projectId,
+                                   String requestId, String inputJson) {
+        AgentTask task = new AgentTask();
+        task.setId(id);
         task.setRequestId(requestId);
         task.setTaskType(taskType);
         task.setProjectId(projectId);
@@ -87,6 +115,7 @@ public class AgentTaskService {
             task.setStartedAt(LocalDateTime.now());
             task.setEndedAt(null);
         });
+        metric("aicasetest.task.started");
     }
 
     public void checkpoint(String taskId, String phase, String checkpointJson) {
@@ -106,10 +135,12 @@ public class AgentTaskService {
             task.setLeaseOwner(null);
             task.setLeaseExpireAt(null);
         });
+        metric("aicasetest.task.completed");
     }
 
     public void fail(String taskId, String errorCode, String errorMessage) {
         update(taskId, task -> finishFailure(task, STATUS_FAILED, errorCode, errorMessage));
+        metric("aicasetest.task.failed");
     }
 
     public void cancel(String taskId) {
@@ -123,6 +154,7 @@ public class AgentTaskService {
 
     public void markDlq(String taskId, String errorCode, String errorMessage) {
         update(taskId, task -> finishFailure(task, STATUS_DLQ, errorCode, errorMessage));
+        metric("aicasetest.task.dlq_total");
     }
 
     public void requeue(String taskId) {
@@ -159,6 +191,10 @@ public class AgentTaskService {
         return agentTaskRepository.findAll(spec, pageable);
     }
 
+    public List<AgentTask> findQueued() {
+        return agentTaskRepository.findTop20ByStatusOrderByCreatedAtAsc(STATUS_QUEUED);
+    }
+
     public Map<String, Long> statusCounts() {
         Map<String, Long> counts = new LinkedHashMap<>();
         for (Object[] row : agentTaskRepository.countGroupByStatus()) {
@@ -170,7 +206,6 @@ public class AgentTaskService {
     /**
      * 启动恢复 + 定时恢复：lease 过期的 RUNNING 任务标记 NEEDS_REVIEW，由管理员确认后重试。
      */
-    @Scheduled(cron = "${app.ha.recovery-cron:0 */5 * * * *}")
     public int recoverStaleTasks() {
         LocalDateTime cutoff = LocalDateTime.now();
         List<AgentTask> stale = agentTaskRepository
@@ -185,6 +220,31 @@ public class AgentTaskService {
         }
         if (!stale.isEmpty()) {
             log.info("v6.5: recovered {} stale agent tasks -> NEEDS_REVIEW", stale.size());
+            metric("aicasetest.task.lease_expired_total",
+                    "count", String.valueOf(stale.size()));
+        }
+        return stale.size();
+    }
+
+    /**
+     * v6.6: 运行超过 TTL 的任务标记 NEEDS_REVIEW，避免"活着的僵尸任务"永久占用配额。
+     */
+    public int expireTasksByTtl() {
+        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(taskTtlMinutes);
+        List<AgentTask> stale = agentTaskRepository
+                .findByStatusAndStartedAtBefore(STATUS_RUNNING, cutoff);
+        for (AgentTask task : stale) {
+            task.setStatus(STATUS_NEEDS_REVIEW);
+            task.setErrorCode("TTL_EXCEEDED");
+            task.setErrorMessage("任务运行超过 " + taskTtlMinutes + " 分钟，已转入人工复核");
+            task.setEndedAt(LocalDateTime.now());
+            task.setLeaseOwner(null);
+            task.setLeaseExpireAt(null);
+            task.setUpdatedAt(LocalDateTime.now());
+            agentTaskRepository.save(task);
+        }
+        if (!stale.isEmpty()) {
+            log.info("v6.6: expired {} agent tasks by TTL({}m) -> NEEDS_REVIEW", stale.size(), taskTtlMinutes);
         }
         return stale.size();
     }
@@ -210,5 +270,12 @@ public class AgentTaskService {
         return STATUS_CREATED.equals(status)
                 || STATUS_QUEUED.equals(status)
                 || STATUS_RUNNING.equals(status);
+    }
+
+    private void metric(String name, String... tags) {
+        if (meterRegistry == null) {
+            return;
+        }
+        meterRegistry.counter(name, tags).increment();
     }
 }
