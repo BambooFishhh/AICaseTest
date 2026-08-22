@@ -4,6 +4,37 @@
 
 ---
 
+## v6.9 — 高可用收口：故障演练与容量
+**日期**: 2026-08-22
+**基线**: v6.8
+**主题**: 任务 timeline 回放、故障演练/容量脚本、运维手册收口
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `db/migration/mysql/V10__add_agent_task_events.sql` | 新增 | agent_task_events timeline 表 |
+| `entity/AgentTaskEvent.java`、`repository/AgentTaskEventRepository.java` | 新增 | 任务事件实体与仓储 |
+| `service/AgentTaskService.java` | 修改 | 状态/checkpoint 变更自动记录事件；新增 timeline 查询 |
+| `controller/AgentTaskAdminController.java` | 修改 | 新增 `GET /api/admin/tasks/{id}/timeline` |
+| `scripts/ha-fault-drill.ps1` | 新增 | 故障演练入口（LLM/工具/kill -9/Redis/取消） |
+| `scripts/ha-capacity-drill.ps1` | 新增 | 容量与阈值基线入口 |
+| `docs/运维手册.md` | 修改 | 新增高可用任务与演练章节 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `api/task.js` | 修改 | 新增 `getTaskTimeline` |
+| `views/TaskCenter.vue` | 修改 | 详情抽屉新增任务回放 timeline |
+
+### 验证结果
+
+- 后端 `mvn verify` BUILD SUCCESS
+- 前端 `npm test` / `npm run build` 通过
+
+---
+
 ## v6.8 — 高可用 P3：队列与多实例
 **日期**: 2026-08-22
 **基线**: v6.7

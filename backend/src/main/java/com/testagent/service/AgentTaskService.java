@@ -1,6 +1,8 @@
 package com.testagent.service;
 
 import com.testagent.entity.AgentTask;
+import com.testagent.entity.AgentTaskEvent;
+import com.testagent.repository.AgentTaskEventRepository;
 import com.testagent.repository.AgentTaskRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -58,6 +60,9 @@ public class AgentTaskService {
 
     @Autowired(required = false)
     private TaskEventStreamService taskEventStreamService;
+
+    @Autowired
+    private AgentTaskEventRepository agentTaskEventRepository;
 
     public String createTask(String taskType, String projectId, String requestId, String inputJson) {
         AgentTask latest = agentTaskRepository
@@ -232,6 +237,10 @@ public class AgentTaskService {
         return agentTaskRepository.findTop20ByStatusOrderByCreatedAtAsc(STATUS_QUEUED);
     }
 
+    public List<AgentTaskEvent> timeline(String taskId) {
+        return agentTaskEventRepository.findByTaskIdOrderByCreatedAtAsc(taskId);
+    }
+
     public Map<String, Long> statusCounts() {
         Map<String, Long> counts = new LinkedHashMap<>();
         for (Object[] row : agentTaskRepository.countGroupByStatus()) {
@@ -254,6 +263,7 @@ public class AgentTaskService {
             task.setEndedAt(LocalDateTime.now());
             task.setUpdatedAt(LocalDateTime.now());
             agentTaskRepository.save(task);
+            recordEvent(task);
         }
         if (!stale.isEmpty()) {
             log.info("v6.5: recovered {} stale agent tasks -> NEEDS_REVIEW", stale.size());
@@ -279,6 +289,7 @@ public class AgentTaskService {
             task.setLeaseExpireAt(null);
             task.setUpdatedAt(LocalDateTime.now());
             agentTaskRepository.save(task);
+            recordEvent(task);
         }
         if (!stale.isEmpty()) {
             log.info("v6.6: expired {} agent tasks by TTL({}m) -> NEEDS_REVIEW", stale.size(), taskTtlMinutes);
@@ -300,7 +311,25 @@ public class AgentTaskService {
             mutator.accept(task);
             task.setUpdatedAt(LocalDateTime.now());
             agentTaskRepository.save(task);
+            recordEvent(task);
         });
+    }
+
+    private void recordEvent(AgentTask task) {
+        try {
+            AgentTaskEvent event = new AgentTaskEvent();
+            event.setId(UUID.randomUUID().toString().substring(0, 12));
+            event.setTaskId(task.getId());
+            event.setPhase(task.getPhase());
+            event.setStatus(task.getStatus());
+            event.setAttempt(task.getAttempts());
+            event.setErrorCode(task.getErrorCode());
+            event.setErrorMessage(task.getErrorMessage());
+            event.setCreatedAt(LocalDateTime.now());
+            agentTaskEventRepository.save(event);
+        } catch (Exception e) {
+            log.warn("Failed to record agent task event for {}: {}", task.getId(), e.getMessage());
+        }
     }
 
     private boolean isActive(String status) {

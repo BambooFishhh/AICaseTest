@@ -4,8 +4,10 @@ import com.testagent.common.ApiResponse;
 import com.testagent.common.BusinessException;
 import com.testagent.dto.AgentTaskDTO;
 import com.testagent.entity.AgentTask;
+import com.testagent.entity.AgentTaskEvent;
 import com.testagent.service.AgentTaskService;
 import com.testagent.service.TaskRetryDispatcher;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -51,6 +53,14 @@ public class AgentTaskAdminController {
             throw BusinessException.notFound("任务不存在: " + id);
         }
         return ApiResponse.success(AgentTaskDTO.from(task));
+    }
+
+    /**
+     * v6.9: 任务 timeline 回放。
+     */
+    @GetMapping("/{id}/timeline")
+    public ApiResponse<List<AgentTaskEvent>> timeline(@PathVariable String id) {
+        return ApiResponse.success(agentTaskService.timeline(id));
     }
 
     @PostMapping("/{id}/retry")

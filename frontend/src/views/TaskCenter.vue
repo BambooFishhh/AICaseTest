@@ -89,6 +89,18 @@
         <el-descriptions-item label="项目 ID">{{ detail.projectId }}</el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ detail.createdAt }}</el-descriptions-item>
       </el-descriptions>
+      <div v-if="timeline.length" class="timeline-title">任务回放</div>
+      <el-timeline v-if="timeline.length" class="timeline">
+        <el-timeline-item
+          v-for="item in timeline"
+          :key="item.id"
+          :timestamp="item.createdAt"
+          :type="timelineType(item.status)"
+        >
+          <div>{{ item.status }} · {{ item.phase || '-' }}</div>
+          <div v-if="item.errorMessage" class="timeline-error">{{ item.errorMessage }}</div>
+        </el-timeline-item>
+      </el-timeline>
       <template #footer>
         <el-button @click="detailVisible = false">关闭</el-button>
         <el-button
@@ -106,7 +118,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { listTasks, getTask, retryTask } from '@/api/task'
+import { listTasks, getTask, retryTask, getTaskTimeline } from '@/api/task'
 
 const tasks = ref([])
 const total = ref(0)
@@ -116,6 +128,7 @@ const loading = ref(false)
 const retryingId = ref('')
 const detailVisible = ref(false)
 const detail = ref(null)
+const timeline = ref([])
 const filters = reactive({
   taskType: '',
   status: '',
@@ -160,9 +173,17 @@ async function loadTasks() {
 }
 
 async function openDetail(id) {
-  const res = await getTask(id)
+  const [res, timelineRes] = await Promise.all([getTask(id), getTaskTimeline(id)])
   detail.value = res.data
+  timeline.value = (timelineRes.data || []).reverse()
   detailVisible.value = true
+}
+
+function timelineType(status) {
+  if (status === 'SUCCEEDED') return 'success'
+  if (status === 'FAILED' || status === 'DLQ') return 'danger'
+  if (status === 'NEEDS_REVIEW') return 'warning'
+  return 'primary'
 }
 
 async function handleRetry(id) {
@@ -202,5 +223,15 @@ onMounted(loadTasks)
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+.timeline-title {
+  margin: 18px 0 8px;
+  font-weight: 600;
+}
+
+.timeline-error {
+  color: var(--el-color-danger);
+  font-size: 12px;
 }
 </style>

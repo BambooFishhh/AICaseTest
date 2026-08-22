@@ -17,3 +17,7 @@ export function getTask(id) {
 export function retryTask(id) {
   return request.post(`/admin/tasks/${id}/retry`)
 }
+
+export function getTaskTimeline(id) {
+  return request.get(`/admin/tasks/${id}/timeline`)
+}
