@@ -151,6 +151,83 @@ class SpringAnalyzerTest {
                 .allMatch(e -> List.of("rules").equals(e.getSources())));
     }
 
+    // v7.4(A1/C1): src/test 测试代码必须排除，不得污染 endpoints/enums/entities/businessRules
+    @Test
+    void testCodeExcludedFromAnalysisWithWarning() throws IOException {
+        writeBackendProject(tempDir);
+        write(tempDir, "src/test/java/com/example/TestOrderController.java", """
+                package com.example;
+
+                import org.springframework.web.bind.annotation.GetMapping;
+                import org.springframework.web.bind.annotation.RestController;
+
+                @RestController
+                public class TestOrderController {
+                    @GetMapping("/test/orders")
+                    public String listForTest() {
+                        return "ok";
+                    }
+                }
+                """);
+        LlmService llmService = mock(LlmService.class);
+        when(llmService.isConfigured()).thenReturn(false);
+        SpringAnalyzer analyzer = new SpringAnalyzer();
+        ReflectionTestUtils.setField(analyzer, "llmService", llmService);
+
+        BackendResult result = analyzer.analyze(tempDir.toString());
+
+        // 测试 Controller 的端点不得出现
+        assertTrue(result.getEndpoints().stream()
+                .noneMatch(e -> "/test/orders".equals(e.getPath())));
+        // 排除行为必须可观测（C1）
+        assertTrue(result.getWarnings().stream()
+                .anyMatch(w -> w.contains("已排除 src/test 测试代码 1 个文件")));
+    }
+
+    // v7.4(A2): @RequestMapping 的 method 属性必须解析出 HTTP 方法，不得默认 ANY
+    @Test
+    void requestMappingMethodAttributeResolved() throws IOException {
+        writeBackendProject(tempDir);
+        write(tempDir, "src/main/java/com/example/SyncController.java", """
+                package com.example;
+
+                import org.springframework.web.bind.annotation.RequestMapping;
+                import org.springframework.web.bind.annotation.RequestMethod;
+                import org.springframework.web.bind.annotation.RestController;
+
+                @RestController
+                public class SyncController {
+                    @RequestMapping(value = "/sync", method = RequestMethod.POST)
+                    public String sync() {
+                        return "ok";
+                    }
+
+                    @RequestMapping(value = "/multi", method = {RequestMethod.GET, RequestMethod.POST})
+                    public String multi() {
+                        return "ok";
+                    }
+                }
+                """);
+        LlmService llmService = mock(LlmService.class);
+        when(llmService.isConfigured()).thenReturn(false);
+        SpringAnalyzer analyzer = new SpringAnalyzer();
+        ReflectionTestUtils.setField(analyzer, "llmService", llmService);
+
+        BackendResult result = analyzer.analyze(tempDir.toString());
+
+        EndpointInfo sync = result.getEndpoints().stream()
+                .filter(e -> "/sync".equals(e.getPath()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("POST", sync.getMethod());
+
+        EndpointInfo multi = result.getEndpoints().stream()
+                .filter(e -> "/multi".equals(e.getPath()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("GET", multi.getMethod());
+    }
+
     private void writeBackendProject(Path root) throws IOException {
         write(root, "src/main/java/com/example/OrderController.java", """
                 package com.example;

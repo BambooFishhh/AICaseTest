@@ -39,6 +39,9 @@ public class FrontendResult {
 
     private String status;
 
+    // v7.4(C1): 分析过程可观测告警（文件读取失败/rules 块不配对/多 rules 块合并/LLM 失败），随 JSON 落库 code_analysis
+    private List<String> warnings;
+
     public static FrontendResult skipped() {
         return FrontendResult.builder()
                 .status("skipped")
@@ -51,6 +54,7 @@ public class FrontendResult {
                 .pageFlows(List.of())
                 .componentSummaries(List.of())
                 .fileCount(0)
+                .warnings(List.of())
                 .build();
     }
 }

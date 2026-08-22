@@ -67,7 +67,8 @@ public class SpringAnalyzer {
         }
 
         Map<String, Object> techStack = detectTechStack(dir);
-        List<File> javaFiles = findJavaFiles(dir);
+        List<String> warnings = new ArrayList<>();
+        List<File> javaFiles = findJavaFiles(dir, warnings);
 
         List<EndpointInfo> endpoints = new ArrayList<>();
         List<EnumInfo> enums = new ArrayList<>();
@@ -75,6 +76,7 @@ public class SpringAnalyzer {
         List<BusinessRule> businessRules = new ArrayList<>();
         List<OperationDep> dependencyGraph = new ArrayList<>();
 
+        List<String> parseFailures = new ArrayList<>();
         for (File javaFile : javaFiles) {
             String relativePath = relativize(dir, javaFile);
             try {
@@ -85,11 +87,19 @@ public class SpringAnalyzer {
                 businessRules.addAll(extractBusinessRules(cu, relativePath));
             } catch (Exception e) {
                 // skip single file parse failure so the whole analysis is not broken
+                parseFailures.add(relativePath);
+                log.debug("Java parse failed for {}: {}", relativePath, e.getMessage());
             }
+        }
+        // v7.4(C1): 单文件解析失败不再静默——计数 + 前 5 个路径写入 warnings
+        if (!parseFailures.isEmpty()) {
+            warnings.add("Java 文件解析失败 " + parseFailures.size() + " 个（"
+                    + String.join(", ", parseFailures.subList(0, Math.min(5, parseFailures.size())))
+                    + (parseFailures.size() > 5 ? " 等" : "") + "），相关接口/实体/规则可能缺失");
         }
         dependencyGraph.addAll(extractDependencyGraph(dir, javaFiles));
 
-        enhanceWithLlmIfConfigured(dir, javaFiles, endpoints, enums, entities, businessRules);
+        enhanceWithLlmIfConfigured(dir, javaFiles, endpoints, enums, entities, businessRules, warnings);
 
         return BackendResult.builder()
                 .techStack(techStack)
@@ -100,6 +110,7 @@ public class SpringAnalyzer {
                 .dependencyGraph(dependencyGraph)
                 .fileCount(javaFiles.size())
                 .status("ok")
+                .warnings(warnings)
                 .build();
     }
 
@@ -173,7 +184,8 @@ public class SpringAnalyzer {
             String className = cls.getNameAsString();
             for (MethodDeclaration method : cls.getMethods()) {
                 for (AnnotationExpr ann : method.getAnnotations()) {
-                    String httpMethod = mapHttpMethod(ann.getNameAsString());
+                    // v7.4(A2): 传注解对象以解析 @RequestMapping 的 method 属性
+                    String httpMethod = mapHttpMethod(ann);
                     if (httpMethod == null) {
                         continue;
                     }
@@ -464,7 +476,8 @@ public class SpringAnalyzer {
                                             List<EndpointInfo> endpoints,
                                             List<EnumInfo> enums,
                                             List<EntityInfo> entities,
-                                            List<BusinessRule> businessRules) {
+                                            List<BusinessRule> businessRules,
+                                            List<String> warnings) {
         if (!llmService.isConfigured()) {
             return;
         }
@@ -472,6 +485,8 @@ public class SpringAnalyzer {
             enhanceWithLlm(dir, javaFiles, endpoints, enums, entities, businessRules);
         } catch (Exception e) {
             log.warn("LLM backend enhancement failed, using rule-based results: {}", e.getMessage());
+            // v7.4(C1): LLM 增强失败不再只在日志中静默降级
+            warnings.add("LLM 后端增强失败（" + e.getMessage() + "），结果仅含规则提取部分");
         }
     }
 
@@ -994,6 +1009,47 @@ public class SpringAnalyzer {
         };
     }
 
+    // v7.4(A2): 方法级 @RequestMapping 解析 method 属性（此前恒返回 ANY，
+    // 老项目 method = RequestMethod.POST 写法路径对但方法错，接口覆盖率分母被污染）
+    private String mapHttpMethod(AnnotationExpr ann) {
+        if (!"RequestMapping".equals(ann.getNameAsString())) {
+            return mapHttpMethod(ann.getNameAsString());
+        }
+        List<String> methods = new ArrayList<>();
+        if (ann instanceof NormalAnnotationExpr normal) {
+            for (var pair : normal.getPairs()) {
+                if ("method".equals(pair.getNameAsString())) {
+                    collectRequestMethodNames(pair.getValue(), methods);
+                    break;
+                }
+            }
+        } else if (ann instanceof SingleMemberAnnotationExpr single) {
+            // @RequestMapping(POST) 静态导入简写（Spring 4.3+）；路径字符串形态不会命中
+            collectRequestMethodNames(single.getMemberValue(), methods);
+        }
+        // 多值取第一个（风险清单 A2 约定）
+        return methods.isEmpty() ? "ANY" : methods.get(0);
+    }
+
+    private void collectRequestMethodNames(com.github.javaparser.ast.expr.Expression expr, List<String> out) {
+        if (expr instanceof com.github.javaparser.ast.expr.ArrayInitializerExpr arr) {
+            for (var e : arr.getValues()) {
+                collectRequestMethodNames(e, out);
+            }
+            return;
+        }
+        if (expr instanceof com.github.javaparser.ast.expr.FieldAccessExpr fae
+                && "RequestMethod".equals(fae.getScope().toString())) {
+            out.add(fae.getNameAsString());
+        } else if (expr instanceof com.github.javaparser.ast.expr.NameExpr ne) {
+            // 静态导入的 RequestMethod.POST 常以裸名出现
+            String n = ne.getNameAsString();
+            if (List.of("GET", "POST", "PUT", "DELETE", "PATCH").contains(n)) {
+                out.add(n);
+            }
+        }
+    }
+
     private String joinPath(String base, String sub) {
         if (base == null) {
             base = "";
@@ -1045,9 +1101,24 @@ public class SpringAnalyzer {
         }
     }
 
-    private List<File> findJavaFiles(File backendDir) {
+    private List<File> findJavaFiles(File backendDir, List<String> warnings) {
+        List<File> all = new ArrayList<>();
+        collectJavaFiles(backendDir, all);
+        // v7.4(A1): 主循环统一排除 src/test 测试代码（此前仅依赖图与 LLM 源码收集排除，三处口径不一致，
+        // 测试 fixture 的 Controller/实体/断言规则会污染 endpoints/enums/entities/businessRules）
         List<File> files = new ArrayList<>();
-        collectJavaFiles(backendDir, files);
+        int testExcluded = 0;
+        for (File f : all) {
+            String rel = relativize(backendDir, f);
+            if (rel.startsWith("src/test/") || rel.contains("/src/test/")) {
+                testExcluded++;
+                continue;
+            }
+            files.add(f);
+        }
+        if (testExcluded > 0) {
+            warnings.add("已排除 src/test 测试代码 " + testExcluded + " 个文件（不计入分析结果）");
+        }
         return files;
     }
 
@@ -1068,5 +1139,8 @@ public class SpringAnalyzer {
                 result.add(child);
             }
         }
+        // v7.4(A9): File.listFiles() 顺序依赖操作系统，统一按绝对路径字典序排序保证分析可复现
+        // （子目录递归返回时排一次，顶层调用返回时全列表有序）
+        result.sort(Comparator.comparing(File::getAbsolutePath));
     }
 }

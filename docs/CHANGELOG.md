@@ -4,6 +4,51 @@
 
 ---
 
+## v7.4 — 分析器规则层加固
+**日期**: 2026-08-23
+**基线**: v7.3
+**主题**: 证据可信——分析结果干净（无测试污染）、完整（规则不静默丢）、可复现（文件序确定）、可观测（失败有告警）、不误导（兜底有标记）（对应风险清单 A1/A2/A7/A8/A9/A10/A19/A20/C1）
+
+### 背景
+
+分析结果是整个系统"代码证据链"的数据源，规则层存在三类问题：**数据污染**——测试 fixture 混入正式结果（A1）、方法级 `@RequestMapping` 的 HTTP 方法恒为 ANY 污染覆盖率分母（A2）；**静默丢失**——模板字符串让 rules 块括号计数错位（A7）、多 form 只取第一个 rules 块（A8）、LLM 补充被组件级整条丢弃（A10）、所有提取失败一律静默返回空列表，"0 个表单"无从区分真没有还是解析失败（C1）；**不可复现与误导**——文件遍历顺序依赖 OS，两次分析 LLM 看到的文件集合不同（A9）、规则兜底状态机无降级标记诱导 LLM 虚构转换（A20）、另有约 120 行死代码（A19）。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `analyzer/SpringAnalyzer.java` | 修改 | **A1**：`findJavaFiles` 统一排除 `src/test/` 路径（主循环与依赖图/LLM 源码收集三处口径一致），排除计数写入 warnings。**A2**：`mapHttpMethod` 解析注解 `method` 属性（`RequestMethod.POST` 单值与 `{GET, POST}` 数组取第一个，Normal/SingleMember 两种注解形态），无 method 属性仍为 ANY。**A9**：`collectJavaFiles` 结果按绝对路径字典序排序。**C1**：单文件解析失败（文件名+数量）、src/test 排除计数写入 warnings |
+| `analyzer/VueAnalyzer.java` | 修改 | **A7**：`extractBalanced` 重写为字符串状态机——支持单双引号、反引号模板串（含嵌套 `${}` 表达式、表达式内引号/嵌套反引号/转义），模板串内的花括号不再错位计数。**A8**：rules 块收集由 `rs.find()` 单块改为 while 全量收集并拼接，字段校验查找跨全部块，多块计信息性 warning。**A9**：`collectVueFiles` 按绝对路径排序。**A10**：`parseAndMergeSupplements` 中 forms 改字段级合并（按 field name 去重，正则已有字段保留、LLM 新字段追加）、domSelectors 改选择器级合并（按 type+value 去重追加）。**C1**：文件读取失败/rules 块不配对/各提取器整体异常/LLM 补充解析失败/组件摘要 LLM 失败计数全部写入 warnings（VueAnalyzer 单例并发安全：warnings 参数传递而非实例字段） |
+| `agent/StateMachineAgent.java` | 修改 | **A19**：删除无调用方死代码 `enhanceWithFrontend`/`mergeFrontendEnhancements`/`toMap`（约 120 行，v6.2 合并单次 LLM 调用后遗留） |
+| `agent/TestGeneratorAgent.java` | 修改 | **A19**：删除 v7.1 遗留死代码（`SYSTEM_PROMPT_HEADER`/`buildSystemPrompt` 等）。**A20**：生成上下文中每个状态机附带 `source` 字段——`stateMachineSource(sm)` 从现有 `sources` JSON 派生（含 `rule_based` 且不含 `llm` → `rule`，否则 `llm`，不加数据库列）；system prompt 增加信任度规则：rule 来源仅状态枚举可信、transitions 可为空数组，禁止为兜底状态机虚构转换 |
+| `analyzer/result/BackendResult.java` | 修改 | **C1**：新增 `warnings: List<String>` 字段，`skipped()` 初始化为空列表（非 null） |
+| `analyzer/result/FrontendResult.java` | 修改 | **C1**：新增 `warnings: List<String>` 字段，`skipped()` 初始化为空列表（非 null） |
+| `test/SpringAnalyzerTest.java` | 修改 | A1/A2/C1 3 个用例（测试 Controller 排除+告警/`@RequestMapping` method 属性单值与数组解析） |
+| `test/VueAnalyzerTest.java` | 新增 | A7/A8/A10/C1 4 个用例（双 rules 块字段校验全解析+合并告警/模板串不破坏括号配对/LLM 补充字段级合并不覆盖已有字段/rules 块不配对告警） |
+| `test/TestGeneratorAgentStateMachineSourceTest.java` | 新增 | A20 3 个用例（rule_based 派生 rule/含 llm 派生 llm/null 与空 sources 兜底 llm） |
+
+### API 契约变化
+
+- 无 REST 接口变更
+- `code_analysis` 表 JSON 新增 `warnings` 数组字段（前端未知字段自动忽略，前端展示随后续版本）
+- 生成上下文 stateMachines 元素新增 `source` 字段（"rule"/"llm"）
+
+### 验证结果
+
+- 后端 `mvn test`（JDK 17 + Maven 3.9.16）：**150 个测试全部通过，BUILD SUCCESS**（新增 9 个用例：SpringAnalyzerTest +2、VueAnalyzerTest 4、StateMachineSourceTest 3）
+- 前端本版无改动
+
+### 预期影响（证据可信）
+
+- 分析结果不再混入测试 fixture：mock Controller/测试实体不出现在 endpoints/entities（此前直接污染生成上下文与覆盖率分母）
+- 方法级 `@RequestMapping` 接口方法正确（POST 不再标 ANY），接口覆盖率分母恢复准确
+- 表单校验规则提取完整：模板串消息不再截断 rules 块、多表单全部 rules 块合并解析、LLM 补充字段级合并（正则漏掉的备注/邮箱等字段不再丢失）
+- 相同项目两次分析看到相同的文件集合（路径字典序），叠加既有温度 0.3 大幅降低结果漂移
+- "0 个表单/规则"可解释：解析失败、文件排除、LLM 失败均以人可读告警落库 code_analysis
+- 规则兜底状态机带 `source: rule` 降级标记，生成侧不再对空 transitions 虚构转换
+
+---
+
 ## v7.3 — LLM 组件稳定与生成质量约束
 **日期**: 2026-08-23
 **基线**: v7.2

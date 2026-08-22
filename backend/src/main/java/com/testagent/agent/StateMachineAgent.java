@@ -69,126 +69,8 @@ public class StateMachineAgent {
         return list != null && !list.isEmpty();
     }
 
-    private void enhanceWithFrontend(List<StateMachine> stateMachines, FrontendResult frontendResult) {
-        if (stateMachines == null || stateMachines.isEmpty()) {
-            return;
-        }
-        List<Map<String, Object>> stateMachineBriefs = new ArrayList<>();
-        for (StateMachine sm : stateMachines) {
-            Map<String, Object> brief = new LinkedHashMap<>();
-            brief.put("name", sm.getName());
-            brief.put("states", JsonHelper.parseListMap(sm.getStates()));
-            brief.put("transitions", JsonHelper.parseListMap(sm.getTransitions()));
-            stateMachineBriefs.add(brief);
-        }
-
-        Map<String, Object> context = new LinkedHashMap<>();
-        context.put("stateMachines", stateMachineBriefs);
-        context.put("frontendEvidence", Map.of(
-                "pageFlows", frontendResult.getPageFlows() == null ? List.of() : frontendResult.getPageFlows(),
-                "apiCalls", frontendResult.getApiCalls() == null ? List.of() : frontendResult.getApiCalls(),
-                "componentStates", frontendResult.getComponentStates() == null ? List.of() : frontendResult.getComponentStates()));
-
-        String systemPrompt = promptSkillLoader.load("state-machine-frontend-enhancement", """
-                你是状态机增强专家。后端枚举值是状态机的 ground truth，前端 pageFlows/apiCalls/componentStates 只是旁证。
-
-                输入包含：
-                - stateMachines：已有状态机的 states 和 transitions
-                - frontendEvidence：页面跳转、接口调用、组件交互状态
-
-                任务：
-                1. 为每个状态机补充 transitions，补充 from/to/trigger/condition/endpoint（格式 METHOD /path）/order。
-                2. from/to 只能使用该状态机 states 中已存在的 code，禁止新增 state。
-                3. 前端证据只能用来推断 trigger、转换顺序和关联接口，不能虚构状态。
-                4. 没有可补充内容的返回空数组。
-
-                只返回纯 JSON 数组，不要 markdown 代码块，不要其他文字：
-                [{"name":"状态机名","transitions":[{"from":"CREATED","to":"PAID","trigger":"支付","condition":"订单已创建","endpoint":"POST /api/orders/{id}/pay","order":1}]}]
-                """);
-        String userPrompt;
-        try {
-            userPrompt = "状态机与前端证据：\n" + objectMapper.writeValueAsString(context);
-        } catch (Exception e) {
-            userPrompt = "状态机与前端证据：\n" + context.toString();
-        }
-
-        String response = llmService.chatWithAnalysis(systemPrompt, userPrompt, 0.3);
-        mergeFrontendEnhancements(stateMachines, response);
-    }
-
-    private void mergeFrontendEnhancements(List<StateMachine> stateMachines, String response) {
-        JsonNode array;
-        try {
-            array = objectMapper.readTree(extractJsonArray(response));
-        } catch (Exception e) {
-            log.warn("Failed to parse frontend state machine enhancement JSON: {}", e.getMessage());
-            return;
-        }
-        if (array == null || !array.isArray()) {
-            return;
-        }
-        for (JsonNode node : array) {
-            String name = node.path("name").asText("").trim();
-            StateMachine sm = stateMachines.stream()
-                    .filter(s -> name.equals(s.getName()))
-                    .findFirst()
-                    .orElse(null);
-            if (sm == null || !node.has("transitions") || !node.get("transitions").isArray()) {
-                continue;
-            }
-            List<Map<String, Object>> merged = new ArrayList<>(JsonHelper.parseListMap(sm.getTransitions()));
-            Map<String, String> stateCodes = readStateCodeMap(sm);
-            boolean changed = false;
-            for (JsonNode transitionNode : node.get("transitions")) {
-                Map<String, Object> transition = toMap(transitionNode);
-                String fromRaw = text(transition, "from").trim();
-                String toRaw = text(transition, "to").trim();
-                String fromKey = normalizeState(fromRaw);
-                String toKey = normalizeState(toRaw);
-                if (fromRaw.isEmpty() || toRaw.isEmpty()) {
-                    continue;
-                }
-                if (!stateCodes.containsKey(fromKey) || !stateCodes.containsKey(toKey)) {
-                    log.warn("Drop frontend transition with unknown state: {} -> {}", fromKey, toKey);
-                    continue;
-                }
-                String from = stateCodes.get(fromKey);
-                String to = stateCodes.get(toKey);
-                String trigger = text(transition, "trigger");
-                boolean duplicate = merged.stream().anyMatch(t ->
-                        fromKey.equals(normalizeState(text(t, "from")))
-                                && toKey.equals(normalizeState(text(t, "to")))
-                                && trigger.equalsIgnoreCase(text(t, "trigger")));
-                if (duplicate) {
-                    continue;
-                }
-                Map<String, Object> item = new LinkedHashMap<>();
-                item.put("from", from);
-                item.put("to", to);
-                if (!trigger.isEmpty()) {
-                    item.put("trigger", trigger);
-                }
-                String condition = text(transition, "condition");
-                if (!condition.isEmpty()) {
-                    item.put("condition", condition);
-                }
-                String endpoint = text(transition, "endpoint");
-                if (!endpoint.isEmpty()) {
-                    item.put("endpoint", endpoint);
-                }
-                if (transition.get("order") instanceof Number order) {
-                    item.put("order", order.intValue());
-                }
-                merged.add(item);
-                changed = true;
-            }
-            if (changed) {
-                sm.setTransitions(toJson(merged));
-                sm.setSources(toJson(List.of("backend", "frontend", "llm")));
-                log.info("Frontend enhanced state machine: {}", sm.getName());
-            }
-        }
-    }
+    // v7.4(A19): 已删除 enhanceWithFrontend / mergeFrontendEnhancements / toMap——
+    // v6.2 将状态机提取与前端增强合并为单次 LLM 调用后，这批方法（约 120 行）无调用方。
 
     private Map<String, String> readStateCodeMap(StateMachine sm) {
         Map<String, String> codes = new LinkedHashMap<>();
@@ -217,11 +99,6 @@ public class StateMachineAgent {
     private String text(Map<String, Object> map, String key) {
         Object value = map.get(key);
         return value == null ? "" : String.valueOf(value).trim();
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> toMap(JsonNode node) {
-        return objectMapper.convertValue(node, Map.class);
     }
 
     private List<StateMachine> extractByLlm(BackendResult backendResult, FrontendResult frontendResult) {

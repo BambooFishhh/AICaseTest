@@ -326,77 +326,8 @@ public class TestGeneratorAgent {
         }
     }
 
-    // v1.4: 结构化分段 system prompt
-    // v3.4: 拆分为 HEADER + 动态数量引导段 + FOOTER，medium 档文本与原 SYSTEM_PROMPT 完全一致
-    private static final String SYSTEM_PROMPT_HEADER = """
-            # 角色
-            你是资深测试工程师，擅长生成结构化、AI 可执行的测试用例。
-
-            # 任务
-            根据以下状态机和接口信息，为每个状态转换生成测试用例。
-
-            # 生成要求
-            ## 数量引导
-            """;
-
-    private static final String SYSTEM_PROMPT_FOOTER = """
-
-            ## 测试数据要求
-            - testData 必须包含具体字段值，不能为空对象 {}
-            - 数值字段：填入真实值和边界值（如 amount: 0, amount: -1, amount: 99999999）
-            - 字符串字段：填入正常值、空字符串、超长字符串（256字符）
-            - 枚举字段：填入合法值和非法枚举值
-            - 必填字段：测试缺失该字段的情况
-
-            ## structuredSteps 要求（必须严格遵守）
-            - structuredSteps 必须是非空数组，按真实操作顺序 3-10 步展开：
-              进入页面 → 定位元素 → 输入/点击 → 断言结果，禁止把多个操作合并成一句
-            - ui_action 类型步骤（点击/输入/选择/滚动）必须携带 uiSelector：{type, value}
-              - type 取 id / ref / data-testid / aria-label / text / path
-              - value 从下方 frontendSelectors 中选取与操作最匹配的真实选择器；
-                找不到精确选择器时，target 写按钮/输入框的可见文案，uiSelector 用 {type:"text", value:"按钮文案"}
-            - 输入类操作必须携带 data：{字段名: 具体输入值}
-            - state_assert 类型步骤的 expected 必须写可验证断言（页面 URL / 元素文本 / 状态提示）
-            - api_call 类型步骤的 target 必须用真实接口路径，data 为该接口的入参
-            - 每步的 target、expected 都不能为空
-
-            ## 预期结果语言规范（v7.3，必须严格遵守）
-            - expected / expectedResults 必须描述用户在页面上可感知的现象：
-              可见文案、toast/消息提示内容、页面跳转目标、元素出现/消失/禁用状态变化
-            - 禁止写 HTTP 状态码（如"返回401"）、后端字段名/变量名（如 errorMsg、orderId）、
-              机器常量（如 status=PENDING_PAYMENT）、响应体键名
-            - 仅 api_call 类型步骤的 expected 允许描述接口行为（如"接口返回 400"）；
-              含 UI 步骤的用例，最终断言步骤必须回到页面可感知现象
-
-            ## coverageRefs 覆盖要求（v5.12）
-            - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}
-            - id 只能从 coverageChecklist 中选取真实存在的项：
-              transitionIds 用 "from->to"；endpointIds 用 "METHOD /path"；ruleIds 用 "rule-N"；requirementIds 用 "req-N"
-            - 优先覆盖 coverageGaps 列出的缺口；整体用例集必须让每个 transition/endpoint/rule 至少被一条用例引用
-            - 单次只输出 8-15 条用例，不要尝试一次性输出全部缺口
-
-            ## stateMachineRef 要求
-            - transitions 数组必须包含本用例测试的状态转换
-            - forbiddenTransitions 仅在 negative 类型用例中填写
-
-            # 输出格式
-            返回 JSON 数组，字段说明：
-            - title: 用例标题（简洁，含测试目标）
-            - module: 所属模块
-            - type: positive/negative/boundary/data
-            - priority: P0/P1/P2/P3
-            - preconditions: 前置条件数组
-            - steps: 步骤简述数组
-            - expectedResults: 预期结果数组
-            - structuredSteps: [{order, action, target, expected, data, type}]
-            - apiEndpoints: [{method, path, description}]
-            - testData: {字段名: 值}
-            - executionHints: {approach, notes, prerequisites}
-            - stateMachineRef: {states, transitions, forbiddenTransitions}
-            - coverageRefs: {requirementIds, transitionIds, endpointIds, ruleIds}
-
-            只返回 JSON 数组，不要包含其他文字。
-            """;
+    // v7.4(A19): 已删除 SYSTEM_PROMPT_HEADER / SYSTEM_PROMPT_FOOTER / buildSystemPrompt /
+    // buildQuantityGuide——v5.13 起 PRD 必需、v7.1 删除代码驱动生成链后无调用方的遗留死代码。
 
     // v1.10: PRD 驱动 system prompt（PRD 为主、代码为辅）
     // v3.4: 拆分为 HEADER + 动态数量引导段 + FOOTER，medium 档文本与原 SYSTEM_PROMPT_PRD_DRIVEN 完全一致
@@ -420,6 +351,8 @@ public class TestGeneratorAgent {
             ## 代码信息用于补充（不作为用例来源，只增强可执行性）
             - endpoints：用例 structuredSteps 的 target 用真实接口路径（如 POST /api/order/create）
             - stateMachines：用例的 stateMachineRef 引用真实状态流转
+            - stateMachines[].source（v7.4）："rule" 表示规则兜底提取（仅状态枚举可信，无转换数据）——
+              其 stateMachineRef.transitions 可为空数组，禁止为兜底状态机虚构转换；"llm" 来源正常引用
             - businessRules：补充为前置条件或异常场景
             - frontendForms：testData 填入真实表单字段名和校验规则（required/min/max）
             - frontendSelectors：structuredSteps 的 ui_action 类型步骤可附 uiSelector（{type, value}）
@@ -538,29 +471,6 @@ public class TestGeneratorAgent {
 
     // ==================== v3.4: 动态 prompt + temperature 参数化 ====================
 
-    // v3.4: 根据 caseDensity 拼接状态机驱动的数量引导段
-    private String buildQuantityGuide(String caseDensity) {
-        if ("low".equals(caseDensity)) {
-            return """
-                    - 正向用例（positive）：每个合法状态转换至少 1 条
-                    - 异常用例（negative）：每个状态转换至少 1 条非法输入/非法转换
-                    - 边界值用例（boundary）：涉及数值/长度字段的至少 1 条
-                    - 数据驱动用例（data）：可选""";
-        } else if ("high".equals(caseDensity)) {
-            return """
-                    - 正向用例（positive）：每个合法状态转换至少 2 条
-                    - 异常用例（negative）：每个状态转换至少 2 条非法输入/非法转换
-                    - 边界值用例（boundary）：涉及数值/长度字段的至少 3 条（上界+下界+越界）
-                    - 数据驱动用例（data）：多参数组合场景至少 2 条""";
-        }
-        // medium = 当前行为（与 v3.3 SYSTEM_PROMPT 完全一致）
-        return """
-                - 正向用例（positive）：每个合法状态转换至少 1 条
-                - 异常用例（negative）：每个状态转换至少 1 条非法输入/非法转换
-                - 边界值用例（boundary）：涉及数值/长度字段的至少 2 条（上界+下界）
-                - 数据驱动用例（data）：多参数组合场景至少 1 条""";
-    }
-
     // v3.4: 根据 caseDensity 拼接 PRD 驱动的"以需求为纲"段
     private String buildPrdQuantityGuide(String caseDensity) {
         if ("low".equals(caseDensity)) {
@@ -583,14 +493,6 @@ public class TestGeneratorAgent {
                 - 涉及数值/长度字段的，补充边界值用例（上界 + 下界）
                 - 优先级遵循需求项的 priority；未标注的按 P1
                 - module 取自 PRD 的 modules；type 取值 positive/negative/boundary/data""";
-    }
-
-    // v3.4: 动态构建状态机驱动 system prompt（替换数量引导段）
-    private String buildSystemPrompt(GenerationParams params) {
-        String density = (params != null && params.getCaseDensity() != null) ? params.getCaseDensity() : "medium";
-        return promptSkillLoader.load("test-generation-code-header", SYSTEM_PROMPT_HEADER)
-                + buildQuantityGuide(density)
-                + promptSkillLoader.load("test-generation-code-footer", SYSTEM_PROMPT_FOOTER);
     }
 
     // v3.4: 动态构建 PRD 驱动 system prompt
@@ -1056,6 +958,9 @@ public class TestGeneratorAgent {
             for (StateMachine sm : stateMachines) {
                 Map<String, Object> smMap = new LinkedHashMap<>();
                 smMap.put("name", sm.getName());
+                // v7.4(A20): 附带 source 标记——rule 表示规则兜底提取（仅状态枚举可信，transitions 为空），
+                // 生成侧按来源调整信任度，避免对空数据虚构转换
+                smMap.put("source", stateMachineSource(sm));
                 smMap.put("states", JsonHelper.parseListMap(sm.getStates()));
                 smMap.put("transitions", JsonHelper.parseListMap(sm.getTransitions()));
                 smList.add(smMap);
@@ -1598,66 +1503,20 @@ public class TestGeneratorAgent {
 
     // ==================== 辅助方法 ====================
 
-    private String buildStateMachineRef(StateMachine sm, List<Map<String, Object>> transitions,
-                                        boolean includeForbidden) {
-        return buildStateMachineRef(sm, transitions, includeForbidden, new ArrayList<>());
-    }
+    // v7.4(A19): 已删除 buildStateMachineRef / buildForbiddenTransitions / matchEndpoints——
+    // v7.1(G5) 删除代码驱动生成链后无调用方的遗留死代码。
 
-    private String buildStateMachineRef(StateMachine sm, List<Map<String, Object>> transitions,
-                                        boolean includeForbidden, List<Map<String, Object>> forbidden) {
-        Map<String, Object> ref = new LinkedHashMap<>();
-        List<Map<String, Object>> states = JsonHelper.parseListMap(sm.getStates());
-        ref.put("states", states);
-        ref.put("transitions", transitions);
-        if (includeForbidden) {
-            ref.put("forbiddenTransitions", forbidden);
+    /**
+     * v7.4(A20): 从现有 sources JSON 派生状态机来源（不加数据库列，避免 Flyway 迁移）。
+     * 规则兜底状态机（sources 含 rule_based 且不含 llm）transitions 恒为空、confidence 0.5，
+     * 生成侧需要知道其不可信——prompt 按 source 调整信任度，rule 来源不注入 transitions 相关指令。
+     */
+    static String stateMachineSource(StateMachine sm) {
+        if (sm == null || sm.getSources() == null) {
+            return "llm";
         }
-        return toJson(ref);
-    }
-
-    private List<Map<String, Object>> buildForbiddenTransitions(List<Map<String, Object>> states,
-                                                                List<Map<String, Object>> transitions) {
-        List<Map<String, Object>> forbidden = new ArrayList<>();
-        if (transitions != null && !transitions.isEmpty()) {
-            Map<String, Object> first = transitions.get(0);
-            Map<String, Object> reverse = new LinkedHashMap<>();
-            reverse.put("from", first.getOrDefault("to", ""));
-            reverse.put("to", first.getOrDefault("from", ""));
-            reverse.put("reason", "反向转换通常不被允许");
-            forbidden.add(reverse);
-        }
-        if (states != null) {
-            for (Map<String, Object> s : states) {
-                Object isTerminal = s.get("is_terminal");
-                if (Boolean.TRUE.equals(isTerminal) || "true".equals(String.valueOf(isTerminal))) {
-                    Map<String, Object> f = new LinkedHashMap<>();
-                    f.put("from", s.getOrDefault("id", s.getOrDefault("name", "")));
-                    f.put("to", states.get(0).getOrDefault("id", states.get(0).getOrDefault("name", "")));
-                    f.put("reason", "终态不可再转换");
-                    forbidden.add(f);
-                    break;
-                }
-            }
-        }
-        return forbidden;
-    }
-
-    private List<Map<String, Object>> matchEndpoints(BackendResult backendResult, String smName) {
-        List<Map<String, Object>> matched = new ArrayList<>();
-        if (backendResult == null || backendResult.getEndpoints() == null || smName == null) {
-            return matched;
-        }
-        String keyword = smName.replace("状态机", "").replace("状态", "").trim();
-        for (EndpointInfo ep : backendResult.getEndpoints()) {
-            String function = ep.getFunction() == null ? "" : ep.getFunction();
-            String path = ep.getPath() == null ? "" : ep.getPath();
-            if (!keyword.isEmpty()
-                    && (function.toLowerCase().contains(keyword.toLowerCase())
-                    || path.toLowerCase().contains(keyword.toLowerCase()))) {
-                matched.add(ep.toContextMap());
-            }
-        }
-        return matched;
+        List<String> sources = JsonHelper.parseListString(sm.getSources());
+        return (sources.contains("rule_based") && !sources.contains("llm")) ? "rule" : "llm";
     }
 
     private String extractJsonArray(String text) {

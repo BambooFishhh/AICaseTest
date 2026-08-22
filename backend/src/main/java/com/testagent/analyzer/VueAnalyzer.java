@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -62,31 +63,35 @@ public class VueAnalyzer {
         }
 
         Map<String, Object> techStack = detectTechStack(dir);
+        // v7.4(C1): 分析告警收集（VueAnalyzer 为单例，多项目可能并发 analyze——必须参数传递，不得用实例字段）
+        List<String> warnings = new ArrayList<>();
         List<Map<String, Object>> routes = extractRoutes(dir);
         List<Map<String, Object>> apiCalls = extractApiCalls(dir);
         int fileCount = countSourceFiles(dir);
 
         // v1.11: 深度提取表单、组件状态、DOM 选择器、页面跳转
-        List<Map<String, Object>> forms = extractForms(dir);
-        List<Map<String, Object>> componentStates = extractComponentStates(dir);
-        List<Map<String, Object>> domSelectors = extractDomSelectors(dir);
-        List<Map<String, Object>> pageFlows = extractPageFlows(dir);
+        List<Map<String, Object>> forms = extractForms(dir, warnings);
+        List<Map<String, Object>> componentStates = extractComponentStates(dir, warnings);
+        List<Map<String, Object>> domSelectors = extractDomSelectors(dir, warnings);
+        List<Map<String, Object>> pageFlows = extractPageFlows(dir, warnings);
 
         // v6.1 (Agentic RAG): 逐组件语义摘要 + 按需源码片段 + 业务分，供前端组件级索引
         List<Map<String, Object>> componentSummaries = new ArrayList<>();
         try {
             componentSummaries = extractComponentSummaries(dir, forms, componentStates,
-                    domSelectors, pageFlows);
+                    domSelectors, pageFlows, warnings);
         } catch (Exception e) {
             log.warn("Component summary extraction failed: {}", e.getMessage());
+            warnings.add("组件语义摘要提取失败（" + e.getMessage() + "），componentSummaries 结果可能不完整");
         }
 
         // v1.12: LLM 补充正则遗漏的内容
         if (llmService.isConfigured()) {
             try {
-                enhanceWithLlm(forms, componentStates, domSelectors, pageFlows, dir);
+                enhanceWithLlm(forms, componentStates, domSelectors, pageFlows, dir, warnings);
             } catch (Exception e) {
                 log.warn("LLM enhancement failed, using regex-only results: {}", e.getMessage());
+                warnings.add("LLM 前端增强失败（" + e.getMessage() + "），结果仅含正则提取部分");
             }
         }
 
@@ -101,6 +106,7 @@ public class VueAnalyzer {
                 .componentSummaries(componentSummaries)
                 .fileCount(fileCount)
                 .status("ok")
+                .warnings(warnings)
                 .build();
     }
 
@@ -256,7 +262,9 @@ public class VueAnalyzer {
     }
 
     /**
-     * 递归收集所有 .vue 文件（跳过 node_modules）
+     * 递归收集所有 .vue 文件（跳过 node_modules）。
+     * v7.4(A9): 递归出口按绝对路径字典序排序——File.listFiles() 顺序依赖操作系统，
+     * 此前两次分析 LLM 看到的文件集合（12k 截断子集）不同，结果漂移。
      */
     private void collectVueFiles(File dir, List<File> result) {
         File[] children = dir.listFiles();
@@ -276,6 +284,7 @@ public class VueAnalyzer {
                 }
             }
         }
+        result.sort(Comparator.comparing(File::getAbsolutePath));
     }
 
     private int countSourceFiles(File frontendDir) {
@@ -325,7 +334,7 @@ public class VueAnalyzer {
      * 提取表单字段与校验规则。
      * 扫描所有 .vue 文件中的 el-form-item / el-input 等控件以及 script 中的 rules 配置。
      */
-    private List<Map<String, Object>> extractForms(File dir) {
+    private List<Map<String, Object>> extractForms(File dir, List<String> warnings) {
         List<Map<String, Object>> forms = new ArrayList<>();
         try {
             List<File> vueFiles = new ArrayList<>();
@@ -343,16 +352,30 @@ public class VueAnalyzer {
             for (File file : vueFiles) {
                 String content = readFile(file);
                 if (content == null) {
+                    // v7.4(C1): 文件读取失败不再静默跳过
+                    warnings.add("Vue 文件读取失败: " + file.getName());
                     continue;
                 }
                 String component = stripExtension(file.getName());
 
                 // 解析 rules 对象块（处理嵌套大括号）
-                String rulesBlock = null;
+                // v7.4(A8): 收集文件内全部 rules 块并合并——此前 rs.find() 只取第一个，
+                // 一个 .vue 多表单/多 rules 对象时后续字段校验全部丢失或配错
+                List<String> ruleBlocks = new ArrayList<>();
                 Matcher rs = rulesStartPattern.matcher(content);
-                if (rs.find()) {
+                while (rs.find()) {
                     int openIdx = rs.end() - 1; // 指向 '{'
-                    rulesBlock = extractBalanced(content, openIdx, '{', '}');
+                    String block = extractBalanced(content, openIdx, '{', '}');
+                    if (block != null) {
+                        ruleBlocks.add(block);
+                    } else {
+                        // v7.4(C1): rules 块括号不配对（截半）不再静默丢失
+                        warnings.add("rules 块括号不配对，该块校验规则丢失: " + file.getName());
+                    }
+                }
+                String rulesBlock = ruleBlocks.isEmpty() ? null : String.join("\n", ruleBlocks);
+                if (ruleBlocks.size() > 1) {
+                    warnings.add("检测到 " + ruleBlocks.size() + " 个 rules 块，已全部合并解析: " + file.getName());
                 }
 
                 List<Map<String, Object>> fields = new ArrayList<>();
@@ -436,6 +459,9 @@ public class VueAnalyzer {
             }
         } catch (Exception e) {
             // 失败时返回空列表，不阻断分析
+            // v7.4(C1): 整体失败不再静默——"0 个表单"无从区分真没有还是解析失败
+            warnings.add("表单提取失败（" + e.getMessage() + "），forms 结果可能不完整");
+            log.warn("extractForms failed: {}", e.getMessage());
         }
         return forms;
     }
@@ -443,7 +469,7 @@ public class VueAnalyzer {
     /**
      * 提取组件交互状态（弹窗/抽屉/分步/标签页）。
      */
-    private List<Map<String, Object>> extractComponentStates(File dir) {
+    private List<Map<String, Object>> extractComponentStates(File dir, List<String> warnings) {
         List<Map<String, Object>> states = new ArrayList<>();
         try {
             List<File> vueFiles = new ArrayList<>();
@@ -519,6 +545,9 @@ public class VueAnalyzer {
             }
         } catch (Exception e) {
             // 失败时返回空列表，不阻断分析
+            // v7.4(C1): 提取失败写入 warnings，"0 个组件状态"可区分真没有还是解析失败
+            warnings.add("组件交互状态提取失败（" + e.getMessage() + "），componentStates 结果可能不完整");
+            log.warn("extractComponentStates failed: {}", e.getMessage());
         }
         return states;
     }
@@ -526,7 +555,7 @@ public class VueAnalyzer {
     /**
      * 提取 template 中的 DOM 选择器（data-testid/id/ref/aria-label）。
      */
-    private List<Map<String, Object>> extractDomSelectors(File dir) {
+    private List<Map<String, Object>> extractDomSelectors(File dir, List<String> warnings) {
         List<Map<String, Object>> result = new ArrayList<>();
         try {
             List<File> vueFiles = new ArrayList<>();
@@ -587,6 +616,9 @@ public class VueAnalyzer {
             }
         } catch (Exception e) {
             // 失败时返回空列表，不阻断分析
+            // v7.4(C1): 提取失败写入 warnings
+            warnings.add("DOM 选择器提取失败（" + e.getMessage() + "），domSelectors 结果可能不完整");
+            log.warn("extractDomSelectors failed: {}", e.getMessage());
         }
         return result;
     }
@@ -594,7 +626,7 @@ public class VueAnalyzer {
     /**
      * 提取页面跳转关系（router.push / router-link）。
      */
-    private List<Map<String, Object>> extractPageFlows(File dir) {
+    private List<Map<String, Object>> extractPageFlows(File dir, List<String> warnings) {
         List<Map<String, Object>> flows = new ArrayList<>();
         try {
             // 扫描 .vue 和 .js/.ts 文件
@@ -640,6 +672,9 @@ public class VueAnalyzer {
             }
         } catch (Exception e) {
             // 失败时返回空列表，不阻断分析
+            // v7.4(C1): 提取失败写入 warnings
+            warnings.add("页面跳转提取失败（" + e.getMessage() + "），pageFlows 结果可能不完整");
+            log.warn("extractPageFlows failed: {}", e.getMessage());
         }
         return flows;
     }
@@ -659,6 +694,13 @@ public class VueAnalyzer {
 
     /**
      * 提取配对括号内的内容（支持嵌套，忽略字符串字面量中的括号）。
+     * v7.4(A7): 增加模板字符串（反引号）支持——Vue rules 常见 `` message: `长度需在 ${min}~${max}` ``
+     * 导致花括号计数错位、rules 块静默截半。重写为状态机：
+     * - 代码态：引号/反引号进入字符串态，括号计数（原行为）
+     * - 字符串态：转义跳过，匹配引号退出
+     * - 模板态：反引号退出；"${" 进入模板表达式态（depth=1）
+     * - 模板表达式态：可嵌套普通字符串/模板字符串（栈式）；'{' depth++，'}' depth-- 归零退回模板态；
+     *   表达式内的花括号不计入外层计数（模板串对 rules 块而言是不透明字符串）
      *
      * @param content  原文
      * @param openIdx  开始括号的索引
@@ -671,31 +713,79 @@ public class VueAnalyzer {
             return null;
         }
         int depth = 0;
-        boolean inStr = false;
-        char strQuote = 0;
-        for (int i = openIdx; i < content.length(); i++) {
+        int n = content.length();
+        // 状态栈：'s'=普通字符串(value=引号char)，'t'=模板字符串，'e'=模板表达式(value=花括号深度int)
+        java.util.ArrayDeque<Object[]> stack = new java.util.ArrayDeque<>();
+        int i = openIdx;
+        while (i < n) {
             char c = content.charAt(i);
-            if (inStr) {
-                if (c == '\\') {
+            Object[] top = stack.peek();
+            if (top == null) {
+                // 代码态
+                if (c == '"' || c == '\'') {
+                    stack.push(new Object[]{'s', c});
                     i++;
-                    continue;
-                }
-                if (c == strQuote) {
-                    inStr = false;
+                } else if (c == '`') {
+                    stack.push(new Object[]{'t', null});
+                    i++;
+                } else if (c == open) {
+                    depth++;
+                    i++;
+                } else if (c == close) {
+                    depth--;
+                    if (depth == 0) {
+                        return content.substring(openIdx + 1, i);
+                    }
+                    i++;
+                } else {
+                    i++;
                 }
                 continue;
             }
-            if (c == '"' || c == '\'') {
-                inStr = true;
-                strQuote = c;
-                continue;
-            }
-            if (c == open) {
-                depth++;
-            } else if (c == close) {
-                depth--;
-                if (depth == 0) {
-                    return content.substring(openIdx + 1, i);
+            char kind = (Character) top[0];
+            if (kind == 's') {
+                char quote = (Character) top[1];
+                if (c == '\\') {
+                    i += 2; // 跳过转义字符
+                } else if (c == quote) {
+                    stack.pop();
+                    i++;
+                } else {
+                    i++;
+                }
+            } else if (kind == 't') {
+                if (c == '\\') {
+                    i += 2;
+                } else if (c == '`') {
+                    stack.pop();
+                    i++;
+                } else if (c == '$' && i + 1 < n && content.charAt(i + 1) == '{') {
+                    stack.push(new Object[]{'e', 1});
+                    i += 2;
+                } else {
+                    i++;
+                }
+            } else {
+                // 模板表达式态
+                int braceDepth = (Integer) top[1];
+                if (c == '"' || c == '\'') {
+                    stack.push(new Object[]{'s', c});
+                    i++;
+                } else if (c == '`') {
+                    stack.push(new Object[]{'t', null});
+                    i++;
+                } else if (c == '{') {
+                    top[1] = braceDepth + 1;
+                    i++;
+                } else if (c == '}') {
+                    if (braceDepth <= 1) {
+                        stack.pop(); // ${ 表达式结束，退回模板态
+                    } else {
+                        top[1] = braceDepth - 1;
+                    }
+                    i++;
+                } else {
+                    i++;
                 }
             }
         }
@@ -843,7 +933,8 @@ public class VueAnalyzer {
                                                                 List<Map<String, Object>> forms,
                                                                 List<Map<String, Object>> componentStates,
                                                                 List<Map<String, Object>> domSelectors,
-                                                                List<Map<String, Object>> pageFlows) {
+                                                                List<Map<String, Object>> pageFlows,
+                                                                List<String> warnings) {
         List<File> vueFiles = new ArrayList<>();
         collectVueFiles(dir, vueFiles);
         Map<String, String> componentToPath = buildComponentToPathMap(dir);
@@ -913,6 +1004,8 @@ public class VueAnalyzer {
         if (llmService.isConfigured() && !businessComponents.isEmpty()) {
             long t0 = System.currentTimeMillis();
             int workers = Math.max(1, llmConcurrency);
+            // v7.4(C1): 组件摘要 LLM 失败计数（线程安全，聚合为一条 warning）
+            java.util.concurrent.atomic.AtomicInteger summaryFailures = new java.util.concurrent.atomic.AtomicInteger();
             // 把外层分析子线程上的埋点上下文与 phase 传播到组件并发池，使 LLM token 也能落库。
             TelemetryService.TelemetryContext telemetryCtx = telemetryService.currentContext();
             String telemetryPhase = telemetryService.currentPhaseOverride();
@@ -925,6 +1018,7 @@ public class VueAnalyzer {
                             try {
                                 enhanceComponentSummary(dir, m);
                             } catch (Exception e) {
+                                summaryFailures.incrementAndGet();
                                 log.warn("LLM component summary failed for {}: {}",
                                         m.get("component"), e.getMessage());
                             }
@@ -935,6 +1029,11 @@ public class VueAnalyzer {
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
             } finally {
                 pool.shutdown();
+            }
+            int failed = summaryFailures.get();
+            if (failed > 0) {
+                warnings.add("组件语义摘要 LLM 增强失败 " + failed + "/" + businessComponents.size()
+                        + " 个（对应组件保留确定性基线摘要）");
             }
             log.info("Parallel LLM component summaries: {} business / {} total components, concurrency={}, took {}ms",
                     businessComponents.size(), out.size(), workers, System.currentTimeMillis() - t0);
@@ -1239,7 +1338,8 @@ public class VueAnalyzer {
                                 List<Map<String, Object>> componentStates,
                                 List<Map<String, Object>> domSelectors,
                                 List<Map<String, Object>> pageFlows,
-                                File dir) {
+                                File dir,
+                                List<String> warnings) {
         // 1. 收集 .vue 文件源码摘要
         String sourceSnippets = collectSourceSnippets(dir);
         if (sourceSnippets.isBlank()) return;
@@ -1272,7 +1372,7 @@ public class VueAnalyzer {
         String response = llmService.chat(systemPrompt, userPrompt, 0.3);
 
         // 4. 解析 JSON 并合并
-        parseAndMergeSupplements(response, forms, componentStates, domSelectors, pageFlows);
+        parseAndMergeSupplements(response, forms, componentStates, domSelectors, pageFlows, warnings);
     }
 
     // v1.12: 收集 .vue 文件源码摘要，每文件截断 1500 字符，总计上限 12000 字符
@@ -1320,12 +1420,15 @@ public class VueAnalyzer {
     }
 
     // v1.12: 解析 LLM 返回的补充结果并合并到正则结果中
+    // v7.4(A10): forms 改字段级合并、domSelectors 改选择器级合并——此前组件已存在即整条丢弃
+    // LLM 补充（含正则漏掉的字段），多 form/部分提取场景字段级信息丢失
     @SuppressWarnings("unchecked")
     private void parseAndMergeSupplements(String response,
                                            List<Map<String, Object>> forms,
                                            List<Map<String, Object>> componentStates,
                                            List<Map<String, Object>> domSelectors,
-                                           List<Map<String, Object>> pageFlows) {
+                                           List<Map<String, Object>> pageFlows,
+                                           List<String> warnings) {
         // 提取 JSON（可能被包在 markdown 代码块中）
         String json = response.trim();
         if (json.startsWith("```")) {
@@ -1341,24 +1444,44 @@ public class VueAnalyzer {
             root = new ObjectMapper().readTree(json);
         } catch (Exception e) {
             log.warn("Failed to parse LLM supplement JSON: {}", e.getMessage());
+            warnings.add("LLM 补充结果 JSON 解析失败（" + e.getMessage() + "），本次补充未合并");
             return;
         }
 
-        // 合并 forms（按 component 去重）
+        // 合并 forms（v7.4(A10): 字段级合并——按 field name 去重，正则已有字段保留，LLM 新字段追加）
         if (root.has("supplementalForms") && root.get("supplementalForms").isArray()) {
             for (JsonNode node : root.get("supplementalForms")) {
                 String component = node.path("component").asText("");
                 if (component.isEmpty()) continue;
-                // 检查是否已存在
-                boolean exists = forms.stream()
-                    .anyMatch(f -> component.equals(f.get("component")));
-                if (!exists) {
+                Map<String, Object> existing = forms.stream()
+                    .filter(f -> component.equals(f.get("component")))
+                    .findFirst().orElse(null);
+                List<Map<String, Object>> llmFields = parseFields(node.path("fields"));
+                if (existing == null) {
                     Map<String, Object> form = new LinkedHashMap<>();
                     form.put("component", component);
-                    form.put("fields", parseFields(node.path("fields")));
+                    form.put("fields", llmFields);
                     form.put("file", node.path("file").asText(""));
                     forms.add(form);
-                    log.info("LLM supplemented form: {}", component);
+                    log.info("LLM supplemented form: {} ({} fields)", component, llmFields.size());
+                } else {
+                    List<Map<String, Object>> currentFields = existing.get("fields") instanceof List
+                            ? (List<Map<String, Object>>) existing.get("fields")
+                            : new ArrayList<>();
+                    int added = 0;
+                    for (Map<String, Object> lf : llmFields) {
+                        Object name = lf.get("name");
+                        boolean dup = name != null && currentFields.stream()
+                                .anyMatch(f -> name.equals(f.get("name")));
+                        if (!dup && name != null && !String.valueOf(name).isBlank()) {
+                            currentFields.add(lf);
+                            added++;
+                        }
+                    }
+                    if (added > 0) {
+                        existing.put("fields", currentFields);
+                        log.info("LLM supplemented fields for {}: +{}", component, added);
+                    }
                 }
             }
         }
@@ -1384,20 +1507,42 @@ public class VueAnalyzer {
             }
         }
 
-        // 合并 domSelectors（按 component 去重）
+        // 合并 domSelectors（v7.4(A10): 选择器级合并——按 type+value 去重追加，而非组件级整条丢弃）
         if (root.has("supplementalSelectors") && root.get("supplementalSelectors").isArray()) {
             for (JsonNode node : root.get("supplementalSelectors")) {
                 String component = node.path("component").asText("");
                 if (component.isEmpty()) continue;
-                boolean exists = domSelectors.stream()
-                    .anyMatch(s -> component.equals(s.get("component")));
-                if (!exists) {
+                Map<String, Object> existing = domSelectors.stream()
+                    .filter(s -> component.equals(s.get("component")))
+                    .findFirst().orElse(null);
+                List<Map<String, Object>> llmSelectors = parseSelectors(node.path("selectors"));
+                if (existing == null) {
                     Map<String, Object> sel = new LinkedHashMap<>();
                     sel.put("component", component);
-                    sel.put("selectors", parseSelectors(node.path("selectors")));
+                    sel.put("selectors", llmSelectors);
                     sel.put("file", node.path("file").asText(""));
                     domSelectors.add(sel);
-                    log.info("LLM supplemented selectors: {}", component);
+                    log.info("LLM supplemented selectors: {} ({} items)", component, llmSelectors.size());
+                } else {
+                    List<Map<String, Object>> current = existing.get("selectors") instanceof List
+                            ? (List<Map<String, Object>>) existing.get("selectors")
+                            : new ArrayList<>();
+                    int added = 0;
+                    for (Map<String, Object> ls : llmSelectors) {
+                        String type = String.valueOf(ls.getOrDefault("type", ""));
+                        String value = String.valueOf(ls.getOrDefault("value", ""));
+                        boolean dup = current.stream().anyMatch(s ->
+                                type.equals(String.valueOf(s.getOrDefault("type", "")))
+                                        && value.equals(String.valueOf(s.getOrDefault("value", ""))));
+                        if (!dup && !value.isBlank()) {
+                            current.add(ls);
+                            added++;
+                        }
+                    }
+                    if (added > 0) {
+                        existing.put("selectors", current);
+                        log.info("LLM supplemented selectors for {}: +{}", component, added);
+                    }
                 }
             }
         }

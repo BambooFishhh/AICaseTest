@@ -31,6 +31,9 @@ public class BackendResult {
 
     private String status;
 
+    // v7.4(C1): 分析过程可观测告警（解析失败/排除计数/LLM 增强失败），随 JSON 落库 code_analysis
+    private List<String> warnings;
+
     public static BackendResult skipped() {
         return BackendResult.builder()
                 .status("skipped")
@@ -41,6 +44,7 @@ public class BackendResult {
                 .businessRules(List.of())
                 .dependencyGraph(List.of())
                 .fileCount(0)
+                .warnings(List.of())
                 .build();
     }
 }
