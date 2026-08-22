@@ -59,6 +59,8 @@ spring:
           model: ${LLM_MODEL:mimo-v2.5}
           temperature: 0.4
       embedding:
+        api-key: ${LLM_EMBEDDING_API_KEY:${DASHSCOPE_API_KEY:${LLM_API_KEY:}}}
+        base-url: ${LLM_EMBEDDING_BASE_URL:${LLM_BASE_URL:https://opencode.ai/zen/go/v1}}
         embeddings-path: /embeddings
         options:
           model: ${LLM_EMBEDDING_MODEL:qwen3.7-text-embedding}
@@ -90,6 +92,10 @@ llm:
 app:
   output-dir: outputs
   projects-dir: projects
+  # Git URL 项目克隆目录与超时
+  git:
+    clone-dir: ${GIT_CLONE_DIR:data/git-repos}
+    clone-timeout-seconds: ${GIT_CLONE_TIMEOUT_SECONDS:600}
   # v5.13fix: SSE 长连接超时（生成/分析包含多次 LLM 调用，可能远超 5 分钟）
   sse:
     timeout-minutes: ${APP_SSE_TIMEOUT_MINUTES:30}
@@ -127,7 +133,7 @@ app:
     duplicate-threshold: ${MILVUS_DUPLICATE_THRESHOLD:0.92}
   # v6.4: RAG 切片与多路检索
   rag:
-    chunk-size: ${RAG_CHUNK_SIZE:900}
+    chunk-size: ${RAG_CHUNK_SIZE:500}
     chunk-overlap: ${RAG_CHUNK_OVERLAP:150}
     rrf-k: ${RAG_RRF_K:60}
     context-topk: ${RAG_CONTEXT_TOPK:6}

@@ -31,7 +31,11 @@ public class SemanticService {
 
     private static final Logger log = LoggerFactory.getLogger(SemanticService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final Map<String, String> requirementContextFingerprint = new ConcurrentHashMap<>();
+    // v7.x: 需求上下文按模块（prd/context/supplementary）记录指纹，支持模块级增量重建
+    private final Map<String, Map<String, String>> requirementModuleFingerprints = new ConcurrentHashMap<>();
+    private static final String MODULE_PRD = "prd";
+    private static final String MODULE_CONTEXT = "context";
+    private static final String MODULE_SUPPLEMENTARY = "supplementary";
 
     @Autowired
     private EmbeddingService embeddingService;
@@ -88,6 +92,7 @@ public class SemanticService {
         milvusService.deleteByProject(MilvusService.COLLECTION_CONTEXTS, projectId);
         milvusService.deleteByProject(MilvusService.COLLECTION_FAILURES, projectId);
         milvusService.deleteByProject(MilvusService.COLLECTION_COMPONENTS, projectId);
+        requirementModuleFingerprints.remove(projectId);
     }
 
     // v5.6: 删除指定用例向量
@@ -116,59 +121,85 @@ public class SemanticService {
         indexContext(projectId, module, text);
     }
 
-    // v6.4: 需求类上下文统一切片重建（PRD/上下文文档/补充需求），按 module 先清旧再写入
+    // v6.4: 需求类上下文统一切片重建（PRD/上下文文档/补充需求），按 module 先清旧再写入。
+    // 强制全量重建（保存文档等明确变更场景），重建后记录各模块指纹。
     public void replaceRequirementContexts(String projectId, List<Map<String, Object>> prdDocs,
                                            List<Map<String, Object>> contextDocs, String supplementary) {
         if (!milvusService.isEnabled()) {
             return;
         }
-        replaceRequirementContextsInternal(projectId, prdDocs, contextDocs, supplementary);
-        requirementContextFingerprint.put(projectId, requirementFingerprint(prdDocs, contextDocs, supplementary));
+        reindexPrdModule(projectId, prdDocs);
+        reindexContextModule(projectId, contextDocs);
+        reindexSupplementaryModule(projectId, supplementary);
+        storeModuleFingerprints(projectId, prdDocs, contextDocs, supplementary);
     }
 
     // v6.4: 生成前按需重建。索引内容未变化时跳过，避免每次生成都重复 embedding。
+    // 增量优化：仅重建内容变化的模块——补充需求单独修改时不再连带重建 PRD/上下文文档向量。
     public void ensureRequirementContexts(String projectId, List<Map<String, Object>> prdDocs,
                                           List<Map<String, Object>> contextDocs, String supplementary) {
         if (!milvusService.isEnabled()) {
             return;
         }
-        String fingerprint = requirementFingerprint(prdDocs, contextDocs, supplementary);
-        if (fingerprint.equals(requirementContextFingerprint.get(projectId))) {
-            return;
+        Map<String, String> stored = requirementModuleFingerprints
+                .computeIfAbsent(projectId, k -> new ConcurrentHashMap<>());
+        String prdFp = docsFingerprint(prdDocs);
+        String contextFp = docsFingerprint(contextDocs);
+        String suppFp = supplementary == null ? "" : supplementary;
+
+        if (!prdFp.equals(stored.get(MODULE_PRD))) {
+            reindexPrdModule(projectId, prdDocs);
+            stored.put(MODULE_PRD, prdFp);
         }
-        replaceRequirementContextsInternal(projectId, prdDocs, contextDocs, supplementary);
-        requirementContextFingerprint.put(projectId, fingerprint);
+        if (!contextFp.equals(stored.get(MODULE_CONTEXT))) {
+            reindexContextModule(projectId, contextDocs);
+            stored.put(MODULE_CONTEXT, contextFp);
+        }
+        if (!suppFp.equals(stored.get(MODULE_SUPPLEMENTARY))) {
+            reindexSupplementaryModule(projectId, supplementary);
+            stored.put(MODULE_SUPPLEMENTARY, suppFp);
+        }
     }
 
-    private void replaceRequirementContextsInternal(String projectId, List<Map<String, Object>> prdDocs,
-                                                    List<Map<String, Object>> contextDocs, String supplementary) {
-        milvusService.deleteByModule(MilvusService.COLLECTION_CONTEXTS, projectId, "prd");
-        milvusService.deleteByModule(MilvusService.COLLECTION_CONTEXTS, projectId, "context");
-        milvusService.deleteByModule(MilvusService.COLLECTION_CONTEXTS, projectId, "supplementary");
+    private void reindexPrdModule(String projectId, List<Map<String, Object>> prdDocs) {
+        milvusService.deleteByModule(MilvusService.COLLECTION_CONTEXTS, projectId, MODULE_PRD);
         if (prdDocs != null) {
             for (Map<String, Object> doc : prdDocs) {
-                indexDocChunks(projectId, "prd", "PRD", doc);
+                indexDocChunks(projectId, MODULE_PRD, "PRD", doc);
             }
-        }
-        if (contextDocs != null) {
-            for (Map<String, Object> doc : contextDocs) {
-                indexDocChunks(projectId, "context", "上下文", doc);
-            }
-        }
-        if (supplementary != null && !supplementary.isBlank()) {
-            indexTextChunks(projectId, "supplementary", "supplementary", "补充需求", supplementary);
         }
     }
 
-    private String requirementFingerprint(List<Map<String, Object>> prdDocs,
-                                          List<Map<String, Object>> contextDocs, String supplementary) {
+    private void reindexContextModule(String projectId, List<Map<String, Object>> contextDocs) {
+        milvusService.deleteByModule(MilvusService.COLLECTION_CONTEXTS, projectId, MODULE_CONTEXT);
+        if (contextDocs != null) {
+            for (Map<String, Object> doc : contextDocs) {
+                indexDocChunks(projectId, MODULE_CONTEXT, "上下文", doc);
+            }
+        }
+    }
+
+    private void reindexSupplementaryModule(String projectId, String supplementary) {
+        milvusService.deleteByModule(MilvusService.COLLECTION_CONTEXTS, projectId, MODULE_SUPPLEMENTARY);
+        if (supplementary != null && !supplementary.isBlank()) {
+            indexTextChunks(projectId, MODULE_SUPPLEMENTARY, "supplementary", "补充需求", supplementary);
+        }
+    }
+
+    private void storeModuleFingerprints(String projectId, List<Map<String, Object>> prdDocs,
+                                         List<Map<String, Object>> contextDocs, String supplementary) {
+        Map<String, String> stored = requirementModuleFingerprints
+                .computeIfAbsent(projectId, k -> new ConcurrentHashMap<>());
+        stored.put(MODULE_PRD, docsFingerprint(prdDocs));
+        stored.put(MODULE_CONTEXT, docsFingerprint(contextDocs));
+        stored.put(MODULE_SUPPLEMENTARY, supplementary == null ? "" : supplementary);
+    }
+
+    private String docsFingerprint(List<Map<String, Object>> docs) {
         try {
-            return objectMapper.writeValueAsString(Map.of(
-                    "prd", prdDocs == null ? List.of() : prdDocs,
-                    "context", contextDocs == null ? List.of() : contextDocs,
-                    "supplementary", supplementary == null ? "" : supplementary));
+            return objectMapper.writeValueAsString(docs == null ? List.of() : docs);
         } catch (Exception e) {
-            return String.valueOf(prdDocs) + "|" + contextDocs + "|" + supplementary;
+            return String.valueOf(docs);
         }
     }
 
@@ -238,6 +269,71 @@ public class SemanticService {
         }
         List<SearchHit> hits = milvusService.search(MilvusService.COLLECTION_CASES, projectId, vector, 1);
         return !hits.isEmpty() && hits.get(0).score() >= milvusService.duplicateThreshold();
+    }
+
+    /**
+     * v7.1(G14): 全量生成批内语义去重——同类型且标题+模块语义高度相似的用例只保留一条。
+     * 与 {@link #isDuplicate(String, TestCase)}（查已落库的 Milvus 向量）不同，本方法用于
+     * 落库前的生成批内去重（此前仅追加生成有语义去重能力，全量生成同语义不同标题的重复用例会全部落库）。
+     * 相似的一组中保留 qualityScore 更高者；Milvus/embedding 未配置或向量失败时原样返回，不阻塞生成。
+     */
+    public List<TestCase> deduplicateBatch(List<TestCase> cases) {
+        if (cases == null || cases.size() < 2 || !isAvailable()) {
+            return cases;
+        }
+        List<TestCase> kept = new ArrayList<>();
+        List<List<Float>> keptVectors = new ArrayList<>();
+        for (TestCase tc : cases) {
+            List<Float> vec = embeddingService.embed(buildCaseText(tc));
+            boolean dup = false;
+            for (int i = 0; i < kept.size(); i++) {
+                TestCase existing = kept.get(i);
+                // v7.1(G1): 语义去重同样要求类型一致，避免"正向/逆向"同语义不同类型被误删
+                if (existing.getType() == null || !existing.getType().equals(tc.getType())) {
+                    continue;
+                }
+                if (vec.isEmpty() || keptVectors.get(i).isEmpty()) {
+                    continue;
+                }
+                if (cosineSimilarity(vec, keptVectors.get(i)) >= milvusService.duplicateThreshold()) {
+                    dup = true;
+                    if (qualityScoreOf(tc) > qualityScoreOf(existing)) {
+                        kept.set(i, tc);
+                        keptVectors.set(i, vec);
+                    }
+                    break;
+                }
+            }
+            if (!dup) {
+                kept.add(tc);
+                keptVectors.add(vec);
+            }
+        }
+        int dropped = cases.size() - kept.size();
+        if (dropped > 0) {
+            log.info("Batch semantic dedup dropped {} of {} cases", dropped, cases.size());
+        }
+        return kept;
+    }
+
+    private int qualityScoreOf(TestCase tc) {
+        return tc != null && tc.getQualityScore() != null ? tc.getQualityScore() : 0;
+    }
+
+    private float cosineSimilarity(List<Float> a, List<Float> b) {
+        if (a == null || b == null || a.isEmpty() || b.isEmpty() || a.size() != b.size()) {
+            return -1f;
+        }
+        float dot = 0f, normA = 0f, normB = 0f;
+        for (int i = 0; i < a.size(); i++) {
+            dot += a.get(i) * b.get(i);
+            normA += a.get(i) * a.get(i);
+            normB += b.get(i) * b.get(i);
+        }
+        if (normA == 0f || normB == 0f) {
+            return -1f;
+        }
+        return (float) (dot / (Math.sqrt(normA) * Math.sqrt(normB)));
     }
 
     public List<TestCaseDTO> searchCases(String projectId, String query) {

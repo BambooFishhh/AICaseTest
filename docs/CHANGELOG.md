@@ -4,6 +4,62 @@
 
 ---
 
+## v7.1 — 生成链路一致性修复
+**日期**: 2026-08-23
+**基线**: v7.0
+**主题**: 生成结果诚实化——去重误杀、推送/落库差异可见、死代码清理（对应风险清单 G1/G2/G3/G5/G11/G14/G15）
+
+### 背景
+
+全量生成链路存在 7 个一致性问题：SSE 流式推送的"草稿"与最终落库结果不一致且差异静默；标题去重不校验类型导致"正向/逆向"成对用例误杀；选择器补齐注入空 data 占位导致执行期假失败；代码驱动生成死代码（~700 行）使降级检测永远失效；聚焦类型过滤后 0 条误报"生成失败"；全量生成缺少批内语义去重；settings 解析失败被误报为"请先添加 PRD"。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `agent/TestGeneratorAgent.java` | 修改 | **G1**：isDuplicate 增加 type 一致性前置条件、标题字符重叠阈值 0.8→0.9，"正向/逆向"同模块用例不再误杀。**G3**：删除 enrichStructuredSteps 的空 data 占位注入（`{field: ""}` 导致执行期假失败）。**G5**：删除代码驱动生成死代码（generateCodeDrivenCases/generateByLlmForStateMachine/buildPositiveTest 等）；generate/generateStreaming 双管线合并为 runPrdPipeline。**G11**：区分"未生成任何用例"与"已生成 N 条但聚焦类型过滤后为 0"。**G14**：管线末端接入批内语义去重。新增 `GenerationReport`（generated/focusDropped/reviewDropped/dedupDropped/semanticDropped/finalCount/roundsNotConverged/reviewDegraded） |
+| `service/SemanticService.java` | 修改 | **G14**：新增 `deduplicateBatch`——批内同类型语义去重（cosine ≥ duplicateThreshold 判重、保留 qualityScore 更高者）；Milvus/embedding 未配置时原样返回，不阻塞生成主链路 |
+| `agent/TestCaseReviewAgent.java` | 修改 | **G2/G5**：review 新增报告重载——记录评审阶段丢弃数（规则: 无 structuredSteps + LLM: reject）与 LLM 评审降级信号 |
+| `agent/OrchestratorAgent.java` | 修改 | **G15**：settings 有实质内容但解析失败时抛 50015"项目配置解析失败"，不再静默降级误导为"请先添加 PRD 文档"；generate/generateStreaming 新增 GenerationReport 透传重载 |
+| `service/TestCaseService.java` | 修改 | **G2**：complete 事件携带 total/pushed/droppedTotal/dropped 明细（review/dedup/semantic/focusType/other 分类 + 真实降级信号），推送≠落库不再静默；caseCb 实际计数推送草稿数。**G5**：三处 markDegraded 由死信号（rule_based source，随死代码删除不再产生）改为真实信号（roundsNotConverged/reviewDegraded）。**G15**：hasPrd 解析失败由静默 false 改为如实抛配置解析错误 |
+| `test/TestGeneratorAgentDedupTest.java` | 新增 | G1 判重语义 5 用例（同题同型判重/同题不同型不判重/重叠 0.82 低于新阈值 0.9 不判重/重叠 1.0 仍判重/同题同型跨模块仍判重） |
+| `test/TestGeneratorAgentReportTest.java` | 新增 | G2/G5/G11 报告计数 3 用例（3 轮×3 条生成→去重 6→落库 3 且 roundsNotConverged 置位；聚焦类型过滤为空抛专有错误且 focusDropped=generated；LLM 空返回抛"未生成任何用例"对照） |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `src/api/testcase.js` | 修改 | **G2**：streamGenerate 的 complete 回调改为传完整对象（原仅传 total） |
+| `src/views/TestCaseList.vue` | 修改 | **G2**：生成完成提示区分"全部落库"与"草稿被丢弃"（展示各阶段丢弃数与原因） |
+
+### 附带工程改进（同版交付，非风险清单项）
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/GitCloneService.java` | 新增 | git_url 项目创建时真实 clone 到受管目录（`app.git.clone-dir`），超时/格式校验/项目删除时清理克隆目录；`ProjectService.createProject` 接入，Dockerfile 安装 git |
+| `service/SemanticService.java` | 修改 | 需求上下文**模块级增量重建**：指纹从"整批一份"改为按 prd/context/supplementary 三模块分别记录，仅内容变化的模块执行"先删后写"（补充需求单独修改不再连带重建 PRD/上下文文档向量，节省 embedding 调用） |
+| `application*.yml` / `docker-compose.yml` / `.env.example` | 修改 | embedding 独立端点配置（`LLM_EMBEDDING_BASE_URL`/`LLM_EMBEDDING_API_KEY`，缺省回落 DASHSCOPE/LLM 主配置）；RAG 切片默认 900→500（rag-benchmark 验证更优） |
+| `views/ProjectCreate.vue` | 修改 | Git 地址前端校验放宽为标准 http/ssh/git 协议格式 |
+| `test/GitCloneServiceTest.java` | 新增 | URL 校验/清理边界 3 用例 |
+| `test/SemanticServiceIncrementalReindexTest.java` | 新增 | 模块级增量重建 2 用例（仅补充变化→只重建该模块；无变化→零重建零 embed） |
+| `docs/迭代历程.md` | 修改 | 回填 v5.13~vP5 历史条目与路线规划行；新增 v7.0/v7.1 条目 |
+
+### 验证结果
+
+- 后端 `mvn clean test`（JDK 17 + Maven 3.9.16）：**100 个测试全部通过，BUILD SUCCESS**（新增 13 个：DedupTest 5 + ReportTest 3 + GitCloneServiceTest 3 + IncrementalReindexTest 2）
+- 前端 `npm run build`：通过（complete 回调向后兼容——旧字段 total 仍存在）
+- 勘误：此前会话报告的"97/105 个测试"含 target 下改名前遗留的过期编译类 SecurityApiTest（5 个用例，源码已于 v6.3 重命名为 SecurityApiIntegrationTest 并被 surefire 排除）；本次 `mvn clean` 后以 100 为准
+
+### 预期影响（度量校准）
+
+- 同语义不同标题的重复用例不再全量落库（用例总数预期略降、单条质量预期升）
+- "正向/逆向"成对用例不再被标题去重误删（正逆向覆盖率提升）
+- SSE 推送数与落库数不一致时，用户能在完成提示中看到丢弃原因分类
+- 聚焦类型过滤导致 0 条时，报错文案指向"调整聚焦类型"而非误导排查生成失败
+- 项目 settings 损坏时报"项目配置解析失败"而非"请先添加 PRD 文档"
+
+---
+
 ## v7.0 — 执行可信度修复（v7.x 系列首版：基于全链路代码审查）
 **日期**: 2026-08-22
 **基线**: v6.9

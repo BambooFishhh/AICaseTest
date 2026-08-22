@@ -16,6 +16,7 @@ import com.testagent.entity.TestCase;
 import com.testagent.runtime.CancellationSignal;
 import com.testagent.service.LlmService;
 import com.testagent.service.PromptSkillLoader;
+import com.testagent.service.SemanticService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -53,6 +54,44 @@ public class TestGeneratorAgent {
     @FunctionalInterface
     public interface CaseCallback {
         void onCase(TestCase tc);
+    }
+
+    /**
+     * v7.1(G2/G5): 生成链路一致性报告——记录各阶段丢弃数量与真实降级信号。
+     * SSE 流式推送的是"草稿"（去重/评审/补齐前），与最终落库结果存在差异；
+     * 本报告把差异的"数量+原因分类"暴露给服务层（complete 事件）与任务系统（markDegraded），
+     * 推送≠落库不再静默。report 为 null 时内部照常生成，只是不采集。
+     */
+    public static class GenerationReport {
+        /** LLM 生成总数（聚焦类型过滤前，多轮累计） */
+        public int generated;
+        /** 聚焦类型过滤丢弃数 */
+        public int focusDropped;
+        /** 评审阶段丢弃数（规则: 无 structuredSteps；LLM: reject）——由 TestCaseReviewAgent 记录 */
+        public int reviewDropped;
+        /** 标题/步骤指纹去重丢弃数 */
+        public int dedupDropped;
+        /** 批内语义去重丢弃数（v7.1 G14） */
+        public int semanticDropped;
+        /** 最终返回（将落库）数量 */
+        public int finalCount;
+        /** 多轮补齐耗尽仍有覆盖缺口（未达生成上限）——真实降级信号 */
+        public boolean roundsNotConverged;
+        /** 评审 LLM 失败降级为纯规则评审——真实降级信号 */
+        public boolean reviewDegraded;
+
+        public Map<String, Object> toMap() {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("generated", generated);
+            map.put("focusDropped", focusDropped);
+            map.put("reviewDropped", reviewDropped);
+            map.put("dedupDropped", dedupDropped);
+            map.put("semanticDropped", semanticDropped);
+            map.put("finalCount", finalCount);
+            map.put("roundsNotConverged", roundsNotConverged);
+            map.put("reviewDegraded", reviewDegraded);
+            return map;
+        }
     }
 
     /**
@@ -357,6 +396,10 @@ public class TestGeneratorAgent {
     @Autowired
     private PromptSkillLoader promptSkillLoader;
 
+    // v7.1(G14): 全量生成批内语义去重（此前仅追加路径有语义去重）
+    @Autowired
+    private SemanticService semanticService;
+
     // ==================== v3.4: 动态 prompt + temperature 参数化 ====================
 
     // v3.4: 根据 caseDensity 拼接状态机驱动的数量引导段
@@ -563,18 +606,70 @@ public class TestGeneratorAgent {
     public List<TestCase> generate(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                    BackendResult backendResult, FrontendResult frontendResult,
                                    ProgressCallback progressCallback, GenerationParams params) {
-        List<TestCase> result = new ArrayList<>();
+        return generate(prdResult, stateMachines, backendResult, frontendResult,
+                progressCallback, params, null);
+    }
+
+    // v7.1(G2/G5): 报告重载——采集各阶段丢弃数量与降级信号，供编排层/服务层使用
+    public List<TestCase> generate(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                   BackendResult backendResult, FrontendResult frontendResult,
+                                   ProgressCallback progressCallback, GenerationParams params,
+                                   GenerationReport report) {
+        return runPrdPipeline(prdResult, stateMachines, backendResult, frontendResult,
+                progressCallback, null, null, params, report);
+    }
+
+    // v3.2: 流式生成重载。与 generate 行为一致（PRD 驱动、去重、质量评分、编号），
+    // 额外通过 caseCb 在每条用例解析完成时回调（去重/评审前，即"草稿"），用于 SSE 推送
+    // v3.3: 新增 cancelled 参数，在 LLM 调用前/状态机循环迭代前检查取消标志
+    // v3.4: 新增 params 参数，动态拼接 prompt + 调整 temperature
+    public List<TestCase> generateStreaming(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                             BackendResult backendResult, FrontendResult frontendResult,
+                                             ProgressCallback progressCallback, CaseCallback caseCb,
+                                             CancellationSignal cancelled, GenerationParams params) {
+        return generateStreaming(prdResult, stateMachines, backendResult, frontendResult,
+                progressCallback, caseCb, cancelled, params, null);
+    }
+
+    // v7.1(G2/G5): 报告重载——流式路径同样采集丢弃/降级信息
+    public List<TestCase> generateStreaming(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                             BackendResult backendResult, FrontendResult frontendResult,
+                                             ProgressCallback progressCallback, CaseCallback caseCb,
+                                             CancellationSignal cancelled, GenerationParams params,
+                                             GenerationReport report) {
+        return runPrdPipeline(prdResult, stateMachines, backendResult, frontendResult,
+                progressCallback, caseCb, cancelled, params, report);
+    }
+
+    /**
+     * v7.1: 统一 PRD 生成管线（原 generate/generateStreaming 两份重复代码合并）。
+     * caseCb 为 null 即非流式路径；cancelled 为 null 即无取消信号。
+     * 管线顺序：LLM 多轮生成 → 聚焦类型过滤(G11) → 选择器补齐(G3) → 评审(G2/G5)
+     * → 质量评分 → 标题/指纹去重 → 批内语义去重(G14) → 编号。
+     */
+    private List<TestCase> runPrdPipeline(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                          BackendResult backendResult, FrontendResult frontendResult,
+                                          ProgressCallback progressCallback, CaseCallback caseCb,
+                                          CancellationSignal cancelled, GenerationParams params,
+                                          GenerationReport report) {
+        GenerationReport r = report != null ? report : new GenerationReport();
+        // v3.13: 包装回调，仅透传聚焦类型（SSE 推送与落库一致）
+        CaseCallback effectiveCb = wrapFocusFilter(params, caseCb);
 
         // v5.13: 生成必须基于 PRD，代码只作为辅助上下文
         if (prdResult == null || prdResult.isEmpty()) {
             throw BusinessException.invalidParam("请先添加 PRD 文档");
         }
+        checkCancelled(cancelled);
         if (progressCallback != null) {
             progressCallback.update("基于 PRD 生成用例...");
         }
+        List<TestCase> result;
         try {
             result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult,
-                    null, null, params, progressCallback);
+                    effectiveCb, cancelled, params, progressCallback, r);
+        } catch (GenerationCancelledException e) {
+            throw e;  // v3.3: 取消异常向上传播，不触发 fallback
         } catch (Exception e) {
             log.error("PRD-driven generation failed: {}", e.getMessage());
             throw new BusinessException(50016, "PRD 生成用例失败: " + e.getMessage(),
@@ -584,93 +679,51 @@ public class TestGeneratorAgent {
             throw new BusinessException(50016, "PRD 生成用例失败：未生成任何用例",
                     HttpStatus.INTERNAL_SERVER_ERROR);
         }
+        r.generated = result.size();
 
         // v3.13: 聚焦类型过滤（focusTypes 非空时仅保留指定类型）
+        int beforeFocus = result.size();
         result = filterByFocusTypes(params, result);
+        r.focusDropped = beforeFocus - result.size();
+        // v7.1(G11): 区分"未生成任何用例"与"生成后被聚焦类型过滤为空"——后者误导排查方向
+        if (result.isEmpty()) {
+            throw new BusinessException(50016, "PRD 生成用例失败：已生成 " + beforeFocus
+                    + " 条用例，但聚焦类型 " + params.getFocusTypes()
+                    + " 过滤后为 0 条（请调整聚焦类型后重新生成）",
+                    HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
         // 前端选择器补齐：为 ui_action 步骤匹配真实 uiSelector
         for (TestCase tc : result) {
             enrichStructuredSteps(frontendResult, tc);
         }
 
         // v5.12: 覆盖缺口评审 + coverageRefs 补全（先评审后评分/去重）
-        if (!result.isEmpty()) {
-            result = testCaseReviewAgent.review(
-                    result, buildCoverageChecklist(prdResult, stateMachines, backendResult));
-        }
+        // v7.1(G2/G5): 评审丢弃数与 LLM 评审降级信号由 TestCaseReviewAgent 写入报告
+        result = testCaseReviewAgent.review(
+                result, buildCoverageChecklist(prdResult, stateMachines, backendResult),
+                "generation", r);
 
         if (progressCallback != null) {
             progressCallback.update("正在质量评分与去重...");
         }
         calculateQualityScores(result);
+        int beforeDedup = result.size();
         result = deduplicate(result);
+        r.dedupDropped = beforeDedup - result.size();
+
+        // v7.1(G14): 全量路径批内语义去重——同语义不同标题的重复用例不再全量保留
+        //（此前仅追加路径有语义去重能力）；Milvus/embedding 未配置时自动跳过
+        int beforeSemantic = result.size();
+        result = semanticService.deduplicateBatch(result);
+        r.semanticDropped = beforeSemantic - result.size();
 
         int counter = 1;
         for (TestCase tc : result) {
             tc.setId(String.format("TC-%03d", counter++));
             tc.setCreatedAt(LocalDateTime.now());
         }
-        return result;
-    }
-
-    // v3.2: 流式生成重载。与 generate 行为一致（PRD 驱动/代码驱动分支、去重、质量评分、编号），
-    // 额外通过 caseCb 在每条用例解析完成时回调（去重前），用于 SSE 推送
-    // v3.3: 新增 cancelled 参数，在 LLM 调用前/状态机循环迭代前检查取消标志
-    // v3.4: 新增 params 参数，动态拼接 prompt + 调整 temperature
-    public List<TestCase> generateStreaming(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
-                                             BackendResult backendResult, FrontendResult frontendResult,
-                                             ProgressCallback progressCallback, CaseCallback caseCb,
-                                             CancellationSignal cancelled, GenerationParams params) {
-        List<TestCase> result = new ArrayList<>();
-        // v3.13: 包装回调，仅透传聚焦类型（SSE 推送与落库一致）
-        CaseCallback effectiveCb = wrapFocusFilter(params, caseCb);
-
-        // v5.13: 生成必须基于 PRD，代码只作为辅助上下文
-        if (prdResult == null || prdResult.isEmpty()) {
-            throw BusinessException.invalidParam("请先添加 PRD 文档");
-        }
-        checkCancelled(cancelled);  // v3.3: PRD 驱动分支前检查
-        if (progressCallback != null) {
-            progressCallback.update("基于 PRD 生成用例...");
-        }
-        try {
-            result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult,
-                    effectiveCb, cancelled, params, progressCallback);
-        } catch (GenerationCancelledException e) {
-            throw e;  // v3.3: 取消异常向上传播，不触发 fallback
-        } catch (Exception e) {
-            log.error("PRD-driven streaming generation failed: {}", e.getMessage());
-            throw new BusinessException(50016, "PRD 生成用例失败: " + e.getMessage(),
-                    HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-        if (result == null || result.isEmpty()) {
-            throw new BusinessException(50016, "PRD 生成用例失败：未生成任何用例",
-                    HttpStatus.INTERNAL_SERVER_ERROR);
-        }
-
-        // v3.13: 聚焦类型过滤
-        result = filterByFocusTypes(params, result);
-        // 前端选择器补齐：为 ui_action 步骤匹配真实 uiSelector
-        for (TestCase tc : result) {
-            enrichStructuredSteps(frontendResult, tc);
-        }
-
-        // v5.12: 覆盖缺口评审 + coverageRefs 补全（先评审后评分/去重）
-        if (!result.isEmpty()) {
-            result = testCaseReviewAgent.review(
-                    result, buildCoverageChecklist(prdResult, stateMachines, backendResult));
-        }
-
-        if (progressCallback != null) {
-            progressCallback.update("正在质量评分与去重...");
-        }
-        calculateQualityScores(result);
-        result = deduplicate(result);
-
-        int counter = 1;
-        for (TestCase tc : result) {
-            tc.setId(String.format("TC-%03d", counter++));
-            tc.setCreatedAt(LocalDateTime.now());
-        }
+        r.finalCount = result.size();
         return result;
     }
 
@@ -752,12 +805,9 @@ public class TestGeneratorAgent {
                 uiSelector.put("type", best.get("type"));
                 uiSelector.put("value", best.get("value"));
                 step.put("uiSelector", uiSelector);
-                // 表单字段：给 data 补一个字段占位，便于执行端知道输入目标
-                if (best.containsKey("name") && step.get("data") == null) {
-                    Map<String, Object> data = new LinkedHashMap<>();
-                    data.put(String.valueOf(best.get("name")), "");
-                    step.put("data", data);
-                }
+                // v7.1(G3): 不再补 {字段名: ""} 空占位——空字符串会让必填字段校验必败，
+                // 正向用例被静默改成必败用例；且 DOM 执行路径取 inputValue 而非 data，
+                // Agent 模式的输入值由 LLM 决定，分析器目前也无默认值/示例值来源，宁缺勿错
             }
         }
         tc.setStructuredSteps(toJson(steps));
@@ -789,127 +839,10 @@ public class TestGeneratorAgent {
         return bestScore >= 2 ? best : null;
     }
 
-    // v1.10: 原代码驱动生成逻辑（状态机/endpoint），从 generate 抽出供 PRD 失败时复用
-    // v1.11: 新增 frontendResult 参数
-    // v3.2: 新增 caseCb 参数，规则回退与 LLM 解析均透传回调
-    // v3.3: 新增 cancelled 参数，每模块循环迭代前检查取消标志
-    // v3.4: 新增 params 参数，透传给 generateByLlmForStateMachine 用于动态 prompt + temperature
-    private List<TestCase> generateCodeDrivenCases(List<StateMachine> stateMachines, BackendResult backendResult,
-                                                    FrontendResult frontendResult,
-                                                    ProgressCallback progressCallback, CaseCallback caseCb,
-                                                    CancellationSignal cancelled, GenerationParams params) {
-        List<TestCase> result = new ArrayList<>();
-
-        if (stateMachines != null && !stateMachines.isEmpty()) {
-            int total = stateMachines.size();
-            for (int i = 0; i < total; i++) {
-                checkCancelled(cancelled);  // v3.3: 每模块前检查
-                StateMachine sm = stateMachines.get(i);
-                if (progressCallback != null) {
-                    progressCallback.update(String.format("正在生成第 %d/%d 个模块: %s", i + 1, total, sm.getName()));
-                }
-                List<TestCase> moduleCases;
-                try {
-                    moduleCases = generateByLlmForStateMachine(sm, backendResult, frontendResult, caseCb, cancelled, params);
-                    if (moduleCases == null || moduleCases.isEmpty()) {
-                        log.warn("LLM returned empty for state machine {}, using rules", sm.getName());
-                        moduleCases = generateByRulesForStateMachine(sm, backendResult, caseCb);
-                    }
-                } catch (GenerationCancelledException e) {
-                    throw e;  // v3.3: 取消异常向上传播，不触发 rules fallback
-                } catch (Exception e) {
-                    log.warn("LLM generation failed for state machine {}, falling back to rules: {}",
-                            sm.getName(), e.getMessage());
-                    moduleCases = generateByRulesForStateMachine(sm, backendResult, caseCb);
-                }
-                result.addAll(moduleCases);
-            }
-        }
-
-        // 无状态机时按 endpoints 生成
-        if (result.isEmpty() && backendResult != null && backendResult.getEndpoints() != null) {
-            if (progressCallback != null) {
-                progressCallback.update("无状态机，按接口生成用例...");
-            }
-            result = generateByEndpoints(backendResult, caseCb);
-        }
-        return result;
-    }
-
-    // ==================== LLM 生成（分模块） ====================
-
-    // v1.11: 新增 frontendResult 参数
-    // v3.2: 新增 caseCb 参数，透传给 parseTestCases 用于流式回调
-    // v3.3: 新增 cancelled 参数，LLM 调用前检查取消标志
-    // v3.4: 新增 params 参数，动态拼接 system prompt + 调整 temperature
-    private List<TestCase> generateByLlmForStateMachine(StateMachine sm, BackendResult backendResult,
-                                                         FrontendResult frontendResult, CaseCallback caseCb,
-                                                         CancellationSignal cancelled, GenerationParams params) {
-        Map<String, Object> context = new LinkedHashMap<>();
-
-        Map<String, Object> smMap = new LinkedHashMap<>();
-        smMap.put("name", sm.getName());
-        smMap.put("description", sm.getDescription());
-        smMap.put("states", JsonHelper.parseListMap(sm.getStates()));
-        smMap.put("transitions", JsonHelper.parseListMap(sm.getTransitions()));
-        context.put("stateMachine", smMap);
-
-        // 按模块名匹配相关端点
-        List<Map<String, Object>> matchedEndpoints = matchEndpoints(backendResult, sm.getName());
-        context.put("endpoints", matchedEndpoints);
-
-        // business rules
-        List<Map<String, Object>> ruleList = new ArrayList<>();
-        if (backendResult != null && backendResult.getBusinessRules() != null) {
-            for (BusinessRule br : backendResult.getBusinessRules()) {
-                ruleList.add(br.toContextMap());
-            }
-        }
-        context.put("businessRules", ruleList);
-
-        // v5.12: 覆盖清单与缺口（状态机单模块）
-        Map<String, Object> coverage = buildCoverageChecklist(null, List.of(sm), backendResult);
-        context.put("coverageChecklist", coverage.get("checklist"));
-        context.put("coverageGaps", coverage.get("gaps"));
-
-        // v1.11: 前端上下文
-        putFrontendContext(context, frontendResult);
-
-        // v3.4: 动态构建 system prompt（根据 caseDensity 拼接数量引导段）
-        String systemPrompt = buildSystemPrompt(params);
-
-        String userPrompt;
-        try {
-            userPrompt = "上下文信息：\n" + objectMapper.writeValueAsString(context)
-                    + "\n\n" + FEW_SHOT_EXAMPLES
-                    + "\n\n请基于上下文生成测试用例。";
-        } catch (Exception e) {
-            userPrompt = "上下文信息：\n" + context.toString()
-                    + "\n\n" + FEW_SHOT_EXAMPLES
-                    + "\n\n请基于上下文生成测试用例。";
-        }
-
-        checkCancelled(cancelled);  // v3.3: LLM 调用前检查（耗时操作，最关键的取消点）
-        // v3.4: temperature 参数化（从 params 读取，null/越界默认 0.4）
-        // v3.7: caseCb 非空时启用流式调用 + 增量解析
-        if (caseCb != null) {
-            StreamingTestCaseParser parser = new StreamingTestCaseParser(caseCb);
-            String response = llmService.chatStreaming(
-                    systemPrompt, userPrompt, resolveTemperature(params), parser::append);
-            String json = extractJsonArray(response);
-            List<TestCase> all = parseTestCases(json, null);
-            for (int i = parser.getParsedCount(); i < all.size(); i++) {
-                try { caseCb.onCase(all.get(i)); } catch (Exception ex) {
-                    log.warn("兜底推送失败: {}", ex.getMessage());
-                }
-            }
-            return all;
-        }
-        // caseCb 为 null（非流式场景）：原有逻辑
-        String response = llmService.chat(systemPrompt, userPrompt, resolveTemperature(params));
-        String json = extractJsonArray(response);
-        return parseTestCases(json, null);
-    }
+    // v7.1(G5): 删除代码驱动生成链（generateCodeDrivenCases / generateByLlmForStateMachine /
+    // generateByRulesForStateMachine / generateByEndpoints / build*Test / buildStateMachineRef /
+    // buildForbiddenTransitions / matchEndpoints，约 700 行）——v5.13 PRD 强制后无任何调用方，
+    // 是死代码；其遗留的 rule_based source 永不产生，导致 TestCaseService.markDegraded 判定失效。
 
     // v1.10: PRD 驱动的 LLM 生成（PRD 为主、代码为辅）
     // v1.11: 新增 frontendResult 参数，前端上下文作为辅助信息
@@ -917,12 +850,14 @@ public class TestGeneratorAgent {
     // v3.3: 新增 cancelled 参数，LLM 调用前检查取消标志
     // v3.4: 新增 params 参数，动态拼接 PRD system prompt + 调整 temperature
     // v5.14: 自动多轮补齐——每轮根据剩余 coverageGaps 继续生成，直到缺口补齐或达到轮数/条数上限
+    // v7.1(G5): 新增 report 参数，轮次耗尽仍有缺口时记录未收敛降级信号
     private List<TestCase> generateByLlmWithPrd(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                                  BackendResult backendResult,
                                                  FrontendResult frontendResult,
                                                  CaseCallback caseCb, CancellationSignal cancelled,
                                                  GenerationParams params,
-                                                 ProgressCallback progressCallback) throws Exception {
+                                                 ProgressCallback progressCallback,
+                                                 GenerationReport report) throws Exception {
         Map<String, Object> coverage = buildCoverageChecklist(prdResult, stateMachines, backendResult);
         List<TestCase> all = new ArrayList<>();
         int maxRounds = "high".equals(params != null ? params.getCaseDensity() : null)
@@ -943,6 +878,12 @@ public class TestGeneratorAgent {
                 break;
             }
             all.addAll(roundCases);
+        }
+        // v7.1(G5): 轮次耗尽仍有缺口且未达生成上限 → 真实降级信号（达上限属 G10 容量问题，不算未收敛）
+        if (report != null && all.size() < MAX_GENERATED_CASES
+                && hasRemainingGaps(remainingGaps(all, coverage))) {
+            report.roundsNotConverged = true;
+            log.warn("Generation rounds exhausted with coverage gaps remaining: {} cases", all.size());
         }
         return all;
     }
@@ -1367,259 +1308,6 @@ public class TestGeneratorAgent {
         }
     }
 
-    // ==================== 规则生成（单模块回退） ====================
-
-    // v3.2: 新增 caseCb 参数，每条规则用例构建后立即回调
-    private List<TestCase> generateByRulesForStateMachine(StateMachine sm, BackendResult backendResult,
-                                                          CaseCallback caseCb) {
-        List<TestCase> result = new ArrayList<>();
-        List<Map<String, Object>> states = JsonHelper.parseListMap(sm.getStates());
-        List<Map<String, Object>> transitions = JsonHelper.parseListMap(sm.getTransitions());
-        List<Map<String, Object>> matchedEndpoints = matchEndpoints(backendResult, sm.getName());
-
-        TestCase positive = buildPositiveTest(sm, transitions, matchedEndpoints);
-        result.add(positive);
-        if (caseCb != null) { try { caseCb.onCase(positive); } catch (Exception ignored) {} }
-        TestCase negative = buildNegativeTest(sm, states, transitions);
-        result.add(negative);
-        if (caseCb != null) { try { caseCb.onCase(negative); } catch (Exception ignored) {} }
-        TestCase boundary = buildBoundaryTest(sm, states, transitions);
-        result.add(boundary);
-        if (caseCb != null) { try { caseCb.onCase(boundary); } catch (Exception ignored) {} }
-        return result;
-    }
-
-    // v3.2: 新增 caseCb 参数，每个接口用例构建后立即回调
-    private List<TestCase> generateByEndpoints(BackendResult backendResult, CaseCallback caseCb) {
-        List<TestCase> result = new ArrayList<>();
-        for (EndpointInfo endpoint : backendResult.getEndpoints()) {
-            TestCase tc = new TestCase();
-            tc.setTitle("验证接口 " + endpoint.getMethod() + " " + endpoint.getPath());
-            tc.setModule("接口测试");
-            tc.setType("positive");
-            tc.setPriority("P1");
-            tc.setPreconditions(toJsonList("服务正常运行"));
-            tc.setSteps(toJsonList("调用接口 " + endpoint.getMethod() + " " + endpoint.getPath()));
-            tc.setExpectedResults(toJsonList("接口应返回成功响应"));
-
-            List<Map<String, Object>> steps = new ArrayList<>();
-            Map<String, Object> step = new LinkedHashMap<>();
-            step.put("order", 1);
-            step.put("action", "调用接口");
-            step.put("target", endpoint.getMethod() + " " + endpoint.getPath());
-            step.put("expected", "接口返回成功响应");
-            step.put("data", new LinkedHashMap<>());
-            step.put("type", "api_call");
-            steps.add(step);
-            tc.setStructuredSteps(toJson(steps));
-
-            List<Map<String, Object>> eps = new ArrayList<>();
-            Map<String, Object> ep = new LinkedHashMap<>();
-            ep.put("method", endpoint.getMethod());
-            ep.put("path", endpoint.getPath());
-            ep.put("description",
-                    endpoint.getDescription() != null && !endpoint.getDescription().isBlank()
-                            ? endpoint.getDescription() : endpoint.getFunction());
-            ep.put("parameters",
-                    endpoint.getParameters() == null ? List.of() : endpoint.getParameters());
-            ep.put("permissions",
-                    endpoint.getPermissions() == null ? List.of() : endpoint.getPermissions());
-            ep.put("validation",
-                    endpoint.getValidation() == null ? List.of() : endpoint.getValidation());
-            eps.add(ep);
-            tc.setApiEndpoints(toJson(eps));
-
-            tc.setTestData("{}");
-            Map<String, Object> hints = new LinkedHashMap<>();
-            hints.put("approach", "api_call");
-            hints.put("notes", "直接调用该接口验证");
-            hints.put("prerequisites", toJsonList("服务正常运行"));
-            tc.setExecutionHints(toJson(hints));
-            tc.setStateMachineRef("{}");
-            tc.setSource("rule_based");
-            tc.setConfidence(0.5);
-            result.add(tc);
-            if (caseCb != null) { try { caseCb.onCase(tc); } catch (Exception ignored) {} }
-        }
-        return result;
-    }
-
-    private TestCase buildPositiveTest(StateMachine sm, List<Map<String, Object>> transitions,
-                                       List<Map<String, Object>> matchedEndpoints) {
-        TestCase tc = new TestCase();
-        tc.setTitle("验证" + sm.getName() + "正常状态流转");
-        tc.setModule("状态机测试");
-        tc.setType("positive");
-        tc.setPriority("P1");
-        tc.setPreconditions(toJsonList("系统处于初始状态"));
-
-        List<String> steps = new ArrayList<>();
-        List<String> expected = new ArrayList<>();
-        List<Map<String, Object>> structuredSteps = new ArrayList<>();
-        int order = 1;
-        for (Map<String, Object> t : transitions) {
-            String from = String.valueOf(t.getOrDefault("from", ""));
-            String to = String.valueOf(t.getOrDefault("to", ""));
-            String trigger = String.valueOf(t.getOrDefault("trigger", ""));
-            steps.add("触发状态转换(" + trigger + "): " + from + " -> " + to);
-            expected.add("状态应从 " + from + " 变为 " + to);
-
-            Map<String, Object> sStep = new LinkedHashMap<>();
-            sStep.put("order", order++);
-            sStep.put("action", "触发" + trigger);
-            sStep.put("target", "状态转换 " + from + " -> " + to);
-            sStep.put("expected", "状态从 " + from + " 变为 " + to);
-            sStep.put("data", new LinkedHashMap<>());
-            sStep.put("type", "state_assert");
-            structuredSteps.add(sStep);
-        }
-        if (steps.isEmpty()) {
-            steps.add("验证系统初始状态");
-            expected.add("系统应处于正确的初始状态");
-            Map<String, Object> sStep = new LinkedHashMap<>();
-            sStep.put("order", 1);
-            sStep.put("action", "验证系统初始状态");
-            sStep.put("target", "系统初始状态");
-            sStep.put("expected", "系统处于正确的初始状态");
-            sStep.put("data", new LinkedHashMap<>());
-            sStep.put("type", "state_assert");
-            structuredSteps.add(sStep);
-        }
-
-        tc.setSteps(toJsonList(steps));
-        tc.setExpectedResults(toJsonList(expected));
-        tc.setStructuredSteps(toJson(structuredSteps));
-        tc.setApiEndpoints(toJson(matchedEndpoints));
-        tc.setTestData("{}");
-        Map<String, Object> hints = new LinkedHashMap<>();
-        hints.put("approach", matchedEndpoints.isEmpty() ? "manual" : "api_call");
-        hints.put("notes", "按状态机正向流转依次触发各状态转换");
-        hints.put("prerequisites", toJsonList("系统处于初始状态"));
-        tc.setExecutionHints(toJson(hints));
-        tc.setStateMachineRef(buildStateMachineRef(sm, transitions, false));
-        tc.setSource("rule_based");
-        tc.setConfidence(0.5);
-        return tc;
-    }
-
-    private TestCase buildNegativeTest(StateMachine sm, List<Map<String, Object>> states,
-                                       List<Map<String, Object>> transitions) {
-        TestCase tc = new TestCase();
-        tc.setTitle("验证" + sm.getName() + "非法状态转换被拒绝");
-        tc.setModule("状态机测试");
-        tc.setType("negative");
-        tc.setPriority("P1");
-        tc.setPreconditions(toJsonList("系统处于某个已定义状态"));
-
-        List<Map<String, Object>> forbidden = buildForbiddenTransitions(states, transitions);
-
-        List<Map<String, Object>> structuredSteps = new ArrayList<>();
-        int order = 1;
-        for (Map<String, Object> f : forbidden) {
-            Map<String, Object> sStep = new LinkedHashMap<>();
-            sStep.put("order", order++);
-            sStep.put("action", "尝试非法转换: " + f.get("from") + " -> " + f.get("to"));
-            sStep.put("target", "状态转换 " + f.get("from") + " -> " + f.get("to"));
-            sStep.put("expected", "系统应拒绝该转换: " + f.getOrDefault("reason", ""));
-            sStep.put("data", new LinkedHashMap<>());
-            sStep.put("type", "state_assert");
-            structuredSteps.add(sStep);
-        }
-        if (structuredSteps.isEmpty()) {
-            Map<String, Object> sStep = new LinkedHashMap<>();
-            sStep.put("order", 1);
-            sStep.put("action", "尝试执行非法的状态转换");
-            sStep.put("target", "非法状态转换");
-            sStep.put("expected", "系统应拒绝非法转换并保持原状态不变");
-            sStep.put("data", new LinkedHashMap<>());
-            sStep.put("type", "state_assert");
-            structuredSteps.add(sStep);
-        }
-
-        tc.setSteps(toJsonList("尝试执行非法的状态转换"));
-        tc.setExpectedResults(toJsonList("系统应拒绝非法转换并保持原状态不变"));
-        tc.setStructuredSteps(toJson(structuredSteps));
-        tc.setApiEndpoints("[]");
-        tc.setTestData("{}");
-        Map<String, Object> hints = new LinkedHashMap<>();
-        hints.put("approach", "manual");
-        hints.put("notes", "构造非法状态转换验证系统拒绝能力");
-        hints.put("prerequisites", toJsonList("系统处于某个已定义状态"));
-        tc.setExecutionHints(toJson(hints));
-        tc.setStateMachineRef(buildStateMachineRef(sm, transitions, true, forbidden));
-        tc.setSource("rule_based");
-        tc.setConfidence(0.5);
-        return tc;
-    }
-
-    private TestCase buildBoundaryTest(StateMachine sm, List<Map<String, Object>> states,
-                                       List<Map<String, Object>> transitions) {
-        TestCase tc = new TestCase();
-        tc.setTitle("验证" + sm.getName() + "边界状态处理");
-        tc.setModule("状态机测试");
-        tc.setType("boundary");
-        tc.setPriority("P2");
-        tc.setPreconditions(toJsonList("系统处于边界状态"));
-
-        List<String> steps = new ArrayList<>();
-        List<String> expected = new ArrayList<>();
-        List<Map<String, Object>> structuredSteps = new ArrayList<>();
-        int order = 1;
-        if (!states.isEmpty()) {
-            Map<String, Object> firstState = states.get(0);
-            steps.add("验证初始边界状态: " + firstState.getOrDefault("name", ""));
-            expected.add("系统应正确处于初始状态");
-            Map<String, Object> sStep = new LinkedHashMap<>();
-            sStep.put("order", order++);
-            sStep.put("action", "验证初始边界状态");
-            sStep.put("target", "初始状态: " + firstState.getOrDefault("name", ""));
-            sStep.put("expected", "系统应正确处于初始状态");
-            sStep.put("data", new LinkedHashMap<>());
-            sStep.put("type", "state_assert");
-            structuredSteps.add(sStep);
-        }
-        if (states.size() > 1) {
-            Map<String, Object> lastState = states.get(states.size() - 1);
-            steps.add("验证终态边界状态: " + lastState.getOrDefault("name", ""));
-            expected.add("系统应正确处于终态");
-            Map<String, Object> sStep = new LinkedHashMap<>();
-            sStep.put("order", order++);
-            sStep.put("action", "验证终态边界状态");
-            sStep.put("target", "终态: " + lastState.getOrDefault("name", ""));
-            sStep.put("expected", "系统应正确处于终态");
-            sStep.put("data", new LinkedHashMap<>());
-            sStep.put("type", "state_assert");
-            structuredSteps.add(sStep);
-        }
-        if (steps.isEmpty()) {
-            steps.add("验证边界状态下的系统行为");
-            expected.add("系统应正确处理边界情况");
-            Map<String, Object> sStep = new LinkedHashMap<>();
-            sStep.put("order", 1);
-            sStep.put("action", "验证边界状态下的系统行为");
-            sStep.put("target", "边界状态");
-            sStep.put("expected", "系统应正确处理边界情况");
-            sStep.put("data", new LinkedHashMap<>());
-            sStep.put("type", "state_assert");
-            structuredSteps.add(sStep);
-        }
-
-        tc.setSteps(toJsonList(steps));
-        tc.setExpectedResults(toJsonList(expected));
-        tc.setStructuredSteps(toJson(structuredSteps));
-        tc.setApiEndpoints("[]");
-        tc.setTestData("{}");
-        Map<String, Object> hints = new LinkedHashMap<>();
-        hints.put("approach", "manual");
-        hints.put("notes", "验证状态机的初始与终态边界处理");
-        hints.put("prerequisites", toJsonList("系统处于边界状态"));
-        tc.setExecutionHints(toJson(hints));
-        tc.setStateMachineRef(buildStateMachineRef(sm, transitions, false));
-        tc.setSource("rule_based");
-        tc.setConfidence(0.5);
-        return tc;
-    }
-
     // ==================== 去重（v1.2） ====================
 
     private List<TestCase> deduplicate(List<TestCase> cases) {
@@ -1647,25 +1335,32 @@ public class TestGeneratorAgent {
         return result;
     }
 
-    private boolean isDuplicate(TestCase a, TestCase b) {
+    // v7.1(G1): 包级可见，供单测直接验证判重语义（正向/异常成对用例不得误杀）
+    boolean isDuplicate(TestCase a, TestCase b) {
         String titleA = a.getTitle() == null ? "" : a.getTitle().trim();
         String titleB = b.getTitle() == null ? "" : b.getTitle().trim();
         if (titleA.isEmpty() || titleB.isEmpty()) {
             return false;
         }
+        String typeA = a.getType() == null ? "" : a.getType();
+        String typeB = b.getType() == null ? "" : b.getType();
+        // v7.1(G1): 标题类判重（完全相同/子串/字符重叠）必须 type 一致——
+        // "新增用户-正常" vs "新增用户-异常" 仅差后缀且字符重叠 83% > 旧阈值 80%，
+        // 曾系统性误杀正向/异常成对用例；high 密度引导成对生成，误杀高发
+        boolean sameType = typeA.equals(typeB);
         // 标题完全相同
-        if (titleA.equals(titleB)) {
+        if (titleA.equals(titleB) && sameType) {
             return true;
         }
         // 同模块才判重
         String modA = a.getModule() == null ? "" : a.getModule();
         String modB = b.getModule() == null ? "" : b.getModule();
-        if (modA.equals(modB)) {
+        if (modA.equals(modB) && sameType) {
             // 子串包含关系
             if (titleA.contains(titleB) || titleB.contains(titleA)) {
                 return true;
             }
-            // 短标题字符重叠率 > 80%
+            // 短标题字符重叠率 > 90%（v7.1: 0.8 → 0.9，宁漏勿杀——漏网真重复由批内语义去重兜底）
             if (titleA.length() <= 20 && titleB.length() <= 20) {
                 Set<Character> setA = new HashSet<>();
                 for (char c : titleA.toCharArray()) setA.add(c);
@@ -1674,14 +1369,12 @@ public class TestGeneratorAgent {
                 Set<Character> intersection = new HashSet<>(setA);
                 intersection.retainAll(setB);
                 int maxLen = Math.max(setA.size(), setB.size());
-                if (maxLen > 0 && (double) intersection.size() / maxLen > 0.8) {
+                if (maxLen > 0 && (double) intersection.size() / maxLen > 0.9) {
                     return true;
                 }
             }
         }
         // v5.14: 类型一致且步骤/接口指纹一致视为重复，覆盖“标题不同但步骤相同”的重复用例
-        String typeA = a.getType() == null ? "" : a.getType();
-        String typeB = b.getType() == null ? "" : b.getType();
         if (modA.equals(modB) && typeA.equals(typeB)
                 && !caseStepsSignature(a).isEmpty()
                 && caseStepsSignature(a).equals(caseStepsSignature(b))) {

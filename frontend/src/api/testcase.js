@@ -6,7 +6,7 @@ export function triggerGenerate(projectId, params) {
 }
 
 // v3.2: SSE 流式生成用例。基于浏览器原生 EventSource，返回事件源对象供调用方 close()。
-// 事件类型：progress（进度文本）、case（单条用例）、complete（完成，含 total）、cancelled（取消）、error（失败）。
+// 事件类型：progress（进度文本）、case（单条用例）、complete（完成，v7.1 起含 total/pushed/dropped）、cancelled（取消）、error（失败）。
 // v3.3: 新增 cancelled 事件 + onCancelled 回调，区分"取消"与"失败"。
 // v6.6: 先以 Bearer 换短期 ticket，再用 ?ticket= 建立连接（避免长期 JWT 进 URL）。
 export async function streamGenerate(projectId, { onProgress, onCase, onComplete, onCancelled, onError } = {}) {
@@ -21,7 +21,8 @@ export async function streamGenerate(projectId, { onProgress, onCase, onComplete
     try { onCase?.(JSON.parse(e.data).testCase) } catch {}
   })
   es.addEventListener('complete', (e) => {
-    try { onComplete?.(JSON.parse(e.data).total) } catch {}
+    // v7.1(G2): complete 携带 total/pushed/dropped（各阶段丢弃明细），推送≠落库不再静默
+    try { onComplete?.(JSON.parse(e.data)) } catch {}
     es.close()
   })
   // v3.3: 取消事件（区别于 error，前端用 warning 而非 error 提示）

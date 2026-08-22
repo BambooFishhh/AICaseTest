@@ -36,7 +36,7 @@ v5.4 引入了基于 Milvus + Embedding 的语义检索，目前已经支撑生�
 - 输入整篇文本，按 `# / ## / ###` 标题与空行段落切分为语义块。
 - 每块记录 `title`（当前标题）与 `text`（切片正文）。
 - 单块超过 chunk size 时按中文/英文标点边界二次切分，并保留 overlap 窗口，避免切在句子中间。
-- 默认 chunk size 900、overlap 150，可通过 `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP` 覆盖。
+- 默认 chunk size 500、overlap 150，可通过 `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP` 覆盖。
 
 ### 3.2 需求上下文索引
 
@@ -81,7 +81,7 @@ replaceRequirementContexts(projectId, prdDocs, contextDocs, supplementary)
 
 | 配置 | 环境变量 | 默认值 | 说明 |
 |---|---|---|---|
-| `app.rag.chunk-size` | `RAG_CHUNK_SIZE` | 900 | 切片目标字符数 |
+| `app.rag.chunk-size` | `RAG_CHUNK_SIZE` | 500 | 切片目标字符数 |
 | `app.rag.chunk-overlap` | `RAG_CHUNK_OVERLAP` | 150 | 切片重叠字符数 |
 | `app.rag.rrf-k` | `RAG_RRF_K` | 60 | RRF 平滑系数 |
 | `app.rag.context-topk` | `RAG_CONTEXT_TOPK` | 6 | 需求上下文最终 topK |

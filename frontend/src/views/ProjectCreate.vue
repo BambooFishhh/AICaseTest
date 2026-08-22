@@ -221,7 +221,7 @@ const rules = {
           return
         }
         if (form.sourceType === 'git_url') {
-          const gitPattern = /^(https?:\/\/|git@).+\.(git|com|org|net|io)/i
+          const gitPattern = /^(https?|ssh|git):\/\/\S+$|^git@\S+:.+$/i
           if (!gitPattern.test(value.trim())) {
             callback(new Error('Git 地址格式不正确，例如：https://github.com/user/repo.git'))
             return

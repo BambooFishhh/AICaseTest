@@ -31,6 +31,13 @@ node_modules/
 backend/outputs/
 frontend/coverage/
 
+# 根目录运行时产物（导出/证据/录屏/SSE 验证残留；已跟踪的历史导出不受影响）
+/outputs/
+# 运行数据目录（H2 库、git 克隆仓库等）
+/data/
+# AI 检查/演练临时目录
+/.tmp-*/
+
 # vP1: TLS 证书（私钥不入库）
 certs/
 

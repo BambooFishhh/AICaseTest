@@ -167,7 +167,10 @@ public class TestCaseService {
                 }
             }
         } catch (Exception e) {
-            log.warn("Failed to check project PRD docs: {}", e.getMessage());
+            // v7.1(G15): settings 解析失败不再静默返回 false（会误导为"请先添加 PRD"），
+            // 如实抛出配置解析错误，由外层 catch 以 failed 状态展示真实原因
+            throw new IllegalStateException("项目配置解析失败：无法读取需求文档配置（"
+                    + e.getMessage() + "），请检查项目设置或重新保存需求资料", e);
         }
         return false;
     }
@@ -194,13 +197,17 @@ public class TestCaseService {
             // v1.10: 改由 OrchestratorAgent 编排（PrdAgent + 代码侧 → TestGeneratorAgent）
             telemetryService.setTaskContext(taskId, agentTaskService.getAttempt(taskId));
             List<TestCase> testCases;
+            // v7.1(G2/G5): 采集生成链路报告（各阶段丢弃数 + 真实降级信号）
+            TestGeneratorAgent.GenerationReport genReport = new TestGeneratorAgent.GenerationReport();
             try {
                 testCases = orchestratorAgent.generate(projectId,
-                        progress -> projectRepository.updateProgress(projectId, progress));
+                        progress -> projectRepository.updateProgress(projectId, progress), genReport);
             } finally {
                 telemetryService.clearTaskContext();
             }
-            if (testCases.stream().anyMatch(tc -> "rule_based".equals(tc.getSource()))) {
+            // v7.1(G5): 代码驱动死代码删除后 rule_based source 不再产生，
+            // 降级改用真实信号（多轮补齐未收敛 / 评审 LLM 失败降级）
+            if (genReport.roundsNotConverged || genReport.reviewDegraded) {
                 agentTaskService.markDegraded(taskId);
             }
 
@@ -286,17 +293,26 @@ public class TestCaseService {
                 projectRepository.updateProgress(projectId, msg);
             };
             // 用例回调 → 推送 case 事件（每条用例解析完成即推送，不等去重/落库）
-            TestGeneratorAgent.CaseCallback caseCb = tc ->
-                    sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
+            // v7.1(G2): 实际计数推送草稿数——比 report.generated-focusDropped 更可信，
+            // 两者差值即流式/全量解析错位量（G8 观测钩子）
+            java.util.concurrent.atomic.AtomicInteger pushedCount = new java.util.concurrent.atomic.AtomicInteger();
+            TestGeneratorAgent.CaseCallback caseCb = tc -> {
+                pushedCount.incrementAndGet();
+                sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
+            };
 
             telemetryService.setTaskContext(taskId, agentTaskService.getAttempt(taskId));
             List<TestCase> testCases;
+            // v7.1(G2/G5): 采集生成链路报告（各阶段丢弃数 + 真实降级信号）
+            TestGeneratorAgent.GenerationReport genReport = new TestGeneratorAgent.GenerationReport();
             try {
-                testCases = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled);
+                testCases = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled, genReport);
             } finally {
                 telemetryService.clearTaskContext();
             }
-            if (testCases.stream().anyMatch(tc -> "rule_based".equals(tc.getSource()))) {
+            // v7.1(G5): 降级改用真实信号（多轮补齐未收敛 / 评审 LLM 失败降级），
+            // rule_based source 检查随代码驱动死代码删除而失效
+            if (genReport.roundsNotConverged || genReport.reviewDegraded) {
                 agentTaskService.markDegraded(taskId);
             }
 
@@ -320,7 +336,26 @@ public class TestCaseService {
             projectRepository.updateProgress(projectId, null);
             updateProjectStatus(projectId, "completed");
 
-            sendSseEvent(emitter, clientGone, "complete", Map.of("total", testCases.size()));
+            // v7.1(G2): complete 事件携带草稿推送数与各阶段丢弃明细——
+            // 流式推送的是去重/评审前的"草稿"，与最终落库数存在差异，差异原因不再静默
+            Map<String, Object> completeData = new LinkedHashMap<>();
+            completeData.put("total", testCases.size());
+            completeData.put("pushed", pushedCount.get());
+            Map<String, Object> dropped = new LinkedHashMap<>();
+            dropped.put("review", genReport.reviewDropped);
+            dropped.put("dedup", genReport.dedupDropped);
+            dropped.put("semantic", genReport.semanticDropped);
+            dropped.put("focusType", genReport.focusDropped);
+            // other = 推送 - 落库 - 各分类和：吸收流式/全量解析错位（G8 观测钩子）
+            int classified = genReport.reviewDropped + genReport.dedupDropped
+                    + genReport.semanticDropped + genReport.focusDropped;
+            dropped.put("other", Math.max(0, pushedCount.get() - testCases.size() - classified));
+            completeData.put("dropped", dropped);
+            completeData.put("droppedTotal", Math.max(0, pushedCount.get() - testCases.size()));
+            // v7.1(G5): 真实降级信号一并暴露给前端
+            completeData.put("roundsNotConverged", genReport.roundsNotConverged);
+            completeData.put("reviewDegraded", genReport.reviewDegraded);
+            sendSseEvent(emitter, clientGone, "complete", completeData);
             safeSseComplete(emitter, clientGone);
             log.info("Streaming generation completed for project {}: {} cases", projectId, testCases.size());
         } catch (GenerationCancelledException e) {
@@ -407,12 +442,15 @@ public class TestCaseService {
 
             telemetryService.setTaskContext(taskId, agentTaskService.getAttempt(taskId));
             List<TestCase> generated;
+            // v7.1(G2/G5): 采集生成链路报告（各阶段丢弃数 + 真实降级信号）
+            TestGeneratorAgent.GenerationReport genReport = new TestGeneratorAgent.GenerationReport();
             try {
-                generated = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled);
+                generated = orchestratorAgent.generateStreaming(projectId, progressCb, caseCb, cancelled, genReport);
             } finally {
                 telemetryService.clearTaskContext();
             }
-            if (generated.stream().anyMatch(tc -> "rule_based".equals(tc.getSource()))) {
+            // v7.1(G5): 降级改用真实信号（多轮补齐未收敛 / 评审 LLM 失败降级）
+            if (genReport.roundsNotConverged || genReport.reviewDegraded) {
                 agentTaskService.markDegraded(taskId);
             }
 

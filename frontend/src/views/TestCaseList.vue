@@ -2071,8 +2071,25 @@ async function handleRegenerate() {
     onCase: (tc) => {
       streamedCases.value.unshift(tc)
     },
-    onComplete: async (total) => {
-      ElMessage.success(`用例生成完成，共 ${total} 条`)
+    onComplete: async (data) => {
+      // v7.1(G2): complete 携带 total/pushed/dropped——流式推送的是草稿，
+      // 落库前经评审/去重会丢弃部分，差异原因对用户可见，不再静默
+      const total = data?.total ?? 0
+      const pushed = data?.pushed ?? total
+      const d = data?.dropped || {}
+      const parts = []
+      if (d.review) parts.push(`评审 ${d.review}`)
+      if (d.dedup) parts.push(`去重 ${d.dedup}`)
+      if (d.semantic) parts.push(`语义去重 ${d.semantic}`)
+      if (d.focusType) parts.push(`类型过滤 ${d.focusType}`)
+      if (d.other) parts.push(`其他 ${d.other}`)
+      const droppedTotal = Object.values(d).reduce((sum, v) => sum + (Number(v) || 0), 0)
+        || Math.max(0, pushed - total)
+      if (droppedTotal > 0) {
+        ElMessage.warning(`生成完成：落库 ${total} 条（流式推送 ${pushed} 条草稿，经${parts.join('、')}丢弃 ${droppedTotal} 条）`)
+      } else {
+        ElMessage.success(`用例生成完成，共 ${total} 条`)
+      }
       streaming.value = false
       currentGenMode.value = null
       streamProgress.value = ''

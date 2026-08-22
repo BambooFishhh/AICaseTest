@@ -50,15 +50,27 @@ public class TestCaseReviewAgent {
     }
 
     public List<TestCase> review(List<TestCase> cases, Map<String, Object> coverage, String source) {
+        return review(cases, coverage, source, null);
+    }
+
+    /**
+     * v7.1(G2/G5): 报告重载——把评审阶段丢弃数（规则: 无 structuredSteps；LLM: reject）
+     * 与 LLM 评审降级信号写入 GenerationReport，供 complete 事件与 markDegraded 使用。
+     */
+    public List<TestCase> review(List<TestCase> cases, Map<String, Object> coverage, String source,
+                                 TestGeneratorAgent.GenerationReport report) {
         if (cases == null || cases.isEmpty()) {
             return cases;
         }
+        int before = cases.size();
+        boolean llmDegraded = false;
         List<TestCase> cleaned = ruleReview(cases, coverage);
         if (cleaned.size() <= MAX_LLM_CASES && !cleaned.isEmpty()) {
             boolean reviewPhase = telemetryService.beginPhaseIfActive("ai_review");
             try {
                 cleaned = llmReview(cleaned, coverage, source);
             } catch (Exception e) {
+                llmDegraded = true;
                 log.warn("LLM review failed, keep rule-reviewed cases: {}", e.getMessage());
             } finally {
                 if (reviewPhase) {
@@ -69,6 +81,10 @@ public class TestCaseReviewAgent {
             log.info("Skip LLM review for {} cases (limit {})", cleaned.size(), MAX_LLM_CASES);
         }
         cleaned = applyEndpointMatching(cleaned, coverage);
+        if (report != null) {
+            report.reviewDropped = Math.max(0, before - cleaned.size());
+            report.reviewDegraded = llmDegraded;
+        }
         return cleaned;
     }
 

@@ -26,7 +26,7 @@ WORKDIR /app
 # 安装 curl（healthcheck）+ Node.js 22（MCP Server 运行时，apt 默认 node 版本过低）
 # 使用国内镜像加速：apt 阿里云 / Node npmmirror
 RUN sed -i 's|archive.ubuntu.com|mirrors.aliyun.com|g; s|security.ubuntu.com|mirrors.aliyun.com|g' /etc/apt/sources.list \
-    && apt-get update && apt-get install -y --no-install-recommends curl ca-certificates xz-utils \
+    && apt-get update && apt-get install -y --no-install-recommends curl ca-certificates xz-utils git \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL https://npmmirror.com/mirrors/node/v22.14.0/node-v22.14.0-linux-x64.tar.xz \
         | tar -xJ -C /usr/local --strip-components=1

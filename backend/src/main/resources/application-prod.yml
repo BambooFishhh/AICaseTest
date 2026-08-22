@@ -23,6 +23,8 @@ spring:
         options:
           model: ${LLM_MODEL:mimo-v2.5-pro}
       embedding:
+        api-key: ${LLM_EMBEDDING_API_KEY:${DASHSCOPE_API_KEY:${LLM_API_KEY:}}}
+        base-url: ${LLM_EMBEDDING_BASE_URL:${LLM_BASE_URL:https://api.xiaomimimo.com/v1}}
         embeddings-path: /embeddings
         options:
           model: ${LLM_EMBEDDING_MODEL:qwen3.7-text-embedding}

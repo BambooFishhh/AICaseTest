@@ -154,6 +154,9 @@ services:
       - LLM_MODEL=${LLM_MODEL:-mimo-v2.5}
       - EXECUTOR_LLM_CONCURRENCY=${EXECUTOR_LLM_CONCURRENCY:-4}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://opencode.ai/zen/go/v1}
+      # embedding 独立端点与 key（chat 继续走 LLM_BASE_URL / LLM_API_KEY）
+      - LLM_EMBEDDING_BASE_URL=${LLM_EMBEDDING_BASE_URL:-}
+      - LLM_EMBEDDING_API_KEY=${LLM_EMBEDDING_API_KEY:-${DASHSCOPE_API_KEY:-}}
       - LLM_EMBEDDING_MODEL=${LLM_EMBEDDING_MODEL:-qwen3.7-text-embedding}
       - LLM_ENABLE_THINKING=${LLM_ENABLE_THINKING:-false}
       - LLM_THINKING_ANALYSIS=${LLM_THINKING_ANALYSIS:-true}
@@ -177,7 +180,7 @@ services:
       - MILVUS_USERNAME=root
       - MILVUS_PASSWORD=${MILVUS_ROOT_PASSWORD:-aicasetest-milvus}
       # v6.4: RAG 切片与多路检索
-      - RAG_CHUNK_SIZE=${RAG_CHUNK_SIZE:-900}
+      - RAG_CHUNK_SIZE=${RAG_CHUNK_SIZE:-500}
       - RAG_CHUNK_OVERLAP=${RAG_CHUNK_OVERLAP:-150}
       - RAG_RRF_K=${RAG_RRF_K:-60}
       - RAG_CONTEXT_TOPK=${RAG_CONTEXT_TOPK:-6}
@@ -195,6 +198,9 @@ services:
       # v6.6: 任务 TTL（分钟）与 QUEUED 兜底调度
       - APP_HA_TASK_TTL_MINUTES=${APP_HA_TASK_TTL_MINUTES:-60}
       - APP_HA_DISPATCH_DELAY_MS=${APP_HA_DISPATCH_DELAY_MS:-15000}
+      # Git URL 项目克隆目录与超时
+      - GIT_CLONE_DIR=${GIT_CLONE_DIR:-/app/data/git-repos}
+      - GIT_CLONE_TIMEOUT_SECONDS=${GIT_CLONE_TIMEOUT_SECONDS:-600}
       # v6.6: MCP 工具请求超时（秒）
       - APP_MCP_REQUEST_TIMEOUT_SECONDS=${APP_MCP_REQUEST_TIMEOUT_SECONDS:-60}
       # v6.7: LLM provider 熔断

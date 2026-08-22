@@ -88,13 +88,19 @@ public class OrchestratorAgent {
      * v3.4: 透传 GenerationParams（从 Project.settings 解析），供 TestGeneratorAgent 动态拼接 prompt + 调整 temperature。
      */
     public List<TestCase> generate(String projectId, TestGeneratorAgent.ProgressCallback progressCallback) {
+        return generate(projectId, progressCallback, null);
+    }
+
+    // v7.1(G2/G5): 报告重载——透传 GenerationReport 供服务层采集丢弃/降级信息
+    public List<TestCase> generate(String projectId, TestGeneratorAgent.ProgressCallback progressCallback,
+                                   TestGeneratorAgent.GenerationReport report) {
         TelemetryService.TelemetryContext telemetry = telemetryService.start("generation", projectId);
         boolean ok = false;
         try {
             GenContext ctx = loadGenerationContext(projectId, progressCallback);
             telemetryService.beginPhaseIfActive("generation");
             List<TestCase> result = testGeneratorAgent.generate(ctx.prdResult(), ctx.stateMachines(),
-                    ctx.backendResult(), ctx.frontendResult(), progressCallback, ctx.params());
+                    ctx.backendResult(), ctx.frontendResult(), progressCallback, ctx.params(), report);
             telemetryService.endPhase();
             ok = true;
             return result;
@@ -112,13 +118,23 @@ public class OrchestratorAgent {
                                             TestGeneratorAgent.ProgressCallback progressCallback,
                                             TestGeneratorAgent.CaseCallback caseCallback,
                                             CancellationSignal cancelled) {
+        return generateStreaming(projectId, progressCallback, caseCallback, cancelled, null);
+    }
+
+    // v7.1(G2/G5): 报告重载——透传 GenerationReport 供服务层采集丢弃/降级信息
+    public List<TestCase> generateStreaming(String projectId,
+                                            TestGeneratorAgent.ProgressCallback progressCallback,
+                                            TestGeneratorAgent.CaseCallback caseCallback,
+                                            CancellationSignal cancelled,
+                                            TestGeneratorAgent.GenerationReport report) {
         TelemetryService.TelemetryContext telemetry = telemetryService.start("generation", projectId);
         boolean ok = false;
         try {
             GenContext ctx = loadGenerationContext(projectId, progressCallback);
             telemetryService.beginPhaseIfActive("generation");
             List<TestCase> result = testGeneratorAgent.generateStreaming(ctx.prdResult(), ctx.stateMachines(),
-                    ctx.backendResult(), ctx.frontendResult(), progressCallback, caseCallback, cancelled, ctx.params());
+                    ctx.backendResult(), ctx.frontendResult(), progressCallback, caseCallback, cancelled,
+                    ctx.params(), report);
             telemetryService.endPhase();
             ok = true;
             return result;
@@ -169,6 +185,14 @@ public class OrchestratorAgent {
                 supplementary = settings.path("extraPrompt").asText("");
             }
         } catch (Exception e) {
+            // v7.1(G15): settings 有实质内容但解析失败时不再静默降级为
+            // "请先添加 PRD 文档"——那是误导排查方向的错误归因
+            if (project.getSettings() != null && !project.getSettings().isBlank()
+                    && !"{}".equals(project.getSettings().trim())) {
+                throw new BusinessException(50015, "项目配置解析失败：无法读取需求文档配置（"
+                        + e.getMessage() + "），请检查项目设置或重新保存需求资料",
+                        HttpStatus.INTERNAL_SERVER_ERROR);
+            }
             log.warn("Failed to load project requirement docs for {}: {}", projectId, e.getMessage());
         }
 

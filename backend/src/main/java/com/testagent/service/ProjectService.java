@@ -62,6 +62,9 @@ public class ProjectService {
     private SettingsService settingsService;
 
     @Autowired
+    private GitCloneService gitCloneService;
+
+    @Autowired
     private ProjectAccessService projectAccessService;
 
     @Autowired
@@ -132,21 +135,24 @@ public class ProjectService {
                 .collect(Collectors.toList());
     }
 
-    @Transactional
     public ProjectDTO createProject(CreateProjectRequest req) {
-        // v3.0: sourcePath 为空时跳过路径校验（纯 PRD 驱动项目）
-        if (req.getSourcePath() != null && !req.getSourcePath().isBlank()) {
-            File path = new File(req.getSourcePath());
-            if (!path.exists()) {
-                throw BusinessException.pathNotFound("源码路径不存在: " + req.getSourcePath());
-            }
-        }
-
         Project project = new Project();
         project.setId(UUID.randomUUID().toString().substring(0, 8));
         project.setName(req.getName());
         project.setSourceType(req.getSourceType() != null ? req.getSourceType() : "local_path");
-        project.setSourcePath(req.getSourcePath());
+
+        String sourcePath = req.getSourcePath();
+        if ("git_url".equals(project.getSourceType())) {
+            // Git URL 项目由后端真正 clone 到受管目录，后续按本地源码路径分析
+            sourcePath = gitCloneService.clone(sourcePath, project.getId());
+        } else if (sourcePath != null && !sourcePath.isBlank()) {
+            // v3.0: sourcePath 为空时跳过路径校验（纯 PRD 驱动项目）
+            File path = new File(sourcePath);
+            if (!path.exists()) {
+                throw BusinessException.pathNotFound("源码路径不存在: " + sourcePath);
+            }
+        }
+        project.setSourcePath(sourcePath);
         project.setStatus("created");
         project.setUserId(projectAccessService.requireCurrentUserId());
         // v4.3: 归属项目组（可选，需属于该组）
@@ -167,6 +173,9 @@ public class ProjectService {
         try {
             GenerationParams defaults = settingsService.getDefaultGenerationParams();
             ObjectNode settings = (ObjectNode) objectMapper.readTree("{}");
+            if (gitCloneService.isGitUrl(req.getSourceType(), req.getSourcePath())) {
+                settings.put("gitUrl", req.getSourcePath().trim());
+            }
             settings.set("generationParams", objectMapper.valueToTree(defaults));
             if (req.getExecutionCookies() != null && !req.getExecutionCookies().isEmpty()) {
                 settings.set("executionCookies", objectMapper.valueToTree(req.getExecutionCookies()));
@@ -213,6 +222,10 @@ public class ProjectService {
         mindMapRepository.findAllByProjectId(id).forEach(mindMapRepository::delete);
         // v5.6: 清理 Milvus 三集合
         semanticService.clearProject(id);
+        // 清理 Git 克隆目录（仅 git_url 项目）
+        if ("git_url".equals(project.getSourceType())) {
+            gitCloneService.deleteClone(project.getId());
+        }
         projectRepository.delete(project);
     }
 
