@@ -109,6 +109,32 @@ class ReportServiceEvidenceMissingTest {
         assertEquals(PNG_BYTES.length, Base64.getDecoder().decode(base64.substring(22)).length);
     }
 
+    /**
+     * v7.12(R16): Writer 流式版与 String 版输出内容等价——
+     * String 版本身委托 Writer 版（StringWriter），此处直写 Writer 断言三态渲染语义不变。
+     */
+    @Test
+    void writerVersionProducesEquivalentContent() throws Exception {
+        Path goodFile = tempDir.resolve("good2.png");
+        Files.write(goodFile, PNG_BYTES);
+
+        List<ExecutionStep> steps = List.of(
+                step(1, null, null),
+                step(2, "/nonexistent/before.png", null),
+                step(3, goodFile.toString(), goodFile.toString()));
+
+        java.io.StringWriter out = new java.io.StringWriter();
+        serviceWithSteps(steps).generateExecutionReport("exec-1", out);
+        String html = out.toString();
+
+        // 三个截图位：step2 一个丢失占位 + step3 两张图
+        assertEquals(3, count(html, "class=\"shot-label\""));
+        assertEquals(1, count(html, "截图文件缺失"));
+        assertEquals(2, count(html, "data:image/png;base64,"), "step3 双截图正常渲染");
+        assertTrue(html.endsWith("</body></html>"), "流式输出必须完整收尾");
+        assertTrue(html.contains("AICaseTest"), "footer 完整");
+    }
+
     private String invoke(ReportService service, String path) {
         return (String) ReflectionTestUtils.invokeMethod(service, "imageToBase64", path);
     }

@@ -97,8 +97,9 @@ public class MemoryRuntimeStore implements RuntimeStore {
         lockUntil.remove(username);
     }
 
+    // v7.12(E15): permitId 仅 Redis 租约模型需要——内存 Semaphore 按获取/释放配对即可
     @Override
-    public void acquireProjectPermit(String projectId, int maxPermits) {
+    public void acquireProjectPermit(String projectId, int maxPermits, String permitId) {
         try {
             semaphore(projectId, maxPermits).acquire();
         } catch (InterruptedException e) {
@@ -109,7 +110,7 @@ public class MemoryRuntimeStore implements RuntimeStore {
 
     /** v7.9(E7): 带超时的配额获取——超时返回 false 而非永久阻塞 */
     @Override
-    public boolean tryAcquireProjectPermit(String projectId, int maxPermits, long timeoutMs) {
+    public boolean tryAcquireProjectPermit(String projectId, int maxPermits, long timeoutMs, String permitId) {
         try {
             return semaphore(projectId, maxPermits).tryAcquire(Math.max(1, timeoutMs), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
@@ -119,7 +120,7 @@ public class MemoryRuntimeStore implements RuntimeStore {
     }
 
     @Override
-    public void releaseProjectPermit(String projectId) {
+    public void releaseProjectPermit(String projectId, String permitId) {
         semaphores.computeIfAbsent(projectId, k -> new Semaphore(1)).release();
     }
 

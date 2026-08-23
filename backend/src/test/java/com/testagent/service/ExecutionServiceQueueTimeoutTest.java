@@ -51,7 +51,8 @@ class ExecutionServiceQueueTimeoutTest {
 
         when(executionRecordRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         // 排队超时：tryAcquire 直接失败
-        when(limiter.tryAcquire(anyString(), anyLong())).thenReturn(false);
+        // v7.12(E15): 签名追加 permitId（=executionId），语义不变
+        when(limiter.tryAcquire(anyString(), anyLong(), anyString())).thenReturn(false);
     }
 
     private TestCase testCase() {

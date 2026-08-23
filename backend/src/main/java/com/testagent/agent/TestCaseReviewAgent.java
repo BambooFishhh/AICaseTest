@@ -165,8 +165,11 @@ public class TestCaseReviewAgent {
                 rejectIndices.add(entry.getKey());
             }
         }
-        int n = cases.size();
-        double ratio = n == 0 ? 0 : (double) rejectIndices.size() / n;
+        // v7.12(R15): 分母改为已评审数——reject 只能来自已评审条目，缺评条目计入分母
+        // 会稀释批量 reject 比例（20 条仅 10 条有输出且全 reject：真实 100% 被算成 50%），
+        // >70% 全保留保护带在截断场景失灵。缺评保护由 R4 补评机制负责，两道防线各司其职
+        int reviewed = byIndex.size();
+        double ratio = reviewed == 0 ? 0 : (double) rejectIndices.size() / reviewed;
         if (ratio > 0.7) {
             log.warn("LLM review rejected {}% ({} cases), suspicious — keep all to avoid data loss",
                     Math.round(ratio * 100), rejectIndices.size());

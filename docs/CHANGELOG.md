@@ -4,6 +4,69 @@
 
 ---
 
+## v7.12 — 复审 P1/P2 修复
+**日期**: 2026-08-23
+**基线**: v7.11
+**主题**: 复审遗留 P1/P2 七项修复——reject 比例分母、选择器池混入表单字段、判重门槛与口径对齐、熔断半开探测、Redis 信号量租约模型、执行报告流式生成、SSE 瞬断误报失败（对应风险清单 R15/G22/G23/L15/E15/R16/E16）
+
+### 背景
+
+v7.11 收口后对全项目复审，确认 P1/P2 缺陷清单：**R15** LLM 评审 reject 比例分母用送评总数——reject 只能来自已评审条目，缺评条目计入分母稀释比例（20 条仅 10 条有输出且全 reject：真实 100% 被算成 50% 灰区，>70% 全保留保护带在截断场景失灵）；**G22** 选择器池混入表单字段（{name, type: 输入框类型, label} 无可执行 value）——文本匹配胜出后写入 `uiSelector = {type: "text", value: null}` 的废选择器固化进用例资产；**G23** 存储侧判重与生成侧口径不一致——TestCaseService 不比较 type（追加生成的负向/边界用例被同标题正向旧用例误杀）、重叠率阈值仍是 0.8、子串规则无最短门槛（"登录" vs "退出登录后重新登录" 误杀）；**L15** 熔断开启期过后全量放行——LLM 单调用 40-120s，几十个 doomed 请求会在首个失败重新打开熔断之前全部涌入；**E15** Redis 信号量计数器+TTL 模型——长执行（>10min，Agent 模式常见）下键过期导致计数清零超发，且释放无持有者语义（acquire 降级内存后 release 扣减 Redis 双向漂移偷槽位）；**R16** 执行报告整串装配——全部截图 base64 聚在 StringBuilder 再 toString()，峰值 = 2×报告体积（百步级 Agent 执行含双截图可达数百 MB）；**E16** SSE 断连误报失败——连接层断开（网络瞬断/代理空闲超时）与后端下发错误共用 error 分支，后端任务仍在跑却报"生成失败"。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `agent/TestCaseReviewAgent.java` | 修改 | **R15**：reject 比例分母从 `cases.size()` 改为 `byIndex.size()`（已评审数）——缺评保护由 R4 补评机制负责，两道防线各司其职 |
+| `agent/TestGeneratorAgent.java` | 修改 | **G22**：选择器池只收 DOM 选择器，删除表单字段分支——表单字段无可执行 value，宁留空由 Agent 模式执行时 LLM 自定位（与 L12"宁留空不赌错"原则一致）；**G23**：子串判重加最短门槛——短标题 4 字及以上才构成包含判重证据 |
+| `service/TestCaseService.java` | 修改 | **G23**：isDuplicate 对齐生成侧 v7.1(G1) 语义——标题类判重必须 type 一致；重叠率阈值 0.8→0.9；子串规则加最短门槛（与 TestGeneratorAgent 同步） |
+| `common/LlmCircuitBreaker.java` | 修改 | **L15**：补半开状态机——开启期过后单探测租约（probeLeaseUntil），仅一个请求试探 provider 恢复，成功才全量放行；探测失败重新打开；租约超时自愈（探测无回调不卡死半开）；新增 `llm.circuit.probe-lease-seconds` 配置（默认 120s 覆盖最长 LLM 调用） |
+| `runtime/RuntimeStore.java` | 修改 | **E15**：acquire/tryAcquire/release 携带 permitId（=executionId）；新增 renewProjectPermit 续租接口（内存实现 no-op） |
+| `runtime/MemoryRuntimeStore.java` | 修改 | **E15**：适配新签名——内存 Semaphore 语义不变，忽略 permitId |
+| `runtime/RedisRuntimeStore.java` | 修改 | **E15**：计数器+TTL 改 ZSET 租约模型——member=permitId、score=授予/续租时刻，Lua 脚本原子化 acquire（清理过期租约→检查 ZCARD 上限→ZADD 登记）/release（ZREM 按持有者精确移除，幂等）/renew（ZSCORE 校验持有者后刷新 score）；租约 5 分钟 + 步骤心跳续租防长执行过期，JVM 崩溃后 5 分钟自愈；acquire 降级内存时登记 permitId，release 按授予来源路由（修复双向漂移） |
+| `service/ProjectExecutionLimiter.java` | 修改 | **E15**：acquire/tryAcquire/release 透传 permitId；新增 renew 续租入口 |
+| `service/ExecutionService.java` | 修改 | **E15**：全部 acquire/release 调用携带 executionId；touchHeartbeat 同时续租配额（活跃执行租约不过期） |
+| `service/ReportService.java` | 修改 | **R16**：新增 `generateExecutionReport(executionId, Writer)` 流式版——HTML 分段写出即时 flush、截图逐张"读取→编码→写出→释放"（峰值 = 单截图 + base64 缓冲）；String 版委托 StringWriter（交付语义不变）；批次报告无截图维持 String 返回 |
+| `controller/ExecutionController.java` | 修改 | **R16**：单次执行报告端点改流式响应——`response.getWriter()` 直写，报告不再整串驻留内存；自包含 base64 单文件交付语义不变（下载/分享行为零变化） |
+| `test/agent/TestCaseReviewAgentRejectRatioTest.java` | 新增 | R15 3 用例：截断场景缺评不稀释（10/20 全 reject → 全保留）、全量评审全 reject 同样全保留、低比例照删 |
+| `test/agent/TestGeneratorAgentSelectorPoolTest.java` | 新增 | G22 3 用例：仅表单字段的池不写 uiSelector、DOM 选择器命中写入可执行 uiSelector、已有选择器不覆盖 |
+| `test/agent/TestGeneratorAgentDedupTest.java` | 修改 | G23 4 用例：2 字/3 字子串不判重、4 字子串判重、子串规则要求 type 一致 |
+| `test/service/TestCaseServiceDedupTest.java` | 新增 | G23 7 用例：同标题不同 type 不判重、0.85/0.95 重叠率两侧阈值、子串门槛两侧一致 |
+| `test/common/LlmCircuitBreakerHalfOpenTest.java` | 新增 | L15 5 用例：OPEN 全拒、半开单探测（并发第二个拒绝）、探测成功全放行、探测失败重开、租约超时再探测 |
+| `test/runtime/RedisRuntimeStorePermitTest.java` | 新增 | E15 5 用例：内存授予路由释放、重复释放幂等、内存授予续租跳过 Redis、Lua 脚本 ZSET 语义校验、Redis 授予续租走脚本 |
+| `test/service/ReportServiceEvidenceMissingTest.java` | 修改 | R16 1 用例：Writer 流式版三态渲染语义不变且完整收尾 |
+| `test/service/ExecutionServiceQueueTimeoutTest.java` | 修改 | E15 回归：适配 tryAcquire 新签名，v7.11 三用例语义不变 |
+| `test/runtime/MemoryRuntimeStoreTest.java` 等 3 个 | 修改 | E15 回归：适配 permitId 新签名 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `src/api/testcase.js` | 修改 | **E16**：streamGenerate/streamGenerateAppend 的 error 分支区分后端下发错误（e.data 有值 → onError）与连接层断开（e.data 为空 → onDisconnect）；新增可选 onDisconnect 回调 |
+| `src/views/TestCaseList.vue` | 修改 | **E16**：重新生成/追加生成两处传 onDisconnect——断连降级为项目状态轮询（与刷新恢复 resumeGenerationIfActive 同构），不再误报"生成失败" |
+| `src/views/ProjectDetail.vue` | 修改 | **E16**：分析 SSE error 分支同构区分——断连先刷新项目状态再复用 resumeActiveStatus() 轮询（终态自动提示并刷新），后端错误维持现状 |
+
+### API 契约变化
+
+- **`GET /api/executions/{executionId}/report`**：响应改为流式分块写出（Content-Type/Content-Disposition 不变）；对客户端（浏览器预览/下载/分享）行为零变化
+- 其余 REST 接口无变更
+
+### 验证结果
+
+- 后端全量 `mvn test`：381 用例全部通过（v7.12 新增 4 个测试类 18 用例 + 既有 5 类扩充/适配）
+- 前端 `npm run build`：BUILD SUCCESS
+
+### 预期影响（P1/P2 修复）
+
+- 评审保护带可靠：截断场景下批量 reject 不再被缺评条目稀释，真实高危（>70% reject）可靠触发全保留（R15）
+- 用例资产干净：废选择器（表单字段混池）不再固化进用例；两侧判重口径一致，追加生成的负向/边界用例不再被误杀（G22/G23）
+- LLM 故障恢复平滑：熔断开启期过后单探测试探，恢复确认前不再放行 doomed 请求风暴（L15）
+- 多实例并发配额正确：长执行不再因键过期超发配额；释放按持有者精确路由，跨存储漂移消除；JVM 崩溃 5 分钟自愈（E15）
+- 大报告不爆内存：百步级 Agent 执行报告峰值从 2×报告体积（数百 MB）降到单截图 + base64 缓冲（R16）
+- 断连不再误报：网络瞬断/代理超时后降级轮询跟踪进度，后端任务照常完成并提示（E16）
+
+---
+
 ## v7.11 — 关键缺陷修复
 **日期**: 2026-08-23
 **基线**: v7.10

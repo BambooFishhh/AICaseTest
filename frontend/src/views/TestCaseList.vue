@@ -2116,6 +2116,26 @@ async function handleRegenerate() {
       cancelling.value = false
       generationError.value = msg
       ElMessage.error('用例生成失败')
+    },
+    onDisconnect: () => {
+      // v7.12(E16): 连接层断开（网络瞬断/代理超时）——后端生成仍在进行，
+      // 不误报失败，降级为项目状态轮询（与刷新恢复 resumeGenerationIfActive 同构）
+      streaming.value = false
+      currentGenMode.value = null
+      streamProgress.value = ''
+      regenerating.value = false
+      cancelling.value = false
+      ElMessage.info('生成连接中断，已切换为进度轮询')
+      projectStore.startPolling(projectId, (next, prev) => {
+        if (prev !== 'generating' || next === prev) return
+        if (next === 'completed') {
+          ElMessage.success('用例生成完成')
+          Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+        } else if (next === 'failed') {
+          ElMessage.error('用例生成失败')
+          loadList()
+        }
+      })
     }
     })
   } catch {
@@ -2226,6 +2246,24 @@ async function startAppendStream(type) {
       cancelling.value = false
       generationError.value = msg
       ElMessage.error('追加生成失败')
+    },
+    onDisconnect: () => {
+      // v7.12(E16): 连接层断开——后端追加生成仍在进行，降级轮询，不误报失败
+      streaming.value = false
+      currentGenMode.value = null
+      streamProgress.value = ''
+      cancelling.value = false
+      ElMessage.info('生成连接中断，已切换为进度轮询')
+      projectStore.startPolling(projectId, (next, prev) => {
+        if (prev !== 'generating' || next === prev) return
+        if (next === 'completed') {
+          ElMessage.success('用例生成完成')
+          Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+        } else if (next === 'failed') {
+          ElMessage.error('用例生成失败')
+          loadList()
+        }
+      })
     }
     })
   } catch {

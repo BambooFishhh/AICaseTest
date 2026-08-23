@@ -58,11 +58,12 @@ class RedisRuntimeStoreIntegrationTest {
 
     @Test
     void semaphoreAcquireRelease() {
-        store.acquireProjectPermit("p1", 2);
-        store.acquireProjectPermit("p1", 2);
-        store.releaseProjectPermit("p1");
-        store.releaseProjectPermit("p1");
-        store.acquireProjectPermit("p1", 2);
-        store.releaseProjectPermit("p1");
+        // v7.12(E15): ZSET 租约模型——member=permitId，按持有者释放
+        store.acquireProjectPermit("p1", 2, "exec-1");
+        store.acquireProjectPermit("p1", 2, "exec-2");
+        store.releaseProjectPermit("p1", "exec-1");
+        store.releaseProjectPermit("p1", "exec-2");
+        store.acquireProjectPermit("p1", 2, "exec-3");
+        store.releaseProjectPermit("p1", "exec-3");
     }
 }

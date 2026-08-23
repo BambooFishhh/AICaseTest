@@ -61,4 +61,42 @@ class TestGeneratorAgentDedupTest {
                 tc("查询列表", "订单", "positive"),
                 tc("查询列表", "用户", "positive")));
     }
+
+    // ---- v7.12(G23): 子串判重最短门槛 ----
+
+    @Test
+    void twoCharSubstringNotDuplicate() {
+        // 2 字通用动词的包含关系不构成判重证据（"登录" vs "退出登录后重新登录" 曾误杀）
+        assertFalse(agent.isDuplicate(
+                tc("登录", "认证", "positive"),
+                tc("退出登录后重新登录", "认证", "positive")),
+                "2 字子串包含不应判重");
+    }
+
+    @Test
+    void threeCharSubstringNotDuplicate() {
+        // 3 字子串同样不构成证据——通用动词短语高发误杀区
+        assertFalse(agent.isDuplicate(
+                tc("查订单", "订单", "positive"),
+                tc("查询订单并核对金额", "订单", "positive")),
+                "3 字子串包含不应判重");
+    }
+
+    @Test
+    void fourCharSubstringStillDuplicate() {
+        // 4 字及以上同型同模块包含仍判重——防真重复漏网
+        assertTrue(agent.isDuplicate(
+                tc("订单查询", "订单", "positive"),
+                tc("订单查询列表", "订单", "positive")),
+                "4 字子串包含（同模块同类型）应判重");
+    }
+
+    @Test
+    void substringRuleRequiresSameType() {
+        // 子串判重同样要求 type 一致（对齐 G1 语义）
+        assertFalse(agent.isDuplicate(
+                tc("订单查询", "订单", "positive"),
+                tc("订单查询列表", "订单", "negative")),
+                "type 不一致时子串规则不得判重");
+    }
 }

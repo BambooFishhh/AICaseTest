@@ -860,7 +860,9 @@ public class TestGeneratorAgent {
         List<Map<String, Object>> steps = JsonHelper.parseListMap(tc.getStructuredSteps());
         if (steps.isEmpty() || frontendResult == null) return;
 
-        // 汇总可选选择器池（DOM 选择器 + 表单字段）
+        // 汇总可选选择器池——v7.12(G22): 只收 DOM 选择器。
+        // 表单字段 {name, type: 输入框类型, label} 没有可执行 value，混池打分胜出后
+        // 会写入 uiSelector = {type: "text"(input 类型), value: null} 的废选择器固化进用例资产
         List<Map<String, Object>> pool = new ArrayList<>();
         if (frontendResult.getDomSelectors() != null) {
             for (Map<String, Object> sel : frontendResult.getDomSelectors()) {
@@ -870,20 +872,6 @@ public class TestGeneratorAgent {
                         if (s instanceof Map) {
                             Map<String, Object> m = new LinkedHashMap<>((Map<String, Object>) s);
                             m.putIfAbsent("component", sel.get("component"));
-                            pool.add(m);
-                        }
-                    }
-                }
-            }
-        }
-        if (frontendResult.getForms() != null) {
-            for (Map<String, Object> form : frontendResult.getForms()) {
-                Object fields = form.get("fields");
-                if (fields instanceof List) {
-                    for (Object f : (List<?>) fields) {
-                        if (f instanceof Map) {
-                            Map<String, Object> m = new LinkedHashMap<>((Map<String, Object>) f);
-                            m.putIfAbsent("component", form.get("component"));
                             pool.add(m);
                         }
                     }
@@ -1791,8 +1779,11 @@ public class TestGeneratorAgent {
         String modA = a.getModule() == null ? "" : a.getModule();
         String modB = b.getModule() == null ? "" : b.getModule();
         if (modA.equals(modB) && sameType) {
-            // 子串包含关系
-            if (titleA.contains(titleB) || titleB.contains(titleA)) {
+            // v7.12(G23): 子串判重加最短门槛——2~3 字通用动词（"登录"/"查询"/"下单"）的
+            // 包含关系不构成判重证据（"登录" vs "退出登录后重新登录" 曾误杀）；
+            // 4 字及以上同型同模块包含仍判重，漏网真重复由批内语义去重兜底
+            int shorter = Math.min(titleA.length(), titleB.length());
+            if (shorter >= 4 && (titleA.contains(titleB) || titleB.contains(titleA))) {
                 return true;
             }
             // 短标题字符重叠率 > 90%（v7.1: 0.8 → 0.9，宁漏勿杀——漏网真重复由批内语义去重兜底）

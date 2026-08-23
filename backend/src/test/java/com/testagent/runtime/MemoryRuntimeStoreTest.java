@@ -54,14 +54,15 @@ class MemoryRuntimeStoreTest {
 
     @Test
     void projectPermitAcquireRelease() {
-        store.acquireProjectPermit("p1", 3);
-        store.acquireProjectPermit("p1", 3);
-        store.acquireProjectPermit("p1", 3);
-        store.releaseProjectPermit("p1");
-        store.releaseProjectPermit("p1");
-        store.releaseProjectPermit("p1");
+        // v7.12(E15): permitId 语义——内存实现为 Semaphore，忽略 permitId
+        store.acquireProjectPermit("p1", 3, "exec-1");
+        store.acquireProjectPermit("p1", 3, "exec-2");
+        store.acquireProjectPermit("p1", 3, "exec-3");
+        store.releaseProjectPermit("p1", "exec-1");
+        store.releaseProjectPermit("p1", "exec-2");
+        store.releaseProjectPermit("p1", "exec-3");
         // 释放后可再次获取
-        store.acquireProjectPermit("p1", 3);
-        store.releaseProjectPermit("p1");
+        store.acquireProjectPermit("p1", 3, "exec-4");
+        store.releaseProjectPermit("p1", "exec-4");
     }
 }

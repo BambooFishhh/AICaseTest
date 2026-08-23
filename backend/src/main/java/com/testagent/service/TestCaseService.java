@@ -561,15 +561,22 @@ public class TestCaseService {
 
     // v3.5: 跨去重判重逻辑（与 TestGeneratorAgent.isDuplicate 一致）
     // 决策：复制而非提升可见性，保持 TestGeneratorAgent 封装；职责分离（生成阶段 vs 落库阶段）。
+    // v7.12(G23): 对齐生成侧 v7.1(G1) 语义——标题类判重必须 type 一致（否则追加生成的
+    // 负向/边界用例被同标题正向旧用例误杀）；重叠率 0.8→0.9；子串规则加最短门槛
+    // （2~3 字通用动词的包含关系不构成判重证据）
     private boolean isDuplicate(TestCase a, TestCase b) {
         String titleA = a.getTitle() == null ? "" : a.getTitle().trim();
         String titleB = b.getTitle() == null ? "" : b.getTitle().trim();
         if (titleA.isEmpty() || titleB.isEmpty()) return false;
-        if (titleA.equals(titleB)) return true;
+        String typeA = a.getType() == null ? "" : a.getType();
+        String typeB = b.getType() == null ? "" : b.getType();
+        boolean sameType = typeA.equals(typeB);
+        if (titleA.equals(titleB) && sameType) return true;
         String modA = a.getModule() == null ? "" : a.getModule();
         String modB = b.getModule() == null ? "" : b.getModule();
-        if (modA.equals(modB)) {
-            if (titleA.contains(titleB) || titleB.contains(titleA)) return true;
+        if (modA.equals(modB) && sameType) {
+            int shorter = Math.min(titleA.length(), titleB.length());
+            if (shorter >= 4 && (titleA.contains(titleB) || titleB.contains(titleA))) return true;
             if (titleA.length() <= 20 && titleB.length() <= 20) {
                 Set<Character> setA = new HashSet<>();
                 for (char c : titleA.toCharArray()) setA.add(c);
@@ -578,13 +585,11 @@ public class TestCaseService {
                 Set<Character> intersection = new HashSet<>(setA);
                 intersection.retainAll(setB);
                 int maxLen = Math.max(setA.size(), setB.size());
-                if (maxLen > 0 && (double) intersection.size() / maxLen > 0.8) return true;
+                if (maxLen > 0 && (double) intersection.size() / maxLen > 0.9) return true;
             }
         }
         // v5.14: 类型一致且步骤/接口指纹一致视为重复
-        String typeA = a.getType() == null ? "" : a.getType();
-        String typeB = b.getType() == null ? "" : b.getType();
-        if (modA.equals(modB) && typeA.equals(typeB)
+        if (modA.equals(modB) && sameType
                 && !caseStepsSignature(a).isEmpty()
                 && caseStepsSignature(a).equals(caseStepsSignature(b))) {
             return true;

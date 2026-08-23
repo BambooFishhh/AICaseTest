@@ -9,7 +9,9 @@ export function triggerGenerate(projectId, params) {
 // 事件类型：progress（进度文本）、case（单条用例）、complete（完成，v7.1 起含 total/pushed/dropped）、cancelled（取消）、error（失败）。
 // v3.3: 新增 cancelled 事件 + onCancelled 回调，区分"取消"与"失败"。
 // v6.6: 先以 Bearer 换短期 ticket，再用 ?ticket= 建立连接（避免长期 JWT 进 URL）。
-export async function streamGenerate(projectId, { onProgress, onCase, onComplete, onCancelled, onError } = {}) {
+// v7.12(E16): 新增可选 onDisconnect 回调——error 事件区分"后端下发错误（e.data 有值）"
+// 与"连接层断开（e.data 为空，网络瞬断/代理超时，后端任务仍在跑）"，后者不再误报失败。
+export async function streamGenerate(projectId, { onProgress, onCase, onComplete, onCancelled, onError, onDisconnect } = {}) {
   const { data } = await fetchSseTicket()
   const url = `/api/projects/${projectId}/testcases/generate-stream?ticket=${encodeURIComponent(data.ticket)}`
   const es = new EventSource(url)
@@ -31,12 +33,15 @@ export async function streamGenerate(projectId, { onProgress, onCase, onComplete
     es.close()
   })
   es.addEventListener('error', (e) => {
-    // SSE 原生 error 事件：data 可能为空（网络断开）或携带后端 error 事件 data
-    let msg = '生成连接异常'
+    // v7.12(E16): e.data 有值 = 后端下发的真实错误；为空 = 连接层断开（后端任务仍在跑）
+    // 断连不再误报失败，交由 onDisconnect 降级轮询跟踪进度
     if (e.data) {
+      let msg = '生成连接异常'
       try { msg = JSON.parse(e.data).message || msg } catch {}
+      onError?.(msg)
+    } else {
+      onDisconnect?.()
     }
-    onError?.(msg)
     es.close()
   })
 
@@ -46,10 +51,11 @@ export async function streamGenerate(projectId, { onProgress, onCase, onComplete
 // v3.5: SSE 流式追加生成。复用 streamGenerate 的事件结构，
 // complete 事件携带 total/appended/dropped/existingBefore 字段。
 // type 为空时全类型追加；非空时仅追加该类型（positive/negative/boundary/data）。
+// v7.12(E16): 新增可选 onDisconnect 回调——断连（e.data 为空）不再误报失败，降级轮询。
 export async function streamGenerateAppend(
   projectId,
   type,
-  { onProgress, onCase, onComplete, onCancelled, onError } = {}
+  { onProgress, onCase, onComplete, onCancelled, onError, onDisconnect } = {}
 ) {
   const params = new URLSearchParams()
   if (type) params.set('type', type)
@@ -75,11 +81,14 @@ export async function streamGenerateAppend(
     es.close()
   })
   es.addEventListener('error', (e) => {
-    let msg = '追加生成连接异常'
+    // v7.12(E16): e.data 有值 = 后端下发的真实错误；为空 = 连接层断开（后端任务仍在跑）
     if (e.data) {
+      let msg = '追加生成连接异常'
       try { msg = JSON.parse(e.data).message || msg } catch {}
+      onError?.(msg)
+    } else {
+      onDisconnect?.()
     }
-    onError?.(msg)
     es.close()
   })
 

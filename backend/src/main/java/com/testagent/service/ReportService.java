@@ -49,9 +49,30 @@ public class ReportService {
      * @return 自包含 HTML 字符串
      */
     public String generateExecutionReport(String executionId) {
+        try {
+            java.io.StringWriter sw = new java.io.StringWriter(16 * 1024);
+            generateExecutionReport(executionId, sw);
+            return sw.toString();
+        } catch (java.io.IOException e) {
+            // StringWriter 不会抛 IOException，防御性兜底
+            throw new IllegalStateException("报告生成失败", e);
+        }
+    }
+
+    /**
+     * v7.12(R16): 流式生成单次执行报告——HTML 分段写出、截图逐张"读取→编码→写出→释放"。
+     * 旧实现把全部截图 base64 聚在 StringBuilder 再 toString()，峰值 = 2×报告体积
+     * （百步级 Agent 执行 + 双截图可达数百 MB）；流式后峰值 = 单截图 + base64 缓冲。
+     * 自包含 base64 单文件交付语义不变（下载/分享行为零变化）。
+     * @param executionId 执行记录 ID
+     * @param out 输出目标（HTTP 响应 / StringWriter）
+     */
+    public void generateExecutionReport(String executionId, java.io.Writer out) throws java.io.IOException {
         ExecutionRecord record = recordRepo.findById(executionId).orElse(null);
         if (record == null) {
-            return "<html><body><h2>报告不存在</h2><p>executionId=" + escapeHtml(executionId) + " 未找到。</p></body></html>";
+            out.write("<html><body><h2>报告不存在</h2><p>executionId=" + escapeHtml(executionId) + " 未找到。</p></body></html>");
+            out.flush();
+            return;
         }
         List<ExecutionStep> steps = stepRepo.findByExecutionIdOrderByStepIndexAsc(executionId);
 
@@ -64,98 +85,100 @@ public class ReportService {
 
         String duration = formatDuration(record.getStartTime(), record.getEndTime());
 
-        StringBuilder html = new StringBuilder();
-        html.append("<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"UTF-8\">");
-        html.append("<title>测试执行报告 - ").append(escapeHtml(safe(record.getTestCaseTitle()))).append("</title>");
-        html.append("<style>").append(getInlineCss()).append("</style></head><body>");
+        out.write("<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"UTF-8\">");
+        out.write("<title>测试执行报告 - " + escapeHtml(safe(record.getTestCaseTitle())) + "</title>");
+        out.write("<style>" + getInlineCss() + "</style></head><body>");
+        out.flush();
 
         // 标题
-        html.append("<div class=\"header\">");
-        html.append("<h1>测试执行报告</h1>");
-        html.append("<div class=\"meta\">报告生成时间：").append(LocalDateTime.now().toString()).append("</div>");
-        html.append("</div>");
+        out.write("<div class=\"header\">");
+        out.write("<h1>测试执行报告</h1>");
+        out.write("<div class=\"meta\">报告生成时间：" + LocalDateTime.now() + "</div>");
+        out.write("</div>");
 
         // 概览
-        html.append("<h2>概览</h2>");
-        html.append("<table class=\"overview\">");
-        html.append("<tr><th>用例名称</th><td>").append(escapeHtml(safe(record.getTestCaseTitle()))).append("</td></tr>");
-        html.append("<tr><th>执行 ID</th><td>").append(escapeHtml(safe(record.getId()))).append("</td></tr>");
-        html.append("<tr><th>状态</th><td><span class=\"badge ").append(statusClass(record.getStatus())).append("\">")
-            .append(escapeHtml(safe(record.getStatus()))).append("</span></td></tr>");
-        html.append("<tr><th>开始时间</th><td>").append(safe(record.getStartTime())).append("</td></tr>");
-        html.append("<tr><th>结束时间</th><td>").append(safe(record.getEndTime())).append("</td></tr>");
-        html.append("<tr><th>耗时</th><td>").append(duration).append("</td></tr>");
-        html.append("<tr><th>执行模式</th><td>").append(escapeHtml(safe(record.getMode()))).append("</td></tr>");
-        html.append("<tr><th>步骤数</th><td>").append(totalSteps)
-            .append("（通过 ").append(passedSteps)
-            .append(" / 失败 ").append(failedSteps)
-            .append(" / 跳过 ").append(skippedSteps).append("）</td></tr>");
-        html.append("<tr><th>通过率</th><td>").append(String.format("%.1f%%", passRate))
-            .append(skippedSteps > 0 ? "（跳过 " + skippedSteps + " 步未计入分母）" : "")
-            .append("</td></tr>");
-        html.append("<tr><th>摘要</th><td>").append(escapeHtml(safe(record.getSummary()))).append("</td></tr>");
+        out.write("<h2>概览</h2>");
+        out.write("<table class=\"overview\">");
+        out.write("<tr><th>用例名称</th><td>" + escapeHtml(safe(record.getTestCaseTitle())) + "</td></tr>");
+        out.write("<tr><th>执行 ID</th><td>" + escapeHtml(safe(record.getId())) + "</td></tr>");
+        out.write("<tr><th>状态</th><td><span class=\"badge " + statusClass(record.getStatus()) + "\">"
+                + escapeHtml(safe(record.getStatus())) + "</span></td></tr>");
+        out.write("<tr><th>开始时间</th><td>" + safe(record.getStartTime()) + "</td></tr>");
+        out.write("<tr><th>结束时间</th><td>" + safe(record.getEndTime()) + "</td></tr>");
+        out.write("<tr><th>耗时</th><td>" + duration + "</td></tr>");
+        out.write("<tr><th>执行模式</th><td>" + escapeHtml(safe(record.getMode())) + "</td></tr>");
+        out.write("<tr><th>步骤数</th><td>" + totalSteps
+                + "（通过 " + passedSteps
+                + " / 失败 " + failedSteps
+                + " / 跳过 " + skippedSteps + "）</td></tr>");
+        out.write("<tr><th>通过率</th><td>" + String.format("%.1f%%", passRate)
+                + (skippedSteps > 0 ? "（跳过 " + skippedSteps + " 步未计入分母）" : "")
+                + "</td></tr>");
+        out.write("<tr><th>摘要</th><td>" + escapeHtml(safe(record.getSummary())) + "</td></tr>");
         if (record.getErrorMessage() != null && !record.getErrorMessage().isBlank()) {
-            html.append("<tr><th>错误信息</th><td class=\"error\">").append(escapeHtml(record.getErrorMessage())).append("</td></tr>");
+            out.write("<tr><th>错误信息</th><td class=\"error\">" + escapeHtml(record.getErrorMessage()) + "</td></tr>");
         }
-        html.append("</table>");
+        out.write("</table>");
+        out.flush();
 
         // 步骤详情
-        html.append("<h2>步骤详情</h2>");
+        out.write("<h2>步骤详情</h2>");
         if (steps.isEmpty()) {
-            html.append("<p>无步骤记录。</p>");
+            out.write("<p>无步骤记录。</p>");
         } else {
             for (ExecutionStep step : steps) {
-                html.append("<div class=\"step\">");
-                html.append("<div class=\"step-header\">");
-                html.append("<span class=\"step-index\">步骤 #").append(step.getStepIndex()).append("</span>");
-                html.append("<span class=\"badge ").append(statusClass(step.getResult())).append("\">")
-                    .append(escapeHtml(safe(step.getResult()))).append("</span>");
-                html.append("</div>");
-                html.append("<table class=\"step-table\">");
-                appendRow(html, "Action", escapeHtml(safe(step.getAction())));
-                appendRow(html, "Target", escapeHtml(safe(step.getTarget())));
-                appendRow(html, "Strategy", escapeHtml(safe(step.getStrategy())));
+                out.write("<div class=\"step\">");
+                out.write("<div class=\"step-header\">");
+                out.write("<span class=\"step-index\">步骤 #" + step.getStepIndex() + "</span>");
+                out.write("<span class=\"badge " + statusClass(step.getResult()) + "\">"
+                        + escapeHtml(safe(step.getResult())) + "</span>");
+                out.write("</div>");
+                out.write("<table class=\"step-table\">");
+                writeRow(out, "Action", escapeHtml(safe(step.getAction())));
+                writeRow(out, "Target", escapeHtml(safe(step.getTarget())));
+                writeRow(out, "Strategy", escapeHtml(safe(step.getStrategy())));
                 if (step.getCoordinates() != null && !step.getCoordinates().isBlank()) {
-                    appendRow(html, "Coordinates", escapeHtml(safe(step.getCoordinates())));
+                    writeRow(out, "Coordinates", escapeHtml(safe(step.getCoordinates())));
                 }
                 if (step.getError() != null && !step.getError().isBlank()) {
-                    appendRow(html, "Error", "<span class=\"error\">" + escapeHtml(step.getError()) + "</span>");
+                    writeRow(out, "Error", "<span class=\"error\">" + escapeHtml(step.getError()) + "</span>");
                 }
-                html.append("</table>");
+                out.write("</table>");
 
-                // 截图（v7.9/R11: 三态——无截图不渲染；丢失渲染告警占位；正常渲染图片）
+                // 截图（v7.9/R11 三态语义不变；v7.12/R16 逐张处理即写即释）
                 String beforeBase64 = imageToBase64(step.getScreenshotBefore());
                 String afterBase64 = imageToBase64(step.getScreenshotAfter());
                 if (beforeBase64 != null || afterBase64 != null) {
-                    html.append("<div class=\"screenshots\">");
-                    appendShot(html, "操作前", beforeBase64, step.getScreenshotBefore());
-                    appendShot(html, "操作后", afterBase64, step.getScreenshotAfter());
-                    html.append("</div>");
+                    out.write("<div class=\"screenshots\">");
+                    writeShot(out, "操作前", beforeBase64, step.getScreenshotBefore());
+                    writeShot(out, "操作后", afterBase64, step.getScreenshotAfter());
+                    out.write("</div>");
                 }
-                html.append("</div>");
+                out.write("</div>");
+                out.flush();
             }
         }
 
         // 失败分析
         long failedCount = steps.stream().filter(s -> "failed".equals(s.getResult())).count();
-        html.append("<h2>失败分析</h2>");
+        out.write("<h2>失败分析</h2>");
         if (failedCount == 0) {
-            html.append("<p>无失败步骤。</p>");
+            out.write("<p>无失败步骤。</p>");
         } else {
-            html.append("<table class=\"fail-table\"><tr><th>步骤</th><th>Action</th><th>错误信息</th></tr>");
+            out.write("<table class=\"fail-table\"><tr><th>步骤</th><th>Action</th><th>错误信息</th></tr>");
             for (ExecutionStep step : steps) {
                 if ("failed".equals(step.getResult())) {
-                    html.append("<tr><td>#").append(step.getStepIndex()).append("</td>");
-                    html.append("<td>").append(escapeHtml(safe(step.getAction()))).append("</td>");
-                    html.append("<td class=\"error\">").append(escapeHtml(safe(step.getError()))).append("</td></tr>");
+                    out.write("<tr><td>#" + step.getStepIndex() + "</td>");
+                    out.write("<td>" + escapeHtml(safe(step.getAction())) + "</td>");
+                    out.write("<td class=\"error\">" + escapeHtml(safe(step.getError())) + "</td></tr>");
                 }
             }
-            html.append("</table>");
+            out.write("</table>");
         }
 
-        html.append("<div class=\"footer\">AICaseTest ").append(APP_VERSION).append(" 报告</div>");
-        html.append("</body></html>");
-        return html.toString();
+        out.write("<div class=\"footer\">AICaseTest " + APP_VERSION + " 报告</div>");
+        out.write("</body></html>");
+        out.flush();
     }
 
     /**
@@ -266,20 +289,21 @@ public class ReportService {
 
     /**
      * v7.9(R11): 渲染单个截图位——正常图片 / 丢失告警占位 / 无截图（null 不渲染）。
+     * v7.12(R16): 改为 Writer 直写（三态语义不变）。
      */
-    private void appendShot(StringBuilder html, String label, String base64, String path) {
+    private void writeShot(java.io.Writer out, String label, String base64, String path) throws java.io.IOException {
         if (base64 == null) {
             return;
         }
         if (base64.isEmpty()) {
-            html.append("<div class=\"shot shot-missing\"><div class=\"shot-label\">").append(label).append("</div>")
-                    .append("<div class=\"missing-text\">⚠ 截图文件缺失：").append(escapeHtml(safe(path)))
-                    .append("<br>多实例部署时请将 outputs 目录配置为共享卷（详见 README 部署说明）</div></div>");
+            out.write("<div class=\"shot shot-missing\"><div class=\"shot-label\">" + label + "</div>"
+                    + "<div class=\"missing-text\">⚠ 截图文件缺失：" + escapeHtml(safe(path))
+                    + "<br>多实例部署时请将 outputs 目录配置为共享卷（详见 README 部署说明）</div></div>");
             return;
         }
-        html.append("<div class=\"shot\"><div class=\"shot-label\">").append(label).append("</div>");
-        html.append("<img src=\"").append(base64).append("\" onclick=\"this.classList.toggle('zoomed')\" alt=\"")
-                .append(label).append("截图\"></div>");
+        out.write("<div class=\"shot\"><div class=\"shot-label\">" + label + "</div>");
+        out.write("<img src=\"" + base64 + "\" onclick=\"this.classList.toggle('zoomed')\" alt=\""
+                + label + "截图\"></div>");
     }
 
     /**
@@ -324,9 +348,9 @@ public class ReportService {
         };
     }
 
-    /** 追加一行两列表格 */
-    private void appendRow(StringBuilder html, String key, String value) {
-        html.append("<tr><th>").append(key).append("</th><td>").append(value).append("</td></tr>");
+    /** 追加一行两列表格（v7.12/R16: Writer 直写） */
+    private void writeRow(java.io.Writer out, String key, String value) throws java.io.IOException {
+        out.write("<tr><th>" + key + "</th><td>" + value + "</td></tr>");
     }
 
     /** 内联 CSS 样式 */

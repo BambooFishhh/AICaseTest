@@ -120,19 +120,23 @@ public class ExecutionController {
         return ApiResponse.success(executionService.cancelExecution(executionId));
     }
 
-    /** v2.4: 下载单次执行报告（自包含 HTML） */
+    /**
+     * v2.4: 下载单次执行报告（自包含 HTML）。
+     * v7.12(R16): 流式写出——报告不再整串驻留内存（百步级 Agent 执行含双截图时
+     * 旧实现峰值 2×报告体积可达数百 MB），HTML 分段 + 截图逐张写出即释放。
+     */
     @GetMapping("/executions/{executionId}/report")
-    public ResponseEntity<String> downloadReport(
+    public void downloadReport(
             @PathVariable String executionId,
-            @RequestParam(defaultValue = "false") boolean download) {
+            @RequestParam(defaultValue = "false") boolean download,
+            jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
         executionService.getExecution(executionId); // v4.0: 越权校验
-        String html = reportService.generateExecutionReport(executionId);
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_TYPE, "text/html; charset=UTF-8")
-                // v3.13: 默认 inline 预览；download=1 时附件下载
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        (download ? "attachment" : "inline") + "; filename=\"execution_report.html\"")
-                .body(html);
+        response.setContentType("text/html; charset=UTF-8");
+        response.setCharacterEncoding("UTF-8");
+        // v3.13: 默认 inline 预览；download=1 时附件下载
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
+                (download ? "attachment" : "inline") + "; filename=\"execution_report.html\"");
+        reportService.generateExecutionReport(executionId, response.getWriter());
     }
 
     /** v2.4: 下载批次执行报告（自包含 HTML） */

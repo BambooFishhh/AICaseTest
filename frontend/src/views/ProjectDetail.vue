@@ -420,21 +420,29 @@ async function handleAnalyze() {
   })
 
   analyzeEs.addEventListener('error', (e) => {
-    let msg = '分析连接异常'
+    // v7.12(E16): e.data 有值 = 后端下发的真实错误；为空 = 连接层断开
+    // （网络瞬断/代理空闲超时，后端分析仍在跑）——不再误报"分析失败"，
+    // 复用 resumeActiveStatus() 轮询跟踪进度并在终态自动提示
+    analyzeEs?.close()
+    analyzeEs = null
+    analysisRunning.value = false
+    pollingMessage.value = ''
     if (e.data) {
+      let msg = '分析连接异常'
       try {
         msg = JSON.parse(e.data).message || msg
       } catch {
         // 保持默认
       }
+      analysisSuccess.value = false
+      ElMessage.error(msg === '分析连接异常' ? '分析失败，请重试' : msg)
+      refreshProject()
+    } else {
+      ElMessage.info('分析连接中断，已切换为进度轮询')
+      // 本地 project 状态可能仍是分析前的旧值（SSE 期间未刷新），
+      // 先刷新再恢复轮询，确保 resumeActiveStatus 能看到 analyzing 状态
+      refreshProject().catch(() => {}).finally(() => resumeActiveStatus())
     }
-    analyzeEs?.close()
-    analyzeEs = null
-    analysisRunning.value = false
-    pollingMessage.value = ''
-    analysisSuccess.value = false
-    ElMessage.error(msg === '分析连接异常' ? '分析失败，请重试' : msg)
-    refreshProject()
   })
 }
 

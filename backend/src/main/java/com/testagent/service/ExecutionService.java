@@ -277,11 +277,11 @@ public class ExecutionService {
     private boolean acquireProjectPermitOrTimeout(String executionId, TestCase testCase, boolean writeBack) {
         String projectId = testCase.getProjectId();
         if (projectAcquireTimeoutMinutes <= 0) {
-            projectExecutionLimiter.acquire(projectId);
+            projectExecutionLimiter.acquire(projectId, executionId);
             return true;
         }
         long timeoutMs = projectAcquireTimeoutMinutes * 60_000L;
-        if (projectExecutionLimiter.tryAcquire(projectId, timeoutMs)) {
+        if (projectExecutionLimiter.tryAcquire(projectId, timeoutMs, executionId)) {
             return true;
         }
         log.warn("Execution {} queue timeout ({} minutes) for project {}", executionId, projectAcquireTimeoutMinutes, projectId);
@@ -448,7 +448,7 @@ public class ExecutionService {
                 started.setStatus("running");
                 executionRecordRepository.save(started);
             }
-            touchHeartbeat(executionId);
+            touchHeartbeat(executionId, testCase.getProjectId());
             taskQueueService.markRunning(TaskQueueService.EXECUTION_QUEUE, executionId);
         } catch (Exception e) {
             log.warn("Failed to mark execution {} running", executionId, e);
@@ -462,7 +462,7 @@ public class ExecutionService {
         // 启动前已被取消：直接收尾，不开浏览器
         if (isExecutionCancelled(executionId)) {
             cancelled = true;
-            projectExecutionLimiter.release(testCase.getProjectId());
+            projectExecutionLimiter.release(testCase.getProjectId(), executionId);
             ExecutionRecord pending = executionRecordRepository.findById(executionId).orElse(null);
             if (pending != null) {
                 pending.setStatus("cancelled");
@@ -508,7 +508,7 @@ public class ExecutionService {
                         cancelled = true;
                         break;
                     }
-                    touchHeartbeat(executionId);
+                    touchHeartbeat(executionId, testCase.getProjectId());
                     JsonNode stepNode = stepNodes.get(i);
                     try {
                         ExecutionStep step = executionAgent.executeStep(sessionId, stepNode, testCaseContext, i + 1, executionId);
@@ -554,7 +554,7 @@ public class ExecutionService {
                 try { playwrightSkill.closeSession(sessionId); } catch (Exception e) { log.warn("Failed to close session", e); }
                 runtimeStore.removeSession(executionId);
             }
-            projectExecutionLimiter.release(testCase.getProjectId());
+            projectExecutionLimiter.release(testCase.getProjectId(), executionId);
             taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, executionId);
         }
 
@@ -663,7 +663,7 @@ public class ExecutionService {
                 started.setStatus("running");
                 executionRecordRepository.save(started);
             }
-            touchHeartbeat(executionId);
+            touchHeartbeat(executionId, testCase.getProjectId());
             taskQueueService.markRunning(TaskQueueService.EXECUTION_QUEUE, executionId);
         } catch (Exception e) {
             log.warn("Failed to mark execution {} running", executionId, e);
@@ -677,7 +677,7 @@ public class ExecutionService {
         // 启动前已被取消：直接收尾，不开浏览器
         if (isExecutionCancelled(executionId)) {
             cancelled = true;
-            projectExecutionLimiter.release(testCase.getProjectId());
+            projectExecutionLimiter.release(testCase.getProjectId(), executionId);
             ExecutionRecord pending = executionRecordRepository.findById(executionId).orElse(null);
             if (pending != null) {
                 pending.setStatus("cancelled");
@@ -739,7 +739,7 @@ public class ExecutionService {
                         cancelled = true;
                         break;
                     }
-                    touchHeartbeat(executionId);
+                    touchHeartbeat(executionId, testCase.getProjectId());
                     JsonNode node = stepNodes.get(i);
                     String action = node.path("action").asText("");
                     String target = node.path("target").asText("");
@@ -886,7 +886,7 @@ public class ExecutionService {
                 }
                 runtimeStore.removeSession(executionId);
             }
-            projectExecutionLimiter.release(testCase.getProjectId());
+            projectExecutionLimiter.release(testCase.getProjectId(), executionId);
             taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, executionId);
         }
 
@@ -1181,8 +1181,11 @@ public class ExecutionService {
     }
 
     // 心跳：worker 存活时定期更新
-    private void touchHeartbeat(String executionId) {
+    // v7.12(E15): 心跳同时续租项目并发配额（Redis 租约模型）——活跃执行租约不过期，
+    // 防长执行（Agent 模式常见 >10min）租约被清理导致超发；内存实现为 no-op
+    private void touchHeartbeat(String executionId, String projectId) {
         runtimeStore.putHeartbeat(executionId, System.currentTimeMillis());
+        projectExecutionLimiter.renew(projectId, executionId);
     }
 
     private boolean isWorkerAlive(String executionId) {

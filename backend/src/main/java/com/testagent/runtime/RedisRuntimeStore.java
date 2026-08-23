@@ -16,18 +16,37 @@ public class RedisRuntimeStore implements RuntimeStore {
     private static final Logger log = LoggerFactory.getLogger(RedisRuntimeStore.class);
     private static final Duration TTL = Duration.ofHours(24);
 
+    // v7.12(E15): ZSET 租约信号量——member=permitId(=executionId)，score=授予/续租时刻。
+    // 取代计数器+EXPIRE(600) 模型：旧模型在长执行（>10min，Agent 模式常见）下键过期
+    // → 计数清零 → 超发；且释放无持有者语义，重复释放/跨存储释放会偷走他任务槽位。
+    // 租约 5 分钟 + 执行器步骤心跳续租：活跃执行租约不过期，JVM 崩溃后 5 分钟自愈。
+    private static final long PERMIT_LEASE_MS = 5 * 60_000L;
+
     private static final DefaultRedisScript<Long> ACQUIRE_SCRIPT = new DefaultRedisScript<>(
-            "local current = tonumber(redis.call('GET', KEYS[1]) or '0') "
-                    + "if current < tonumber(ARGV[1]) then "
-                    + "redis.call('INCR', KEYS[1]) redis.call('EXPIRE', KEYS[1], 600) return 1 end return 0",
+            "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', tonumber(ARGV[2]) - tonumber(ARGV[3])) "
+                    + "if redis.call('ZCARD', KEYS[1]) < tonumber(ARGV[1]) then "
+                    + "redis.call('ZADD', KEYS[1], ARGV[2], ARGV[4]) "
+                    + "redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[3]) + 60000) return 1 end return 0",
             Long.class);
     private static final DefaultRedisScript<Long> RELEASE_SCRIPT = new DefaultRedisScript<>(
-            "local current = tonumber(redis.call('GET', KEYS[1]) or '0') "
-                    + "if current > 0 then redis.call('DECR', KEYS[1]) end return current",
+            // 幂等：重复释放/释放未持有的 permitId 均为无害 no-op
+            "return redis.call('ZREM', KEYS[1], ARGV[1])",
+            Long.class);
+    private static final DefaultRedisScript<Long> RENEW_SCRIPT = new DefaultRedisScript<>(
+            "if redis.call('ZSCORE', KEYS[1], ARGV[1]) then "
+                    + "redis.call('ZADD', KEYS[1], ARGV[2], ARGV[1]) "
+                    + "redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[3]) + 60000) return 1 end return 0",
             Long.class);
 
     private final StringRedisTemplate redis;
     private final MemoryRuntimeStore memoryFallback = new MemoryRuntimeStore();
+
+    /**
+     * v7.12(E15): acquire 降级内存时登记 permitId，release 按授予来源路由——
+     * 修复双向漂移（旧实现：acquire 走内存、Redis 恢复后 release 扣减 Redis 偷槽位，
+     * 且内存信号量永久泄漏）。
+     */
+    private final java.util.Set<String> memoryGrantedPermits = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public RedisRuntimeStore(StringRedisTemplate redis) {
         this.redis = redis;
@@ -180,12 +199,11 @@ public class RedisRuntimeStore implements RuntimeStore {
     }
 
     @Override
-    public void acquireProjectPermit(String projectId, int maxPermits) {
+    public void acquireProjectPermit(String projectId, int maxPermits, String permitId) {
         String key = "rt:sema:" + projectId;
         try {
             while (!Thread.currentThread().isInterrupted()) {
-                Long ok = redis.execute(ACQUIRE_SCRIPT, List.of(key), String.valueOf(Math.max(1, maxPermits)));
-                if (ok != null && ok == 1L) {
+                if (acquireLease(key, maxPermits, permitId)) {
                     return;
                 }
                 Thread.sleep(100);
@@ -196,19 +214,19 @@ public class RedisRuntimeStore implements RuntimeStore {
             throw new IllegalStateException("执行调度被中断", e);
         } catch (Exception e) {
             log.warn("Redis semaphore unavailable, fallback to memory: {}", e.getMessage());
-            memoryFallback.acquireProjectPermit(projectId, maxPermits);
+            memoryGrantedPermits.add(permitId);
+            memoryFallback.acquireProjectPermit(projectId, maxPermits, permitId);
         }
     }
 
     /** v7.9(E7): 带超时的配额获取——自旋加 deadline，超时返回 false 而非永久阻塞 */
     @Override
-    public boolean tryAcquireProjectPermit(String projectId, int maxPermits, long timeoutMs) {
+    public boolean tryAcquireProjectPermit(String projectId, int maxPermits, long timeoutMs, String permitId) {
         String key = "rt:sema:" + projectId;
         long deadline = System.currentTimeMillis() + Math.max(1, timeoutMs);
         try {
             while (!Thread.currentThread().isInterrupted()) {
-                Long ok = redis.execute(ACQUIRE_SCRIPT, List.of(key), String.valueOf(Math.max(1, maxPermits)));
-                if (ok != null && ok == 1L) {
+                if (acquireLease(key, maxPermits, permitId)) {
                     return true;
                 }
                 if (System.currentTimeMillis() >= deadline) {
@@ -222,17 +240,47 @@ public class RedisRuntimeStore implements RuntimeStore {
             return false;
         } catch (Exception e) {
             log.warn("Redis semaphore unavailable, fallback to memory: {}", e.getMessage());
-            return memoryFallback.tryAcquireProjectPermit(projectId, maxPermits, timeoutMs);
+            memoryGrantedPermits.add(permitId);
+            return memoryFallback.tryAcquireProjectPermit(projectId, maxPermits, timeoutMs, permitId);
         }
     }
 
     @Override
-    public void releaseProjectPermit(String projectId) {
-        try {
-            redis.execute(RELEASE_SCRIPT, List.of("rt:sema:" + projectId));
-        } catch (Exception e) {
-            log.warn("Redis semaphore release failed, fallback to memory: {}", e.getMessage());
-            memoryFallback.releaseProjectPermit(projectId);
+    public void releaseProjectPermit(String projectId, String permitId) {
+        // v7.12(E15): 按授予来源路由——内存授予还内存；Redis 授予走 ZREM（幂等）。
+        // Redis 释放失败仅告警，依赖租约 ≤5 分钟自愈，不再错误降级扣减内存
+        if (memoryGrantedPermits.remove(permitId)) {
+            memoryFallback.releaseProjectPermit(projectId, permitId);
+            return;
         }
+        try {
+            redis.execute(RELEASE_SCRIPT, List.of("rt:sema:" + projectId), permitId);
+        } catch (Exception e) {
+            log.warn("Redis semaphore release failed (lease will expire): {}", e.getMessage());
+        }
+    }
+
+    @Override
+    public void renewProjectPermit(String projectId, String permitId) {
+        if (memoryGrantedPermits.contains(permitId)) {
+            return;   // 内存 Semaphore 无租约概念
+        }
+        try {
+            long now = System.currentTimeMillis();
+            redis.execute(RENEW_SCRIPT, List.of("rt:sema:" + projectId),
+                    permitId, String.valueOf(now), String.valueOf(PERMIT_LEASE_MS));
+        } catch (Exception e) {
+            log.debug("Redis semaphore renew failed: {}", e.getMessage());
+        }
+    }
+
+    private boolean acquireLease(String key, int maxPermits, String permitId) {
+        long now = System.currentTimeMillis();
+        Long ok = redis.execute(ACQUIRE_SCRIPT, List.of(key),
+                String.valueOf(Math.max(1, maxPermits)),
+                String.valueOf(now),
+                String.valueOf(PERMIT_LEASE_MS),
+                permitId);
+        return ok != null && ok == 1L;
     }
 }
