@@ -1746,7 +1746,24 @@ public class TestGeneratorAgent {
         }
     }
 
-    private int calculateQualityScore(TestCase tc) {
+    /**
+     * v7.8(G6): 质量评分并入评审结论——旧实现是纯"形式分"（字段填没填），
+     * LLM 编造字段填满 = 高分，去重"保留高分者"时编造越全越容易挤掉真实用例。
+     * 新公式：形式分 × 0.7（0-70）+ 评审分（0-30）- UI 语言违规扣分（0-9）。
+     * 时序上评审（review）先于评分，hints.aiReview / uiLanguageViolations 已就位。
+     * 包级可见，供单测直接验证评分语义。
+     */
+    int calculateQualityScore(TestCase tc) {
+        int formScore = calculateFormScore(tc);
+        Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
+        int reviewScore = reviewScoreOf(hints);
+        int penalty = uiLanguagePenaltyOf(hints);
+        // 整数算术（×7/10）而非 double 乘法：避免 85*0.7=59.499… 的浮点误差导致 1 分抖动
+        return Math.max(0, Math.min(100, formScore * 7 / 10 + reviewScore - penalty));
+    }
+
+    /** v7.8(G6): 原 6 项形式检查原样保留为形式分（0-100），口径不变 */
+    private int calculateFormScore(TestCase tc) {
         int score = 0;
 
         // 结构化步骤完整 30
@@ -1792,6 +1809,63 @@ public class TestGeneratorAgent {
         }
 
         return score;
+    }
+
+    /**
+     * v7.8(G6): 评审结论折算 0-30 分——
+     * pass 30；fix 按问题数与未采纳建议数扣分（每项 -5，下限 0）；
+     * 无评审记录（LLM 评审跳过/降级）15 中性不奖不罚；
+     * confidence < 0.5 时评审分减半（评审本身不可信）。
+     */
+    private int reviewScoreOf(Map<String, Object> hints) {
+        Object reviewObj = hints.get("aiReview");
+        if (!(reviewObj instanceof Map)) {
+            return 15;
+        }
+        Map<?, ?> review = (Map<?, ?>) reviewObj;
+        String status = String.valueOf(review.get("status"));
+        int score;
+        if ("pass".equals(status)) {
+            score = 30;
+        } else if ("fix".equals(status)) {
+            int issueCount = review.get("issues") instanceof List<?> list ? list.size() : 0;
+            int suggestionCount = unappliedSuggestionCount(review);
+            score = Math.max(0, 30 - issueCount * 5 - suggestionCount * 5);
+        } else {
+            score = 15;
+        }
+        if (review.get("confidence") instanceof Number n && n.doubleValue() < 0.5) {
+            score /= 2;
+        }
+        return score;
+    }
+
+    /** v7.8(G6): 未自动采纳的建议字段数——R1 自动采纳过的（autoApplied）不罚 */
+    private int unappliedSuggestionCount(Map<?, ?> review) {
+        Object suggestionsObj = review.get("suggestedChanges");
+        if (!(suggestionsObj instanceof Map<?, ?> suggestions)) {
+            return 0;
+        }
+        Set<String> autoApplied = new HashSet<>();
+        if (review.get("autoApplied") instanceof List<?> list) {
+            for (Object o : list) {
+                autoApplied.add(String.valueOf(o));
+            }
+        }
+        int count = 0;
+        for (Map.Entry<?, ?> entry : suggestions.entrySet()) {
+            if (entry.getValue() != null && !autoApplied.contains(String.valueOf(entry.getKey()))) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** v7.8(G6): v7.3(G20层2) 的 uiLanguageViolations 参与评分——每项 -3，上限 -9 */
+    private int uiLanguagePenaltyOf(Map<String, Object> hints) {
+        Object violations = hints.get("uiLanguageViolations");
+        int size = violations instanceof List<?> list ? list.size() : 0;
+        return Math.min(9, size * 3);
     }
 
     // ==================== 辅助方法 ====================

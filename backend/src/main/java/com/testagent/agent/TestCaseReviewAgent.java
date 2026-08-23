@@ -30,6 +30,11 @@ public class TestCaseReviewAgent {
 
     private static final Logger log = LoggerFactory.getLogger(TestCaseReviewAgent.class);
     private static final int MAX_LLM_CASES = 60;
+    /** v7.8(R3): 模糊匹配门槛——0.65 旧阈值会"洗白"CRUD 兄弟路径（2/3 token 相同 +0.2 method 分即过线） */
+    private static final double FUZZY_ENDPOINT_THRESHOLD = 0.9;
+    /** v7.8(R1): 高置信建议自动采纳门槛 */
+    private static final double AUTO_APPLY_CONFIDENCE = 0.8;
+    private static final Set<String> VALID_PRIORITIES = Set.of("P0", "P1", "P2", "P3");
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -192,18 +197,29 @@ public class TestCaseReviewAgent {
         return result;
     }
 
-    private void applyReview(TestCase tc, JsonNode reviewNode, String source) {
+    // v7.8(R1): 包级可见，供单测直接验证分级采纳语义
+    void applyReview(TestCase tc, JsonNode reviewNode, String source) {
         Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
         List<String> issues = new ArrayList<>();
         JsonNode issuesNode = reviewNode.path("issues");
         if (issuesNode.isArray()) {
             issuesNode.forEach(n -> issues.add(n.asText()));
         }
+        double confidence = reviewNode.path("confidence").asDouble(0.5);
+        Map<String, Object> suggestions = normalizeSuggestions(reviewNode.path("suggestedChanges"));
         Map<String, Object> review = new LinkedHashMap<>();
         review.put("status", reviewNode.path("status").asText("fix"));
         review.put("issues", issues);
-        review.put("confidence", reviewNode.path("confidence").asDouble(0.5));
-        review.put("suggestedChanges", normalizeSuggestions(reviewNode.path("suggestedChanges")));
+        review.put("confidence", confidence);
+        review.put("suggestedChanges", suggestions);
+
+        // v7.8(R1): 高置信建议分级自动采纳——coverageRefs（并集，只增不减）与 priority（枚举校验）；
+        // title/module/type 涉及正文改写，保留前端"待人工确认"入口。已采纳字段登记 autoApplied。
+        List<String> autoApplied = new ArrayList<>();
+        if (confidence >= AUTO_APPLY_CONFIDENCE) {
+            autoApplySuggestions(tc, hints, suggestions, autoApplied);
+        }
+        review.put("autoApplied", autoApplied);
         hints.put("aiReview", review);
 
         JsonNode refsNode = reviewNode.path("coverageRefs");
@@ -217,6 +233,40 @@ public class TestCaseReviewAgent {
             }
         }
         tc.setExecutionHints(toJson(hints));
+    }
+
+    /**
+     * v7.8(R1): 只采纳"并集型/枚举校验型"修正，防 LLM 修正本身引入错误——
+     * coverageRefs 走 mergeCoverageRefs 并集（不删既有项），priority 校验 P0-P3。
+     */
+    private void autoApplySuggestions(TestCase tc, Map<String, Object> hints,
+                                      Map<String, Object> suggestions, List<String> autoApplied) {
+        Object refsSuggestion = suggestions.get("coverageRefs");
+        if (refsSuggestion instanceof Map && hasAnyRefId((Map<?, ?>) refsSuggestion)) {
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> suggested = (Map<String, Object>) refsSuggestion;
+                Map<String, Object> existing = readCoverageRefs(hints);
+                hints.put("coverageRefs", mergeCoverageRefs(existing, suggested));
+                autoApplied.add("coverageRefs");
+            } catch (Exception e) {
+                log.warn("Failed to auto-apply coverageRefs suggestion: {}", e.getMessage());
+            }
+        }
+        Object prioritySuggestion = suggestions.get("priority");
+        if (prioritySuggestion instanceof String p && VALID_PRIORITIES.contains(p)) {
+            tc.setPriority(p);
+            autoApplied.add("priority");
+        }
+    }
+
+    private boolean hasAnyRefId(Map<?, ?> refs) {
+        for (Object value : refs.values()) {
+            if (value instanceof List<?> list && !list.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // v5.12: 生成链路在用例编号/项目归属确定后统一补记评审历史
@@ -344,8 +394,9 @@ public class TestCaseReviewAgent {
         return cases;
     }
 
-    private Map<String, Object> mergeEndpointRefs(Map<String, Object> refs, TestCase tc,
-                                                   Map<String, Object> coverage) {
+    // v7.8(R3): 包级可见，供单测直接验证匹配收紧与 fuzzyEndpointIds 记录
+    Map<String, Object> mergeEndpointRefs(Map<String, Object> refs, TestCase tc,
+                                          Map<String, Object> coverage) {
         List<String> endpointIds = new ArrayList<>();
         Set<String> validIds = readValidEndpointIds(coverage);
         Object existing = refs.get("endpointIds");
@@ -361,26 +412,56 @@ public class TestCaseReviewAgent {
                 }
             }
         }
+        List<String> fuzzyIds = new ArrayList<>();
         for (Map<String, Object> ep : JsonHelper.parseListMap(tc.getApiEndpoints())) {
-            String matchedId = matchEndpoint(ep, coverage);
-            if (matchedId != null && !endpointIds.contains(matchedId)) {
-                endpointIds.add(matchedId);
+            EndpointMatch matched = matchEndpoint(ep, coverage);
+            if (matched != null && !endpointIds.contains(matched.id)) {
+                endpointIds.add(matched.id);
+                if (matched.fuzzy) {
+                    fuzzyIds.add(matched.id);
+                }
             }
         }
         refs.put("endpointIds", endpointIds);
+        // v7.8(R3): 模糊命中的 id 单独记录，前端提示"该接口引用为模糊匹配，请人工确认"
+        if (!fuzzyIds.isEmpty()) {
+            refs.put("fuzzyEndpointIds", fuzzyIds);
+        }
         return refs;
     }
 
-    private String matchEndpoint(Map<String, Object> ep, Map<String, Object> coverage) {
+    /**
+     * v7.8(R3): endpoint 匹配结果——fuzzy 标记区分精确/模糊命中，供前端提示人工确认。
+     */
+    static class EndpointMatch {
+        final String id;
+        final boolean fuzzy;
+
+        EndpointMatch(String id, boolean fuzzy) {
+            this.id = id;
+            this.fuzzy = fuzzy;
+        }
+    }
+
+    /**
+     * v7.8(R3): 两级匹配，堵住模糊匹配"洗白"编造接口——
+     * 旧逻辑 token 相似度 0.65 + method 加分 0.2 = 0.867，
+     * 编造的 /api/order/delete 能匹配兄弟路径 /api/order/cancel（2/3 token 相同），
+     * 覆盖率虚高的系统性来源。新逻辑：
+     * ① 精确：method 一致（或用例未写 method）且归一化路径完全相等；
+     * ② 模糊：method 严格一致 + token 相似度 ≥ 0.9 + 双方 token 数一致（仅容分隔符/近形差异）；
+     * ③ 其余不匹配。
+     */
+    private EndpointMatch matchEndpoint(Map<String, Object> ep, Map<String, Object> coverage) {
         String method = String.valueOf(ep.getOrDefault("method", "")).toUpperCase();
         String path = normalizePath(String.valueOf(ep.getOrDefault("path", "")));
         if (path.isBlank()) {
             return null;
         }
+        int pathTokenCount = tokenSet(path).size();
         List<Map<String, Object>> endpoints = readEndpoints(coverage);
-        String bestId = null;
-        double bestScore = 0.65;
-        boolean bestMethodMatch = false;
+        EndpointMatch best = null;
+        double bestScore = 0;
         for (Map<String, Object> item : endpoints) {
             String itemId = String.valueOf(item.get("id"));
             String itemMethod = String.valueOf(item.getOrDefault("method", "")).toUpperCase();
@@ -388,18 +469,20 @@ public class TestCaseReviewAgent {
             if (itemPath.isBlank()) {
                 continue;
             }
-            double score = pathScore(path, itemPath);
-            boolean methodMatch = !itemMethod.isBlank() && itemMethod.equals(method);
-            if (methodMatch) {
-                score += 0.2;
+            // ① 精确匹配：归一化路径完全相等；method 一致或用例侧未标注 method
+            if (itemPath.equals(path) && (method.isBlank() || itemMethod.isBlank() || itemMethod.equals(method))) {
+                return new EndpointMatch(itemId, false);
             }
-            if (score > bestScore || (score == bestScore && methodMatch && !bestMethodMatch)) {
-                bestScore = score;
-                bestId = itemId;
-                bestMethodMatch = methodMatch;
+            // ② 高门槛模糊：method 严格一致 + 相似度 ≥ 0.9 + token 数一致
+            if (!itemMethod.isBlank() && itemMethod.equals(method) && tokenSet(itemPath).size() == pathTokenCount) {
+                double score = pathScore(path, itemPath);
+                if (score >= FUZZY_ENDPOINT_THRESHOLD && (best == null || score > bestScore)) {
+                    best = new EndpointMatch(itemId, true);
+                    bestScore = score;
+                }
             }
         }
-        return bestId;
+        return best;
     }
 
     private Set<String> readValidEndpointIds(Map<String, Object> coverage) {

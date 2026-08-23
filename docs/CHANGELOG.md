@@ -4,6 +4,56 @@
 
 ---
 
+## v7.8 — 评审闭环与覆盖率可信
+**日期**: 2026-08-23
+**基线**: v7.7
+**主题**: 闭环回写——评审建议分级生效、endpoint 匹配不再"洗白"编造接口、覆盖矩阵计划/执行双栏、质量评分并入评审结论（对应风险清单 R1/R3/R7/G6）
+
+### 背景
+
+v7.7 完成上下文精准投喂后，评审与度量侧仍有四个"闭环断裂/数据失真"问题：**R1** LLM 评审的 suggestedChanges 从未被应用——prompt 承诺"可自动采纳的修正"，实际 fix 与 pass 唯一区别是存了个标签，评审发现的问题原样入库；**R3** endpoint 模糊匹配起始阈值 0.65+method 加分 0.2=0.867，编造的 `/api/order/delete` 能匹配兄弟路径 `/api/order/cancel`（2/3 token 相同）——编造接口被记为覆盖真实接口，覆盖率虚高的系统性来源；**R7** 覆盖矩阵主路径读 coverageRefs 不要求执行、兜底路径要求 isExecuted——两路标准不一致且只输出一栏 rate，用户把"计划覆盖 80%"当"验证过 80%"；**G6** 质量评分是纯"形式分"（字段填没填），无内容正确性维度——LLM 编造字段填满 = 高分，去重"保留高分者"时编造越全越容易挤掉真实用例。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `agent/TestCaseReviewAgent.java` | 修改 | **R1**：`applyReview` 分级采纳——confidence ≥ 0.8 时 coverageRefs 建议（并集合并，只增不减）与 priority 建议（枚举校验 P0-P3）自动应用，已采纳字段登记 `aiReview.autoApplied`；title/module/type 涉及正文改写保留前端"待人工确认"入口；空 refs 建议 no-op 不登记。**R3**：`matchEndpoint` 重构两级匹配——① 精确：归一化路径完全相等（method 一致或用例侧未标注）② 高门槛模糊：method 严格一致 + token 相似度 ≥ 0.9 + 双方 token 数一致（仅容分隔符/近形差异），编造的 CRUD 兄弟路径（0.667）不再被洗白、同路径不同 method（旧 0.8 过线）不再误配；模糊命中额外记入 `coverageRefs.fuzzyEndpointIds` 供前端提示 |
+| `agent/TestGeneratorAgent.java` | 修改 | **G6**：`calculateQualityScore` 并入评审结论——形式分（原 6 项检查原样保留为 `calculateFormScore`）× 7/10 + 评审分（pass 30 / fix 按 issues 与未采纳建议数每项 -5 / 无评审中性 15 / confidence < 0.5 减半）- uiLanguageViolations 扣分（每项 -3 上限 9）；R1 自动采纳过的建议不参与扣分（已修复的不罚）；整数算术避免 85×0.7 浮点误差 |
+| `service/CoverageService.java` | 修改 | **R7**：覆盖矩阵双栏口径——每个 transition 新增 `planned/plannedCaseIds`（coverageRefs 引用，不要求执行）与 `executed/executedCaseIds`（isExecuted 用例 refs 或 stateMachineRef 引用）；summary 新增 `plannedCoveredTransitions/plannedRate/executedCoveredTransitions/executedRate`；`covered/testCaseIds/coveredTransitions/rate` 保持旧口径（refs 计划 ∪ 已执行 smRef 兜底）向后兼容 |
+| `test/agent/TestCaseReviewAgentEndpointMatchTest.java` | 新增 | R3 7 用例：编造兄弟路径不匹配、路径变量归一化精确匹配、大小写/query/尾斜杠归一化、method 不符不匹配、高相似模糊命中记录 fuzzyEndpointIds、token 数不一致不模糊匹配、既有合法 id 保留与非法过滤 |
+| `test/agent/TestCaseReviewAgentAutoApplyTest.java` | 新增 | R1 5 用例：高置信 refs+priority 采纳并登记 autoApplied、低置信不采纳、非法枚举 priority 拒绝、空 refs 建议 no-op、评审顶层 coverageRefs 与建议 refs 双通道并集 |
+| `test/agent/TestGeneratorAgentQualityScoreTest.java` | 新增 | G6 10 用例：满分+pass=100、无评审中性 85、pass>fix=中性梯度、重度 fix 低于中性、低置信评审分减半、autoApplied 建议不扣分、uiLanguageViolations 扣分封顶、空用例不为负、历史数据无 aiReview 不抛异常 |
+| `test/service/CoverageServicePlannedExecutedTest.java` | 新增 | R7 3 用例：双栏字段语义（未执行计划/已执行双真/failed 也算执行/仅 smRef 兜底进执行栏）、summary 四字段口径与旧口径兼容、全未执行时执行覆盖为 0 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `components/CoverageMatrix.vue` | 修改 | **R7**：汇总区双进度条（计划覆盖绿/执行验证蓝）+ 表格"计划覆盖/执行验证"双列三态（已验证绿/已规划黄/未覆盖红）+ 关联用例分"计划 N 条/执行 N 条"两个筛选入口；planned/executed 字段缺省时回退旧 covered 口径（兼容旧数据） |
+| `components/TestCaseCard.vue` | 修改 | **R1**：AI 评审块新增"已自动采纳"标签（中文字段名展示），待确认列表过滤已采纳字段；**R3**：新增模糊匹配接口警告提示（列出 fuzzyEndpointIds） |
+
+### API 契约变化
+
+- 无 REST 接口变更
+- 覆盖矩阵 `GET /api/coverage/{projectId}/matrix` 每个 transition 新增 `planned/plannedCaseIds/executed/executedCaseIds`，summary 新增 `plannedCoveredTransitions/plannedRate/executedCoveredTransitions/executedRate`（旧字段口径不变）
+- `executionHints.aiReview` 新增 `autoApplied` 数组（后端已自动采纳的字段名）
+- `executionHints.coverageRefs` 新增 `fuzzyEndpointIds` 数组（模糊匹配命中的接口 id）
+
+### 验证结果
+
+- 后端定向测试：R1/R3/G6/R7 新增 4 个测试类 + 受影响既有 2 个测试类（MergeRefs/Preparse 语义回归）31 用例全部通过
+- 前端 `npm run build`：BUILD SUCCESS（2847 modules）
+- 既有 CoverageServicePreparseTest 无需修改即通过——旧口径 covered/testCaseIds 语义完整保留
+
+### 预期影响（评审闭环与覆盖率可信）
+
+- 评审从"只诊断不治疗"变为分级回写：高置信 coverageRefs/priority 修正即时生效，title/module/type 保留人工确认——评审发现问题不再原样入库（R1）
+- 接口覆盖率不再虚高：编造接口与真实接口的模糊匹配被堵住，同路径不同 method 不再误配；模糊命中显式标记供人工复核（R3）
+- 覆盖度量语义诚实：计划覆盖与执行验证双栏呈现，"规划过"不再冒充"验证过"；failed 用例也计入执行验证（有执行证据）（R7）
+- 去重依据可信：质量评分反映评审结论而非纯形式完整度，编造字段填满的用例不再靠形式分挤掉真实用例；UI 语言违规参与扣分与 v7.3 lint 标记联动（G6）
+
+---
+
 ## v7.7 — 上下文精准投喂
 **日期**: 2026-08-23
 **基线**: v7.6

@@ -5,18 +5,29 @@
         <div class="matrix-head">
           <div class="matrix-head-text">
             <h2 class="matrix-title">覆盖率矩阵</h2>
-            <p class="matrix-desc">展示状态机转换路径的测试覆盖情况</p>
+            <p class="matrix-desc">状态机转换路径的计划覆盖与执行验证（v7.8 双栏口径）</p>
           </div>
           <div v-if="matrix" class="matrix-summary">
-            <span class="summary-text">
-              {{ matrix.summary.coveredTransitions }} / {{ matrix.summary.totalTransitions }}
-            </span>
-            <el-progress
-              :percentage="Math.round(matrix.summary.rate * 100)"
-              :stroke-width="8"
-              :color="rateColor"
-              class="summary-progress"
-            />
+            <div class="summary-row">
+              <span class="summary-label">计划覆盖</span>
+              <span class="summary-text">{{ plannedCovered }} / {{ matrix.summary.totalTransitions }}</span>
+              <el-progress
+                :percentage="plannedRatePct"
+                :stroke-width="8"
+                :color="rateColor"
+                class="summary-progress"
+              />
+            </div>
+            <div class="summary-row">
+              <span class="summary-label">执行验证</span>
+              <span class="summary-text summary-text-exec">{{ executedCovered }} / {{ matrix.summary.totalTransitions }}</span>
+              <el-progress
+                :percentage="executedRatePct"
+                :stroke-width="8"
+                :color="executedRateColor"
+                class="summary-progress"
+              />
+            </div>
           </div>
         </div>
       </template>
@@ -31,7 +42,7 @@
         :row-class-name="rowClassName"
       >
         <el-table-column prop="smName" label="状态机" width="140" />
-        <el-table-column prop="from" label="From" width="120">
+        <el-table-column prop="from" label="From" width="110">
           <template #default="{ row }">
             <span class="state-name">{{ row.from }}</span>
           </template>
@@ -41,35 +52,57 @@
             <el-icon class="arrow-icon"><Right /></el-icon>
           </template>
         </el-table-column>
-        <el-table-column prop="to" label="To" width="120">
+        <el-table-column prop="to" label="To" width="110">
           <template #default="{ row }">
             <span class="state-name">{{ row.to }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="trigger" label="Trigger" min-width="140" show-overflow-tooltip />
-        <el-table-column label="覆盖" width="110" align="center">
+        <el-table-column prop="trigger" label="Trigger" min-width="130" show-overflow-tooltip />
+        <el-table-column label="计划覆盖" width="95" align="center">
           <template #default="{ row }">
             <span
               class="coverage-pill"
-              :class="row.covered ? 'is-covered' : 'is-uncovered'"
+              :class="plannedOf(row) ? 'is-planned' : 'is-uncovered'"
             >
               <i class="pill-dot"></i>
-              {{ row.covered ? '已覆盖' : '未覆盖' }}
+              {{ plannedOf(row) ? '已规划' : '未覆盖' }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="关联用例" width="110" align="center">
+        <el-table-column label="执行验证" width="95" align="center">
           <template #default="{ row }">
-            <el-button
-              v-if="row.testCaseIds.length > 0"
-              type="primary"
-              link
-              size="small"
-              @click="$emit('filter-by-ids', row.testCaseIds)"
+            <span
+              class="coverage-pill"
+              :class="executedOf(row) ? 'is-covered' : (plannedOf(row) ? 'is-planned' : 'is-uncovered')"
             >
-              {{ row.testCaseIds.length }} 条
-            </el-button>
-            <span v-else class="text-muted">—</span>
+              <i class="pill-dot"></i>
+              {{ executedOf(row) ? '已验证' : (plannedOf(row) ? '待执行' : '未覆盖') }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="关联用例" width="150" align="center">
+          <template #default="{ row }">
+            <span class="case-links">
+              <el-button
+                v-if="plannedIdsOf(row).length > 0"
+                type="primary"
+                link
+                size="small"
+                @click="$emit('filter-by-ids', plannedIdsOf(row))"
+              >
+                计划 {{ plannedIdsOf(row).length }} 条
+              </el-button>
+              <el-button
+                v-if="executedIdsOf(row).length > 0"
+                type="success"
+                link
+                size="small"
+                @click="$emit('filter-by-ids', executedIdsOf(row))"
+              >
+                执行 {{ executedIdsOf(row).length }} 条
+              </el-button>
+              <span v-if="plannedIdsOf(row).length === 0 && executedIdsOf(row).length === 0" class="text-muted">—</span>
+            </span>
           </template>
         </el-table-column>
       </el-table>
@@ -80,8 +113,9 @@
 <script setup>
 /**
  * 覆盖率矩阵组件
- * 展示所有状态机的转换路径覆盖情况，
- * 支持点击"关联用例"按 ID 集合筛选用例。
+ * v7.8(R7): 计划覆盖（coverageRefs 声明，生成时计划）与执行验证（isExecuted 用例实际跑过）
+ * 双栏展示——用户不再把"计划覆盖 80%"当"验证过 80%"。
+ * 兼容旧后端数据：planned/executed 缺失时回退 covered 单栏口径。
  */
 import { computed, ref } from 'vue'
 import { Right } from '@element-plus/icons-vue'
@@ -112,15 +146,35 @@ const allTransitions = computed(() => {
   return result
 })
 
-// 行样式：未覆盖行高亮
+// v7.8(R7): planned/executed 字段缺省时回退旧口径（covered = refs 计划 ∪ 已执行 smRef 兜底）
+const plannedOf = (row) => row.planned ?? row.covered ?? false
+const executedOf = (row) => row.executed ?? false
+const plannedIdsOf = (row) => row.plannedCaseIds ?? row.testCaseIds ?? []
+const executedIdsOf = (row) => row.executedCaseIds ?? []
+
+const plannedCovered = computed(() =>
+  props.matrix?.summary?.plannedCoveredTransitions ?? props.matrix?.summary?.coveredTransitions ?? 0
+)
+const executedCovered = computed(() => props.matrix?.summary?.executedCoveredTransitions ?? 0)
+
+const plannedRatePct = computed(() => {
+  const rate = props.matrix?.summary?.plannedRate ?? props.matrix?.summary?.rate ?? 0
+  return Math.round(rate * 100)
+})
+const executedRatePct = computed(() => {
+  const rate = props.matrix?.summary?.executedRate ?? 0
+  return Math.round(rate * 100)
+})
+
+// 行样式三态：已执行（绿）/ 仅计划（黄）/ 未覆盖（红）
 const rowClassName = ({ row }) => {
-  return row.covered ? '' : 'row-uncovered'
+  if (executedOf(row)) return 'row-executed'
+  return plannedOf(row) ? 'row-planned-only' : 'row-uncovered'
 }
 
-// 进度条颜色根据覆盖率
-const rateColor = computed(() => {
-  return '#10b981'
-})
+// 进度条颜色：计划覆盖绿色，执行验证蓝色（区分两栏语义）
+const rateColor = computed(() => '#10b981')
+const executedRateColor = computed(() => '#6366f1')
 </script>
 
 <style scoped>
@@ -179,17 +233,34 @@ const rateColor = computed(() => {
 
 .matrix-summary {
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 280px;
+}
+
+.summary-row {
+  display: flex;
   align-items: center;
-  gap: 12px;
-  min-width: 220px;
+  gap: 10px;
+}
+
+.summary-label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  width: 48px;
 }
 
 .summary-text {
   font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--brand-primary);
   white-space: nowrap;
+}
+
+.summary-text-exec {
+  color: var(--color-info);
 }
 
 .summary-progress {
@@ -229,14 +300,29 @@ const rateColor = computed(() => {
     background: var(--color-success-bg);
   }
 
+  &.is-planned {
+    color: var(--color-warning);
+    background: var(--color-warning-bg);
+  }
+
   &.is-uncovered {
     color: var(--color-danger);
     background: var(--color-danger-bg);
   }
 }
 
+.case-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .text-muted {
   color: var(--text-tertiary);
+}
+
+:deep(.row-planned-only) {
+  background-color: var(--color-warning-bg) !important;
 }
 
 :deep(.row-uncovered) {

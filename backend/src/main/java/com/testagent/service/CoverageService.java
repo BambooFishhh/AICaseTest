@@ -47,7 +47,9 @@ public class CoverageService {
 
         List<Map<String, Object>> smList = new ArrayList<>();
         int totalTransitions = 0;
-        int coveredTransitions = 0;
+        int coveredTransitions = 0;            // 旧口径：refs 计划 ∪ 已执行 smRef 兜底（向后兼容）
+        int plannedCoveredTransitions = 0;
+        int executedCoveredTransitions = 0;
 
         for (StateMachine sm : stateMachines) {
             Map<String, Object> smMap = new LinkedHashMap<>();
@@ -65,25 +67,44 @@ public class CoverageService {
                 log.warn("Failed to parse transitions for SM {}", sm.getId(), e);
             }
 
-            // 对每个 transition 检查是否被用例覆盖（双重循环内只做集合查找）
+            // v7.8(R7): 双栏口径——
+            // 计划覆盖（planned）：任一用例 coverageRefs.transitionIds 引用（不要求执行）；
+            // 执行覆盖（executed）：isExecuted 用例的 refs 引用，或其 stateMachineRef 引用；
+            // 旧单栏 covered 保持"refs 计划 ∪ 已执行 smRef 兜底"口径不变（向后兼容），
+            // 双栏才是诚实视图——用户不再把"计划覆盖 80%"当"验证过 80%"。
             for (Map<String, Object> tran : transitions) {
                 String from = tran.get("from") != null ? tran.get("from").toString() : "";
                 String to = tran.get("to") != null ? tran.get("to").toString() : "";
                 String transitionKey = from + "->" + to;
 
-                List<String> coveringIds = new ArrayList<>();
+                List<String> plannedIds = new ArrayList<>();
+                List<String> executedIds = new ArrayList<>();
+                List<String> legacyCoveringIds = new ArrayList<>();
                 for (TestCase tc : testCases) {
-                    boolean covered = refTransitionsByCase.get(tc.getId()).contains(transitionKey)
-                            || smRefTransitionsByCase.getOrDefault(tc.getId(), Set.of()).contains(transitionKey);
-                    if (covered) {
-                        coveringIds.add(tc.getId());
+                    boolean planned = refTransitionsByCase.get(tc.getId()).contains(transitionKey);
+                    boolean smRefFallback = smRefTransitionsByCase.getOrDefault(tc.getId(), Set.of()).contains(transitionKey);
+                    boolean executed = (planned && isExecuted(tc)) || smRefFallback;
+                    if (planned) {
+                        plannedIds.add(tc.getId());
+                    }
+                    if (executed) {
+                        executedIds.add(tc.getId());
+                    }
+                    if (planned || smRefFallback) {
+                        legacyCoveringIds.add(tc.getId());
                     }
                 }
 
-                tran.put("covered", !coveringIds.isEmpty());
-                tran.put("testCaseIds", coveringIds);
+                tran.put("covered", !legacyCoveringIds.isEmpty());
+                tran.put("testCaseIds", legacyCoveringIds);
+                tran.put("planned", !plannedIds.isEmpty());
+                tran.put("plannedCaseIds", plannedIds);
+                tran.put("executed", !executedIds.isEmpty());
+                tran.put("executedCaseIds", executedIds);
                 totalTransitions++;
-                if (!coveringIds.isEmpty()) coveredTransitions++;
+                if (!legacyCoveringIds.isEmpty()) coveredTransitions++;
+                if (!plannedIds.isEmpty()) plannedCoveredTransitions++;
+                if (!executedIds.isEmpty()) executedCoveredTransitions++;
             }
 
             smMap.put("transitions", transitions);
@@ -92,8 +113,13 @@ public class CoverageService {
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("totalTransitions", totalTransitions);
+        // coveredTransitions/rate 保持旧口径（向后兼容），planned/executed 为 v7.8(R7) 双栏
         summary.put("coveredTransitions", coveredTransitions);
         summary.put("rate", totalTransitions == 0 ? 0.0 : (double) coveredTransitions / totalTransitions);
+        summary.put("plannedCoveredTransitions", plannedCoveredTransitions);
+        summary.put("executedCoveredTransitions", executedCoveredTransitions);
+        summary.put("plannedRate", totalTransitions == 0 ? 0.0 : (double) plannedCoveredTransitions / totalTransitions);
+        summary.put("executedRate", totalTransitions == 0 ? 0.0 : (double) executedCoveredTransitions / totalTransitions);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("stateMachines", smList);

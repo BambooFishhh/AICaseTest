@@ -426,9 +426,14 @@
               {{ issue }}
             </div>
           </div>
+          <!-- v7.8(R1): 高置信建议已自动采纳的字段——不再出现在下方待确认列表 -->
+          <div v-if="autoAppliedLabels" class="review-auto-applied">
+            <el-tag type="success" size="small" effect="light">已自动采纳</el-tag>
+            <span>{{ autoAppliedLabels }}</span>
+          </div>
           <div v-if="hasSuggestions" class="review-suggestions">
             <div class="review-suggest-title">建议修改</div>
-            <div v-for="(val, key) in suggestedChanges" :key="key" v-show="val" class="review-suggest-item">
+            <div v-for="(val, key) in suggestedChanges" :key="key" v-show="val && !isAutoApplied(key)" class="review-suggest-item">
               <span class="review-key">{{ key }}</span>
               <span class="review-val">{{ typeof val === 'object' ? JSON.stringify(val) : val }}</span>
             </div>
@@ -441,6 +446,14 @@
             <el-button size="small" :loading="reviewing" @click="rerunAiReview">重新评审</el-button>
           </div>
         </div>
+      </section>
+
+      <!-- v7.8(R3): 模糊匹配的接口引用提示 -->
+      <section v-if="fuzzyEndpointIds.length" class="block fuzzy-endpoint-block">
+        <el-alert type="warning" :closable="false" show-icon>
+          <template #title>接口引用为模糊匹配，请人工确认</template>
+          <div class="fuzzy-endpoint-list">{{ fuzzyEndpointIds.join('　') }}</div>
+        </el-alert>
       </section>
 
       <!-- 测试数据 -->
@@ -982,6 +995,21 @@ const reviewTagType = computed(() => {
   }
   return map[aiReview.value?.status] || 'info'
 })
+
+// v7.8(R1): 高置信自动采纳展示——coverageRefs/priority 已在后端生效，待确认列表只剩其余字段
+const autoAppliedList = computed(() => aiReview.value?.autoApplied || [])
+const isAutoApplied = (key) => autoAppliedList.value.includes(key)
+const suggestionFieldLabels = {
+  coverageRefs: '覆盖引用', priority: '优先级', title: '标题', module: '模块', type: '类型'
+}
+const autoAppliedLabels = computed(() =>
+  autoAppliedList.value.map((k) => suggestionFieldLabels[k] || k).join('、')
+)
+
+// v7.8(R3): 模糊匹配的接口引用（后端 endpoint 两级匹配的 fuzzy 命中）
+const fuzzyEndpointIds = computed(() =>
+  props.testCase?.executionHints?.coverageRefs?.fuzzyEndpointIds || []
+)
 
 async function applyAiReview() {
   const s = suggestedChanges.value || {}
@@ -1526,6 +1554,26 @@ watch(() => props.visible, (val) => {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* v7.8(R1): 已自动采纳提示 */
+.review-auto-applied {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* v7.8(R3): 模糊匹配接口提示 */
+.fuzzy-endpoint-block {
+  padding-top: 0;
+}
+
+.fuzzy-endpoint-list {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  word-break: break-all;
 }
 
 /* ========== 执行提示 ========== */
