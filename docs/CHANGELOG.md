@@ -4,6 +4,65 @@
 
 ---
 
+## v7.11 — 关键缺陷修复
+**日期**: 2026-08-23
+**基线**: v7.10
+**主题**: 全量代码审查暴露的 7 项关键缺陷修复——流式错误死循环、跨项目用例 ID 撞号静默覆盖、并发执行共享浏览器互相干扰、补测循环不收敛、不可变空容器炸评审链路、排队取消状态被翻转、终态可被迟到收尾改写（对应风险清单 L14/T1/T2/E12/G21/T3/E13/E14）
+
+### 背景
+
+v7.10 收口缓冲区后对全项目做了一轮完整代码审查，新发现一批此前风险清单未覆盖的关键缺陷，按 P0/速赢分级处理。**L14** 流式 LLM 调用的 error 信号不释放 CountDownLatch——外层 `await` 轮询永不退出（线程死循环），且异常处理先查取消标志，网络错误被谎报为"用户取消生成"；**T1/T2** test_cases.id 是全局主键而编号处处按项目独立分配（生成从 TC-001 重编、导入/复制取项目内 max+1、手动创建用 size()+1）——JPA 对非 null id 的 save 走 merge，跨项目同号用例静默整行覆盖他行；**E12** Playwright MCP Server 只持有一个全局 browser/context/page，并发执行任务共享同一浏览器实例（导航抢页、录屏互串、取消一个任务全局杀浏览器）；**G21** 补测循环以 hasRemainingGaps 为续跑条件，但 componentIds/dependencyIds 缺口不随补测收敛，导致无限循环烧 token 直到手数上限；**T3** JsonHelper 空值/解析失败返回不可变 Collections.emptyMap()，调用方直接 put 补充字段抛 UnsupportedOperationException 炸掉整条评审链路；**E13** 排队任务被取消后排队超时路径仍翻转 failed 且 exec:cancel 标志不清理（内存版 RuntimeStore 永久残留）；**E14** AgentTask 收尾类操作无终态保护，CANCELLED 可被排队超时 fail()/迟到 worker succeed() 覆盖。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/LlmService.java` | 修改 | **L14**：doOnError 内 done.countDown()——error 信号必须释放 latch；errorRef 检查提前到取消判定之前（真实错误优先，不再谎报"用户取消"）；GenerationCancelledException 经 error 信号回流时语义原样透传 |
+| `service/TestCaseIdAllocator.java` | 新增 | **T1/T2**：用例 ID 全局唯一分配器——JVM 内 synchronized + AtomicInteger 缓存，首次取号冷启动加载全库 TC- 前缀最大数字后缀，此后纯内存递增（单实例部署无跨进程竞争） |
+| `service/TestCaseService.java` | 修改 | **T1/T2**：手动创建（弃 size()+1）、追加生成、JSON/XMind 导入、跨项目复制四条新建路径全部改走全局分配器，且批量路径逐条取号保证缓存与已落库编号同步推进 |
+| `agent/TestGeneratorAgent.java` | 修改 | **T1**：批内编号从 TC-001 连续重编改走全局分配器（单测未注入时回退旧编号）；**G21**：hasRemainingGaps 收敛检查收窄到 requirementIds/transitionIds/endpointIds/ruleIds 四类可收敛缺口，componentIds/dependencyIds 不再触发补测循环 |
+| `dto/JsonHelper.java` | 修改 | **T3**：parseMap/parseListMap/parseListString 空值与解析失败一律返回可变容器（LinkedHashMap/ArrayList），杜绝 UnsupportedOperationException |
+| `service/AgentTaskService.java` | 修改 | **E14**：新增 TERMINAL_STATUSES 终态集合与 skipIfTerminal 守卫——succeed/fail/cancel 遇终态任务跳过翻转并 log.warn，终态不可逆 |
+| `service/ExecutionService.java` | 修改 | **E13**：排队超时路径检查 cancelled 状态——已取消任务保持终态不再翻转 failed；runtimeStore.clearFlag 清除残留 exec:cancel 标志；**E12**：browserLaunch/stopRecording 传会话 ID，会话 ID 以 executionId 派生（exec-<executionId>），markRunningCancelled 兜底取会话 |
+| `skill/PlaywrightRecordSkill.java` | 修改 | **E12**：全部方法增加 sessionId 参数并透传 MCP Server；截图文件名带会话前缀防并发毫秒级时间戳碰撞；closeSession 只关指定会话且吞异常（收尾不中断） |
+| `playwright-mcp-server/index.js` | 修改 | **E12**：全局 browser/context/page 改为 sessions Map（sessionId → {browser, context, page}），所有工具增加 session_id 参数；browser_launch 复用已存在会话 ID 时先关旧会话；未传 session_id 走 default 会话保持向后兼容 |
+| `test/service/TestCaseIdAllocatorTest.java` | 新增 | T1/T2 5 用例：跨项目冷启动取全库 max、连续分配不重复、resetCache 重载、parseSuffix 边界 |
+| `test/skill/PlaywrightRecordSkillSessionTest.java` | 新增 | E12 6 用例：launch/navigate/screenshot/stopRecording/closeSession/getPageStatus 全链路 session_id 透传、截图文件名会话前缀、关浏览器吞异常 |
+| `test/agent/TestGeneratorAgentGapConvergenceTest.java` | 新增 | G21 5 用例：组件/依赖缺口不触发循环、四类可收敛缺口各自触发、空缺口收敛 |
+| `test/service/ExecutionServiceQueueTimeoutTest.java` | 新增 | E13 3 用例：取消终态保持、pending 超时仍 failed、残留标志清理 |
+| `test/dto/JsonHelperTest.java` | 修改 | T3 1 用例：null/空串/坏 JSON 三种输入的兜底容器均可 put/add |
+| `test/service/AgentTaskServiceTest.java` | 修改 | E14 4 用例：succeed/fail 不覆盖 CANCELLED、cancel 不覆盖 SUCCEEDED、RUNNING 正常翻转 |
+| `test/service/LlmServiceTest.java` | 修改 | L14 2 用例：流式 error 释放 latch 且如实上报真实原因（非"取消"）、取消语义经 error 信号回流原样透传 |
+
+### MCP Server 契约变化
+
+- playwright-mcp-server 全部工具新增 `session_id` 参数（字符串，缺省 `default`）：不传时行为与旧版一致（单会话），传不同 ID 即多会话隔离
+- `browser_launch` 返回值为会话 ID 文本；重复 launch 同一 ID 会先关闭旧会话再新建
+- 后端 Java 侧调用已全部携带 `exec-<executionId>` 派生会话 ID，同一执行的多次操作、并发执行的各自任务均互不干扰
+
+### API 契约变化
+
+- 无 REST 接口变更
+- **用例编号口径切换**：新创建用例（生成/追加/导入/复制/手动）的 id 为全库唯一递增（TC-001…按全库 max+1），存量项目内编号不迁移——旧数据可能出现跨项目同号（历史遗留），但不再新增撞号；跨项目同号存量行仍建议人工核对
+- Agent 任务终态（SUCCEEDED/FAILED/CANCELLED/NEEDS_REVIEW/DLQ）不可再被后续 succeed/fail/cancel 翻转
+
+### 验证结果
+
+- 后端全量 `mvn test`：353 用例全部通过（v7.11 新增 5 个测试类 19 用例 + 既有 3 类扩充 7 用例）
+- 前端 `npm run build`：BUILD SUCCESS（无代码变更，回归构建）
+- playwright-mcp-server：Node 语法校验通过，会话隔离逻辑由 Skill 侧单测覆盖参数透传
+
+### 预期影响（关键缺陷修复）
+
+- 流式生成不再挂死：LLM 上游错误（超时/网络/配额）秒级如实上报，不再出现"永远生成中"的僵死任务与"用户取消"误报（L14）
+- 数据不再静默丢失：跨项目/删号复用不再发生同号 merge 整行覆盖，用例 ID 全局唯一（T1/T2）
+- 并发执行真正可用：每个执行任务独立浏览器实例，取消/收尾只影响自身会话，录屏截图不再互串（E12）
+- 生成成本可控：组件/依赖缺口不再触发无限补测循环烧 token（G21）
+- 评审链路稳定：LLM 输出为空/畸形时评审兜底容器可写，不再整链路崩溃（T3）
+- 状态机语义诚实：取消终态不可被翻转，排队超时不再改写已取消任务，残留标志清理避免同 ID 复用受污染（E13/E14）
+
+---
+
 ## v7.10 — 缓冲区收尾
 **日期**: 2026-08-23
 **基线**: v7.9

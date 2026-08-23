@@ -48,26 +48,31 @@ public class PlaywrightRecordSkill {
 
     /**
      * 启动浏览器会话。
+     * v7.11(E12): sessionId（通常为 executionId）传入 MCP Server 做多会话隔离，
+     * 并发执行的各任务各自持有独立浏览器实例，互不干扰。
+     * @param sessionId 会话标识（executionId）
      * @param headless 是否无头模式
      * @param width    窗口宽度
      * @param height   窗口高度
-     * @return 会话 ID（固定值，Playwright 单浏览器模型）
+     * @return 会话 ID
      */
-    public String browserLaunch(boolean headless, int width, int height) {
+    public String browserLaunch(String sessionId, boolean headless, int width, int height) {
         String videoDir = resolveOutputPath("recordings");
         try {
             mcpClientManager.callTool("playwright", "browser_launch", Map.of(
+                    "session_id", sessionId,
                     "headless", headless,
                     "width", width,
                     "height", height,
                     "video_dir", videoDir
             ));
-            log.info("Playwright 浏览器已启动: headless={}, size={}x{}, videoDir={}", headless, width, height, videoDir);
+            log.info("Playwright 浏览器已启动: session={}, headless={}, size={}x{}, videoDir={}",
+                    sessionId, headless, width, height, videoDir);
         } catch (Exception e) {
             log.error("Playwright 浏览器启动失败: {}", e.getMessage());
             throw new RuntimeException("Playwright 启动失败", e);
         }
-        return "playwright-session";
+        return sessionId;
     }
 
     /**
@@ -75,8 +80,9 @@ public class PlaywrightRecordSkill {
      */
     public void browserNavigate(String sessionId, String url) {
         try {
-            mcpClientManager.callTool("playwright", "browser_navigate", Map.of("url", url));
-            log.info("导航完成: url={}", url);
+            mcpClientManager.callTool("playwright", "browser_navigate",
+                    Map.of("session_id", sessionId, "url", url));
+            log.info("导航完成: session={}, url={}", sessionId, url);
         } catch (Exception e) {
             log.error("导航失败: url={}, error={}", url, e.getMessage());
             throw new RuntimeException("导航失败", e);
@@ -85,14 +91,15 @@ public class PlaywrightRecordSkill {
 
     /**
      * 截图并保存到本地文件。
+     * v7.11(E12): 文件名带会话前缀，防止并发执行毫秒级时间戳碰撞互相覆盖。
      * @return 截图文件路径
      */
     public String takeScreenshot(String sessionId) {
         String screenshotPath = resolveOutputPath(
-                "screenshots/" + System.currentTimeMillis() + ".png");
+                "screenshots/" + sessionId + "-" + System.currentTimeMillis() + ".png");
         try {
             mcpClientManager.callTool("playwright", "browser_take_screenshot",
-                    Map.of("path", screenshotPath));
+                    Map.of("session_id", sessionId, "path", screenshotPath));
             log.info("截图已保存: path={}", screenshotPath);
             return screenshotPath;
         } catch (Exception e) {
@@ -125,7 +132,7 @@ public class PlaywrightRecordSkill {
     public void visualClick(String sessionId, int x, int y) {
         try {
             mcpClientManager.callTool("playwright", "browser_visual_click",
-                    Map.of("x", x, "y", y));
+                    Map.of("session_id", sessionId, "x", x, "y", y));
             log.info("视觉点击完成: ({}, {})", x, y);
         } catch (Exception e) {
             log.error("视觉点击失败: ({}, {}), error={}", x, y, e.getMessage());
@@ -142,7 +149,7 @@ public class PlaywrightRecordSkill {
         String cssSelector = buildCssSelector(selectorType, selectorValue);
         try {
             String response = mcpClientManager.callTool("playwright", "browser_dom_click",
-                    Map.of("selector", cssSelector));
+                    Map.of("session_id", sessionId, "selector", cssSelector));
             int[] position = parseClickPosition(response);
             log.info("DOM 点击完成: {}={}, position={}", selectorType, selectorValue,
                     position == null ? "unknown" : position[0] + "," + position[1]);
@@ -158,7 +165,8 @@ public class PlaywrightRecordSkill {
         String cssSelector = buildCssSelector(selectorType, selectorValue);
         try {
             String response = mcpClientManager.callTool("playwright", "browser_fill",
-                    Map.of("selector", cssSelector, "value", value == null ? "" : value));
+                    Map.of("session_id", sessionId, "selector", cssSelector,
+                            "value", value == null ? "" : value));
             int[] position = parseClickPosition(response);
             log.info("输入完成: {}={}, position={}", selectorType, selectorValue,
                     position == null ? "unknown" : position[0] + "," + position[1]);
@@ -173,7 +181,7 @@ public class PlaywrightRecordSkill {
     public void pressKey(String sessionId, String key) {
         try {
             mcpClientManager.callTool("playwright", "browser_key_press",
-                    Map.of("key", key == null ? "Enter" : key));
+                    Map.of("session_id", sessionId, "key", key == null ? "Enter" : key));
             log.info("按键完成: {}", key);
         } catch (Exception e) {
             log.error("按键失败: key={}, error={}", key, e.getMessage());
@@ -185,6 +193,7 @@ public class PlaywrightRecordSkill {
     public void scroll(String sessionId, String direction, Integer amount) {
         try {
             Map<String, Object> args = new HashMap<>();
+            args.put("session_id", sessionId);
             args.put("direction", direction == null ? "down" : direction);
             if (amount != null && amount > 0) {
                 args.put("amount", amount);
@@ -201,7 +210,7 @@ public class PlaywrightRecordSkill {
     public void addCookies(String sessionId, List<Map<String, Object>> cookies) {
         try {
             mcpClientManager.callTool("playwright", "browser_add_cookies",
-                    Map.of("cookies", cookies == null ? List.of() : cookies));
+                    Map.of("session_id", sessionId, "cookies", cookies == null ? List.of() : cookies));
             log.info("注入 Cookie 数量: {}", cookies == null ? 0 : cookies.size());
         } catch (Exception e) {
             log.error("注入 Cookie 失败: {}", e.getMessage());
@@ -215,7 +224,8 @@ public class PlaywrightRecordSkill {
      */
     public Map<String, String> getPageStatus(String sessionId) {
         try {
-            String response = mcpClientManager.callTool("playwright", "browser_get_page_status", new HashMap<>());
+            String response = mcpClientManager.callTool("playwright", "browser_get_page_status",
+                    Map.of("session_id", sessionId));
             @SuppressWarnings("unchecked")
             Map<String, String> status = objectMapper.readValue(response, Map.class);
             log.info("获取页面状态: url={}", status.get("url"));
@@ -235,18 +245,20 @@ public class PlaywrightRecordSkill {
 
     /**
      * 停止录屏并保存视频文件。
+     * v7.11(E12): 按会话保存——只终结指定会话的浏览器，并发任务互不影响。
+     * @param sessionId 会话标识（executionId）
      * @param filename 视频保存路径（.webm）
      * @return 视频文件路径
      */
-    public String stopRecording(String filename) {
+    public String stopRecording(String sessionId, String filename) {
         try {
             String savePath = resolveOutputPath(filename);
             String videoPath = mcpClientManager.callTool("playwright", "browser_video_save",
-                    Map.of("filename", savePath));
-            log.info("录屏视频已保存: path={}", savePath);
+                    Map.of("session_id", sessionId, "filename", savePath));
+            log.info("录屏视频已保存: session={}, path={}", sessionId, savePath);
             return videoPath;
         } catch (Exception e) {
-            log.error("保存录屏失败: {}", e.getMessage());
+            log.error("保存录屏失败: session={}, error={}", sessionId, e.getMessage());
             throw new RuntimeException("保存录屏失败", e);
         }
     }
@@ -281,13 +293,15 @@ public class PlaywrightRecordSkill {
 
     /**
      * 关闭浏览器。
+     * v7.11(E12): 只关闭指定会话——取消/收尾某任务不再全局杀浏览器，并发任务互不影响。
      */
     public void closeSession(String sessionId) {
         try {
-            mcpClientManager.callTool("playwright", "browser_close", new HashMap<>());
-            log.info("Playwright 浏览器已关闭");
+            mcpClientManager.callTool("playwright", "browser_close",
+                    Map.of("session_id", sessionId));
+            log.info("Playwright 浏览器已关闭: session={}", sessionId);
         } catch (Exception e) {
-            log.error("关闭浏览器失败: {}", e.getMessage());
+            log.error("关闭浏览器失败: session={}, error={}", sessionId, e.getMessage());
         }
     }
 

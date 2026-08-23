@@ -46,6 +46,12 @@ public class AgentTaskService {
     public static final String STATUS_NEEDS_REVIEW = "NEEDS_REVIEW";
     public static final String STATUS_DLQ = "DLQ";
 
+    // v7.11(E14): 终态集合——收尾类操作（succeed/fail/cancel 等）遇终态跳过，
+    // 防止 CANCELLED 被排队超时 fail()/迟到 worker succeed() 覆盖
+    private static final java.util.Set<String> TERMINAL_STATUSES =
+            java.util.Set.of(STATUS_SUCCEEDED, STATUS_FAILED, STATUS_CANCELLED,
+                    STATUS_NEEDS_REVIEW, STATUS_DLQ);
+
     @Autowired
     private AgentTaskRepository agentTaskRepository;
 
@@ -158,6 +164,9 @@ public class AgentTaskService {
 
     public void succeed(String taskId) {
         update(taskId, task -> {
+            if (skipIfTerminal(task, STATUS_SUCCEEDED)) {
+                return;
+            }
             task.setStatus(STATUS_SUCCEEDED);
             task.setPhase("completed");
             task.setEndedAt(LocalDateTime.now());
@@ -168,17 +177,32 @@ public class AgentTaskService {
     }
 
     public void fail(String taskId, String errorCode, String errorMessage) {
-        update(taskId, task -> finishFailure(task, STATUS_FAILED, errorCode, errorMessage));
+        update(taskId, task -> {
+            if (skipIfTerminal(task, STATUS_FAILED)) {
+                return;
+            }
+            finishFailure(task, STATUS_FAILED, errorCode, errorMessage);
+        });
         metric("aicasetest.task.failed");
     }
 
     public void cancel(String taskId) {
-        update(taskId, task -> finishFailure(task, STATUS_CANCELLED, "USER_CANCELLED",
-                "用户取消任务"));
+        update(taskId, task -> {
+            if (skipIfTerminal(task, STATUS_CANCELLED)) {
+                return;
+            }
+            finishFailure(task, STATUS_CANCELLED, "USER_CANCELLED",
+                    "用户取消任务");
+        });
     }
 
     public void markNeedsReview(String taskId, String errorCode, String errorMessage) {
-        update(taskId, task -> finishFailure(task, STATUS_NEEDS_REVIEW, errorCode, errorMessage));
+        update(taskId, task -> {
+            if (skipIfTerminal(task, STATUS_NEEDS_REVIEW)) {
+                return;
+            }
+            finishFailure(task, STATUS_NEEDS_REVIEW, errorCode, errorMessage);
+        });
     }
 
     /**
@@ -195,8 +219,26 @@ public class AgentTaskService {
     }
 
     public void markDlq(String taskId, String errorCode, String errorMessage) {
-        update(taskId, task -> finishFailure(task, STATUS_DLQ, errorCode, errorMessage));
+        update(taskId, task -> {
+            if (skipIfTerminal(task, STATUS_DLQ)) {
+                return;
+            }
+            finishFailure(task, STATUS_DLQ, errorCode, errorMessage);
+        });
         metric("aicasetest.task.dlq_total");
+    }
+
+    /**
+     * v7.11(E14): 任务已处终态时跳过翻转（幂等目标态除外），返回 true 表示跳过。
+     * requeue（管理员显式重试）不受此保护。
+     */
+    private boolean skipIfTerminal(AgentTask task, String targetStatus) {
+        String current = task.getStatus();
+        if (current != null && TERMINAL_STATUSES.contains(current) && !current.equals(targetStatus)) {
+            log.warn("Agent task {} 已是终态 {}，跳过翻转为 {}", task.getId(), current, targetStatus);
+            return true;
+        }
+        return false;
     }
 
     public void requeue(String taskId) {

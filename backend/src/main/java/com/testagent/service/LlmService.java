@@ -282,7 +282,12 @@ public class LlmService {
                     if (usage != null) {
                         usageRef.set(usage);
                     }
-                }).doOnError(errorRef::set)
+                // v7.11(L14): error 信号必须同时释放 latch——Reactor 的 error 不触发
+                // doOnComplete/doOnCancel，否则流中断时外层 await 轮询永不退出（线程死循环）
+                }).doOnError(error -> {
+                    errorRef.set(error);
+                    done.countDown();
+                })
                   .doOnComplete(done::countDown)
                   .doOnCancel(done::countDown)
                   .subscribe();
@@ -300,12 +305,18 @@ public class LlmService {
                     }
                 }
 
-                if (cancelSignal != null && cancelSignal.getAsBoolean()) {
-                    throw new GenerationCancelledException("用户取消生成");
-                }
+                // v7.11(L14): errorRef 检查提前——真实错误优先于取消判定，
+                // 防止网络错误被谎报为"用户取消"；doOnNext 内取消异常经 error 信号回流时
+                // 保持 GenerationCancelledException 语义原样透传
                 Throwable error = errorRef.get();
+                if (error instanceof GenerationCancelledException gce) {
+                    throw gce;
+                }
                 if (error != null) {
                     throw new RuntimeException(error);
+                }
+                if (cancelSignal != null && cancelSignal.getAsBoolean()) {
+                    throw new GenerationCancelledException("用户取消生成");
                 }
 
                 long elapsed = System.currentTimeMillis() - start;

@@ -184,4 +184,55 @@ class AgentTaskServiceTest {
 
         assertTrue(service.claimQueued("task-1"));
     }
+
+    // ==================== v7.11(E14): 终态保护 ====================
+    // 背景：排队任务被取消（CANCELLED）后，排队超时 fail()/迟到 worker succeed()
+    // 仍可翻转终态，导致前端状态来回跳变、已收尾的任务被二次改写。
+
+    @Test
+    void succeedDoesNotOverwriteCancelled() {
+        AgentTask cancelled = taskWithStatus(AgentTaskService.STATUS_CANCELLED);
+
+        service.succeed("task-1");
+
+        assertEquals(AgentTaskService.STATUS_CANCELLED, cancelled.getStatus());
+    }
+
+    @Test
+    void failDoesNotOverwriteCancelled() {
+        AgentTask cancelled = taskWithStatus(AgentTaskService.STATUS_CANCELLED);
+
+        service.fail("task-1", "QUEUE_TIMEOUT", "项目执行并发排队超时");
+
+        // E14 核心回归：排队超时不得把已取消任务翻转为 FAILED
+        assertEquals(AgentTaskService.STATUS_CANCELLED, cancelled.getStatus());
+        assertNull(cancelled.getErrorCode());
+    }
+
+    @Test
+    void cancelDoesNotOverwriteSucceeded() {
+        AgentTask done = taskWithStatus(AgentTaskService.STATUS_SUCCEEDED);
+
+        service.cancel("task-1");
+
+        assertEquals(AgentTaskService.STATUS_SUCCEEDED, done.getStatus());
+    }
+
+    @Test
+    void succeedStillWorksForRunningTask() {
+        AgentTask running = taskWithStatus(AgentTaskService.STATUS_RUNNING);
+
+        service.succeed("task-1");
+
+        assertEquals(AgentTaskService.STATUS_SUCCEEDED, running.getStatus());
+        assertEquals("completed", running.getPhase());
+    }
+
+    private AgentTask taskWithStatus(String status) {
+        AgentTask task = new AgentTask();
+        task.setId("task-1");
+        task.setStatus(status);
+        when(repository.findById("task-1")).thenReturn(Optional.of(task));
+        return task;
+    }
 }

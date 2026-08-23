@@ -286,7 +286,8 @@ public class ExecutionService {
         }
         log.warn("Execution {} queue timeout ({} minutes) for project {}", executionId, projectAcquireTimeoutMinutes, projectId);
         ExecutionRecord record = executionRecordRepository.findById(executionId).orElse(null);
-        if (record != null) {
+        // v7.11(E13): 排队期间被用户取消的任务保持 cancelled 终态，不再翻转成 failed
+        if (record != null && !"cancelled".equals(record.getStatus())) {
             record.setStatus("failed");
             record.setEndTime(LocalDateTime.now());
             record.setSummary("项目执行并发排队超时");
@@ -303,6 +304,9 @@ public class ExecutionService {
             log.warn("Failed to fail agent task {}: {}", executionId, e.getMessage());
         }
         runtimeStore.removeHeartbeat(executionId);
+        // v7.11(E13): 清除取消标志——取消分支（cancelExecution/cancelBatch pending 路径）
+        // 已置标志且本方法即将返回 false，标志若不清理会在内存版 RuntimeStore 永久残留
+        runtimeStore.clearFlag("exec:cancel:" + executionId);
         return false;
     }
 
@@ -478,7 +482,8 @@ public class ExecutionService {
 
         try {
             // 1. 启动浏览器（Playwright 自动开始录屏）
-            sessionId = playwrightSkill.browserLaunch(true, 1280, 800);
+            // v7.11(E12): 以 executionId 派生会话 ID，多次执行/并发执行互不干扰
+            sessionId = playwrightSkill.browserLaunch("exec-" + executionId, true, 1280, 800);
             runtimeStore.putSession(executionId, sessionId);
             agentTaskService.checkpoint(executionId, "browser_launch", null);
             // 注入项目级登录 Cookie，跳过登录界面
@@ -542,7 +547,7 @@ public class ExecutionService {
             // v2.8: 停止录屏，保存 WebM 视频
             try {
                 videoPath = "outputs/recordings/" + executionId + "/video.webm";
-                playwrightSkill.stopRecording(videoPath);
+                playwrightSkill.stopRecording(sessionId, videoPath);  // v7.11(E12): 指定会话
             } catch (Exception e) { log.warn("Failed to save recording video", e); }
             // 关闭浏览器
             if (sessionId != null) {
@@ -692,7 +697,8 @@ public class ExecutionService {
 
         try {
             // 1. 启动浏览器（Playwright 自动开始录屏）
-            sessionId = playwrightSkill.browserLaunch(true, 1280, 800);
+            // v7.11(E12): 以 executionId 派生会话 ID，多次执行/并发执行互不干扰
+            sessionId = playwrightSkill.browserLaunch("exec-" + executionId, true, 1280, 800);
             runtimeStore.putSession(executionId, sessionId);
             agentTaskService.checkpoint(executionId, "browser_launch", null);
             // 注入项目级登录 Cookie，跳过登录界面
@@ -869,7 +875,7 @@ public class ExecutionService {
             // v2.8: 停止录屏，保存 WebM 视频
             try {
                 videoPath = "outputs/recordings/" + executionId + "/video.webm";
-                playwrightSkill.stopRecording(videoPath);
+                playwrightSkill.stopRecording(sessionId, videoPath);  // v7.11(E12): 指定会话
             } catch (Exception e) { log.warn("Failed to save recording video", e); }
             // 关闭浏览器
             if (sessionId != null) {
@@ -1153,13 +1159,17 @@ public class ExecutionService {
     private void markRunningCancelled(String executionId) {
         RuntimeFlag flag = runtimeStore.newFlag("exec:cancel:" + executionId);
         flag.cancel();
+        // v7.11(E12): 会话 ID 与 executionId 一一对应（exec-<executionId>），兜底用 runtimeStore
+        String sessionId = runtimeStore.getSession(executionId);
+        if (sessionId == null) {
+            sessionId = "exec-" + executionId;
+        }
         // v6.0: 取消时先保存录像，避免浏览器提前关闭导致 WebM 丢失
         try {
-            playwrightSkill.stopRecording("outputs/recordings/" + executionId + "/video.webm");
+            playwrightSkill.stopRecording(sessionId, "outputs/recordings/" + executionId + "/video.webm");
         } catch (Exception e) {
             log.warn("Failed to save recording for cancelled execution {}", executionId, e);
         }
-        String sessionId = runtimeStore.getSession(executionId);
         if (sessionId != null) {
             try {
                 playwrightSkill.closeSession(sessionId);

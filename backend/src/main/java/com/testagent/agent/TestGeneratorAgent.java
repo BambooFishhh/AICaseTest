@@ -486,6 +486,11 @@ public class TestGeneratorAgent {
     @Autowired
     private SemanticService semanticService;
 
+    // v7.11(T1): 用例 ID 全局唯一分配器——生成的批内编号从 TC-001 连续重编改为
+    // 全库唯一递增，防止跨项目 merge 覆盖（详见风险清单 T1）
+    @Autowired
+    private com.testagent.service.TestCaseIdAllocator idAllocator;
+
     // ==================== v3.4: 动态 prompt + temperature 参数化 ====================
 
     // v3.4: 根据 caseDensity 拼接 PRD 驱动的"以需求为纲"段
@@ -810,9 +815,15 @@ public class TestGeneratorAgent {
         result = semanticService.deduplicateBatch(result);
         r.semanticDropped = beforeSemantic - result.size();
 
+        // v7.11(T1): 批内编号改走全局唯一分配器（原 TC-001 起连续编号会与
+        // 其他项目存量用例跨库撞号，JPA merge 静默覆盖）；单测未注入分配器时回退旧编号
         int counter = 1;
         for (TestCase tc : result) {
-            tc.setId(String.format("TC-%03d", counter++));
+            if (idAllocator != null) {
+                tc.setId(idAllocator.nextId());
+            } else {
+                tc.setId(String.format("TC-%03d", counter++));
+            }
             tc.setCreatedAt(LocalDateTime.now());
         }
         r.finalCount = result.size();
@@ -1245,12 +1256,15 @@ public class TestGeneratorAgent {
         return parseTestCases(json, null);
     }
 
+    // v7.11(G21): componentIds/dependencyIds 不参与收敛判定——用例侧 coverageRefs
+    // 按约定只有 4 类 key，组件/依赖缺口无消减通道（恒为缺口），若纳入判定会导致
+    // 多轮循环永不收敛（烧满 maxRounds 且 roundsNotConverged 恒误报降级）。
+    // 这两类保留在 gaps 中作为参考清单供 LLM 提示，但从"可验证覆盖项"降级为"参考上下文"。
     private boolean hasRemainingGaps(Map<String, Object> gaps) {
         if (gaps == null) {
             return false;
         }
-        for (String key : List.of("requirementIds", "transitionIds", "endpointIds", "ruleIds",
-                "componentIds", "dependencyIds")) {
+        for (String key : List.of("requirementIds", "transitionIds", "endpointIds", "ruleIds")) {
             Object value = gaps.get(key);
             if (value instanceof List<?> list && !list.isEmpty()) {
                 return true;

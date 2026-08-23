@@ -126,6 +126,10 @@ public class TestCaseService {
     @Autowired
     private TestGeneratorAgent testGeneratorAgent;
 
+    // v7.11(T1/T2): 用例 ID 全局唯一分配器
+    @Autowired
+    private TestCaseIdAllocator idAllocator;
+
     @Autowired
     private TestCaseReviewAgent testCaseReviewAgent;
 
@@ -497,10 +501,9 @@ public class TestCaseService {
                 if (!isDup) toAppend.add(newTc);
             }
 
-            // 3. 续号保存
-            int startNo = nextTestCaseNumber(projectId);
+            // 3. 续号保存（v7.11(T1): 逐条走全局分配器，缓存随批量同步推进）
             for (TestCase tc : toAppend) {
-                tc.setId(String.format("TC-%03d", startNo++));
+                tc.setId(idAllocator.nextId());
                 tc.setProjectId(projectId);
                 tc.setCreatedAt(LocalDateTime.now());
                 testCaseRepository.save(tc);
@@ -965,7 +968,6 @@ public class TestCaseService {
             throw BusinessException.invalidParam("JSON 解析失败: " + e.getMessage());
         }
 
-        int startNo = nextTestCaseNumber(projectId);
         int imported = 0;
         List<TestCase> importedCases = new ArrayList<>();
         for (TestCase tc : parsed) {
@@ -973,7 +975,8 @@ public class TestCaseService {
             if (tc.getTitle() == null || tc.getTitle().isBlank()) {
                 continue;
             }
-            tc.setId(String.format("TC-%03d", startNo++));
+            // v7.11(T1): 逐条走全局分配器
+            tc.setId(idAllocator.nextId());
             tc.setProjectId(projectId);
             tc.setSource("imported");
             tc.setCreatedAt(LocalDateTime.now());
@@ -1008,7 +1011,6 @@ public class TestCaseService {
             throw BusinessException.invalidParam("XMind 解析失败: " + e.getMessage());
         }
 
-        int startNo = nextTestCaseNumber(projectId);
         int imported = 0;
         List<TestCase> importedCases = new ArrayList<>();
         // v3.16: 跳过明细（标题为空等原因）
@@ -1020,7 +1022,8 @@ public class TestCaseService {
                         "reason", "标题为空"));
                 continue;
             }
-            tc.setId(String.format("TC-%03d", startNo++));
+            // v7.11(T1): 逐条走全局分配器
+            tc.setId(idAllocator.nextId());
             tc.setProjectId(projectId);
             tc.setSource("xmind_import");
             tc.setCreatedAt(LocalDateTime.now());
@@ -1056,12 +1059,12 @@ public class TestCaseService {
                 .filter(tc -> ids != null && ids.contains(tc.getId()))
                 .collect(Collectors.toList());
 
-        int startNo = nextTestCaseNumber(targetProjectId);
         int copied = 0;
         List<TestCase> copiedCases = new ArrayList<>();
         for (TestCase tc : selected) {
             TestCase copy = cloneTestCase(tc);
-            copy.setId(String.format("TC-%03d", startNo++));
+            // v7.11(T1): 逐条走全局分配器
+            copy.setId(idAllocator.nextId());
             copy.setProjectId(targetProjectId);
             copy.setSource("copied");
             copy.setCreatedAt(LocalDateTime.now());
@@ -1077,20 +1080,8 @@ public class TestCaseService {
         return result;
     }
 
-    private int nextTestCaseNumber(String projectId) {
-        List<TestCase> existing = testCaseRepository.findByProjectId(projectId);
-        return existing.stream()
-                .map(TestCase::getId)
-                .filter(id -> id != null && id.startsWith("TC-"))
-                .mapToInt(id -> {
-                    try {
-                        return Integer.parseInt(id.substring(3));
-                    } catch (Exception e) {
-                        return 0;
-                    }
-                })
-                .max().orElse(0) + 1;
-    }
+    // v7.11(T1): 取号口径从"项目内 max+1"改为"全库 max+1"（TestCaseIdAllocator），
+    // 且所有批量路径逐条取号，保证分配器缓存与已落库编号同步推进。
 
     private TestCase parseTestCaseFromJson(JsonNode node) {
         TestCase tc = new TestCase();
@@ -1194,10 +1185,9 @@ public class TestCaseService {
         tc.setReviewStatus("draft");
         tc.setCreatedAt(LocalDateTime.now());
 
-        // 分配编号: TC-{当前最大编号+1}
-        List<TestCase> existing = testCaseRepository.findByProjectId(projectId);
-        int nextNum = existing.size() + 1;
-        tc.setId(String.format("TC-%03d", nextNum));
+        // v7.11(T2): 弃用 size()+1（删除中间用例后会与现存同号用例 merge 静默覆盖），
+        // 统一走全局唯一分配器
+        tc.setId(idAllocator.nextId());
 
         testCaseRepository.save(tc);
         // v5.6: 手工创建用例同步语义索引

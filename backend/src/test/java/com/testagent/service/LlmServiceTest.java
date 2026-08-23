@@ -1,6 +1,7 @@
 package com.testagent.service;
 
 import com.testagent.common.BusinessException;
+import com.testagent.common.GenerationCancelledException;
 import com.testagent.dto.LlmCallResult;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
@@ -188,5 +189,38 @@ class LlmServiceTest {
 
         assertEquals("success", result.get("status"));
         assertTrue((Boolean) result.get("springAiChatModel"));
+    }
+
+    // ==================== v7.11(L14): 流式错误处理 ====================
+    // 背景：error 信号不释放 latch → 外层 await 轮询死循环（线程挂死）；
+    // 且 catch 块先查取消标志，真实网络错误被谎报为"用户取消生成"。
+
+    @Test
+    void streamingErrorReleasesLatchAndReportsRealCause() {
+        setUpSuccessChain(response("x", 1, 1, 2));
+        when(streamSpec.chatResponse())
+                .thenReturn(Flux.error(new RuntimeException("network broken")));
+        ReflectionTestUtils.setField(llmService, "maxRetries", 1);
+
+        long start = System.currentTimeMillis();
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> llmService.chatStreaming("sys", "user", 0.4, c -> { }));
+        long elapsed = System.currentTimeMillis() - start;
+
+        // L14 回归点 1：如实上报真实错误，不得谎报为用户取消
+        assertTrue(ex.getMessage().contains("network broken"), ex.getMessage());
+        assertFalse(ex.getMessage().contains("取消"), ex.getMessage());
+        // L14 回归点 2：latch 被 error 信号释放，没有陷入 await 死循环
+        assertTrue(elapsed < 5000, "应在 5 秒内失败，实际耗时 " + elapsed + "ms");
+        verify(telemetryService, never()).recordLlmCall(any());
+    }
+
+    @Test
+    void streamingCancellationStillPreserved() {
+        setUpSuccessChain(response("streaming", 1, 1, 2));
+
+        // doOnNext 内取消异常经 error 信号回流时，GenerationCancelledException 语义原样透传
+        assertThrows(GenerationCancelledException.class,
+                () -> llmService.chatStreaming("sys", "user", 0.4, c -> { }, () -> true));
     }
 }
