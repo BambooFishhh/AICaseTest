@@ -29,8 +29,6 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 
@@ -708,15 +706,16 @@ public class ExecutionService {
                                 Map<String, String> pageState = playwrightSkill.getPageStatus(sessionId);
                                 String expected = node.path("expected").asText("");
                                 // v7.0(E4): 状态断言诚实化——此前无条件 passed 是假通过
+                                // v7.6(L6): 三层断言——URL/标题 → DOM 文本(textSnippet) → skipped
                                 String verdict = assertExpected(expected, pageState);
                                 stepBuilder.strategy("manual")
                                         .result(verdict)
-                                        .coordinates("url=" + pageState.get("url"));
+                                        .coordinates("url=" + pageState.getOrDefault("url", "")
+                                                + ", 页面文本=" + ExecutionAssert.snippetSummary(pageState));
                                 switch (verdict) {
                                     case "passed" -> passed++;
                                     case "failed" -> {
-                                        stepBuilder.error("断言不匹配: 期望[" + expected + "] 实际[url="
-                                                + pageState.get("url") + ", title=" + pageState.get("title") + "]");
+                                        stepBuilder.error(ExecutionAssert.describe(expected, pageState));
                                         failed++;
                                     }
                                     default -> {
@@ -1040,54 +1039,12 @@ public class ExecutionService {
         return runtimeStore.isFlagSet("exec:cancel:" + executionId);
     }
 
-    // ==================== v7.0(E4): state_assert 最小诚实断言 ====================
-
-    /** URL/标题语义触发词：expected 中出现这些词才尝试与页面 url/title 比较 */
-    private static final Pattern ASSERT_URLISH = Pattern.compile("(?i)(url|地址|标题|title|页面显示|跳转到|显示)");
-
-    /** 可比较片段：英文/斜杠开头的标识符（>=3 字符），如 /order/list、Dashboard、login */
-    private static final Pattern ASSERT_TOKEN = Pattern.compile("[/a-zA-Z][a-zA-Z0-9/_.-]{2,}");
-
-    /** 触发词与通用虚词，不参与比较 */
-    private static final Set<String> ASSERT_STOPWORDS = Set.of("url", "http", "https", "www", "com", "cn",
-            "and", "or", "the", "of", "to", "page", "title", "spa");
-
-    /**
-     * v7.0(E4): state_assert 最小诚实断言。
-     * 仅当 expected 含 URL/标题语义（如"URL 包含 /order/list""标题显示 Dashboard"）时，
-     * 提取英文片段与页面 url+title 做包含比较：全部命中 → passed；有关键词未命中 → failed；
-     * 无语义触发词（API 形态如 status=XXX）或提取不到可比片段 → skipped（未验证，不误报失败）。
-     */
+    // ==================== v7.0(E4)/v7.6(L6): state_assert 断言 ====================
+    // v7.6(L6): 断言逻辑移至共享工具 ExecutionAssert（程序化/Agent 两模式共用），
+    // 并新增层 2 DOM 文本断言（expected 关键词与 textSnippet 包含比较）。
+    // 委托方法保留包内可见性以兼容既有测试。
     static String assertExpected(String expected, Map<String, String> pageState) {
-        if (expected == null || expected.isBlank()) {
-            return "skipped";
-        }
-        if (!ASSERT_URLISH.matcher(expected).find()) {
-            return "skipped";  // API 形态/纯语义描述，UI 层暂无法验证
-        }
-        if (pageState == null) {
-            return "skipped";  // 页面状态读取失败时不误报失败
-        }
-        String url = pageState == null ? "" : pageState.getOrDefault("url", "");
-        String title = pageState == null ? "" : pageState.getOrDefault("title", "");
-        String pageText = (url + " " + title).toLowerCase();
-        List<String> keywords = new ArrayList<>();
-        Matcher m = ASSERT_TOKEN.matcher(expected);
-        while (m.find()) {
-            String kw = m.group().toLowerCase();
-            if (!ASSERT_STOPWORDS.contains(kw)) {
-                keywords.add(kw);
-            }
-        }
-        if (keywords.isEmpty()) {
-            return "skipped";  // 如"URL 跳转首页"（中文目标，url/title 无法机械比较）
-        }
-        for (String kw : keywords) {
-            if (!pageText.contains(kw)) {
-                return "failed";
-            }
-        }
-        return "passed";
+        return ExecutionAssert.assertExpected(expected, pageState);
     }
 
     // 标记运行中任务取消，并强制关闭其浏览器会话（让当前步骤尽快失败）

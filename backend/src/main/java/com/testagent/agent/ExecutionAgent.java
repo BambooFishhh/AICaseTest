@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.testagent.dto.LocateResult;
 import com.testagent.entity.ExecutionStep;
 import com.testagent.runtime.RuntimeStore;
+import com.testagent.service.ExecutionAssert;
 import com.testagent.service.LlmService;
 import com.testagent.service.McpBridgeService;
 import com.testagent.skill.PlaywrightRecordSkill;
@@ -68,6 +69,24 @@ public class ExecutionAgent {
         int clickX = 0, clickY = 0;  // v2.5: 记录视觉点击坐标用于截图标注
 
         try {
+            // v7.6(E5): 按步骤类型分流——state_assert/api_call 此前掉进"找元素→截图→定位→点击"
+            // 流水线，验证步骤可能随机点中页面元素（描述撞上删除按钮即生产事故）。
+            String stepType = step.path("type").asText("");
+            if ("state_assert".equals(stepType)) {
+                return executeStateAssert(sessionId, step, stepIndex, executionId, action, target);
+            }
+            if ("api_call".equals(stepType)) {
+                return ExecutionStep.builder()
+                        .id(UUID.randomUUID().toString().substring(0, 8))
+                        .executionId(executionId)
+                        .stepIndex(stepIndex)
+                        .action(action)
+                        .target(target)
+                        .strategy("skip")
+                        .result("skipped")
+                        .error("Agent 模式暂不支持 API 调用步骤")
+                        .build();
+            }
             if ("input".equals(step.path("type").asText())) {
                 JsonNode selector = step.path("uiSelector");
                 String inputValue = step.path("inputValue").asText(step.path("value").asText(""));
@@ -258,6 +277,58 @@ public class ExecutionAgent {
     }
 
     // ==================== 辅助方法 ====================
+
+    /**
+     * v7.6(E5/L6): state_assert 步骤——读页面状态 + 共享断言（与程序化模式一致），
+     * 不进"找元素→截图→定位→点击"流水线，避免验证步骤随机点中页面元素。
+     * 保留一张操作后截图作为证据（无点击坐标标注）。
+     */
+    private ExecutionStep executeStateAssert(String sessionId, JsonNode step, int stepIndex,
+                                             String executionId, String action, String target) {
+        String expected = step.path("expected").asText("");
+        Map<String, String> pageState;
+        try {
+            pageState = playwrightSkill.getPageStatus(sessionId);
+        } catch (Exception e) {
+            log.warn("state_assert getPageStatus failed: {}", e.getMessage());
+            return ExecutionStep.builder()
+                    .id(UUID.randomUUID().toString().substring(0, 8))
+                    .executionId(executionId)
+                    .stepIndex(stepIndex)
+                    .action(action)
+                    .target(target)
+                    .strategy("assert")
+                    .result("skipped")
+                    .error("页面状态读取失败: " + e.getMessage())
+                    .build();
+        }
+        touchHeartbeat(executionId);
+        String verdict = ExecutionAssert.assertExpected(expected, pageState);
+        String error = switch (verdict) {
+            case "failed" -> ExecutionAssert.describe(expected, pageState);
+            case "skipped" -> "UI 层暂无法验证: " + expected;
+            default -> null;
+        };
+        String screenshotAfter = null;
+        try {
+            screenshotAfter = playwrightSkill.takeScreenshot(sessionId);
+        } catch (Exception e) {
+            log.debug("state_assert screenshot failed: {}", e.getMessage());
+        }
+        return ExecutionStep.builder()
+                .id(UUID.randomUUID().toString().substring(0, 8))
+                .executionId(executionId)
+                .stepIndex(stepIndex)
+                .action(action)
+                .target(target)
+                .strategy("assert")
+                .result(verdict)
+                .screenshotAfter(screenshotAfter)
+                .coordinates("url=" + pageState.getOrDefault("url", "")
+                        + ", 页面文本=" + ExecutionAssert.snippetSummary(pageState))
+                .error(error)
+                .build();
+    }
 
     /**
      * LLM 生成元素查找描述。

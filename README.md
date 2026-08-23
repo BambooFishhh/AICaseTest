@@ -176,8 +176,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v7.5（缓存与可复现基线）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v7.6（状态机与断言闭环）**，生产线基线为 vP5（压测与容量）。
 
+- v7.6 要点：闭环可信——状态机转换 ground truth 校验（A17，JavaParser 扫描源码状态赋值点提取"转换来源→目标"证据，LLM 推断的 transition 与证据比对：匹配标 `verified`、编造的标 `unverified` 且 confidence 压降到 ≤0.4，"状态转换覆盖率"不再建立在无差别信任上）；expected 三层断言（L6，程序化/Agent 两模式共用 `ExecutionAssert`：URL/标题语义 → DOM 文本断言（中文短语剥叙述前后缀 + 3-gram 滑窗匹配，toast 文案"删除成功"可断言）→ 无法验证诚实标 skipped，断言失败步骤记 failed 并带期望/实际差异）；Agent 模式步骤类型分流（E5，`state_assert` 走 getPageStatus+断言+截图留证、`api_call` 明确 skipped，验证步骤不再掉进"找元素→点击"流水线，消除误点生产事故风险）；错误→文案对照表（G20层3，VueAnalyzer 提取 ElMessage 调用字面量 + SpringAnalyzer 提取异常消息，合成 `userFeedbackTexts` 注入生成上下文，prompt 硬规则要求 expected 优先使用真实文案原文禁止编造）；后端 205 测试全绿。
 - v7.5 要点：基线可信——统一 LLM 结果缓存层（`llm_result_cache` 表，键 = SHA-256(模型名+systemPrompt+userPrompt)，换模型/prompt 演进/内容变化任一发生自然失效，无 TTL）；PRD 解析缓存（A15，同 PRD 二次生成不调 LLM，requirements 与首次完全一致，temp 0.2 漂移消除，追加生成与首次生成模块口径一致）；组件摘要缓存（A11，源码未变的业务组件二次分析零 LLM 调用，分析高频操作成本不再线性放大）；毒缓存自愈（解析失败自动落回 LLM 路径）+ 缓存 DB 故障降级直调 LLM 绝不阻断分析/生成；后端 164 测试全绿。
 - v7.4 要点：证据可信——分析结果干净（A1 排除 src/test 测试代码，不再污染 endpoints/entities）、HTTP 方法正确（A2 解析 @RequestMapping method 属性，POST 不再标 ANY）、校验规则不静默丢（A7 反引号模板串不再截断 rules 块、A8 多表单全部 rules 块合并、A10 LLM 补充字段级合并）、可复现（A9 文件列表按路径字典序排序）、可观测（C1 BackendResult/FrontendResult 新增 warnings 随 JSON 落库，"0 个表单"可解释）、不误导（A20 状态机来源派生 source: rule/llm，兜底状态机禁止虚构转换）、删除死代码约 120 行（A19）；后端 150 测试全绿。
 - v7.3 要点：组件可信——流式取消从全局单例改为 per-request 信号（L1，并发生成取消互不误杀）、熔断器按 text/multimodal 通道隔离且 4xx 配置错误不计入（L2，多模态故障/Key 填错不再连坐全系统）、SPA 生效判断改 URL+title+textSnippet 三指纹 + 点击后 800ms 渲染等待（L5，消除"URL 不变→误判未生效→DOM 兜底重复提交"）、流式 JSON 截断检测+局部补全抢救+streamTruncated 告警（L8）、预期结果语言规范入 prompt + few-shot 修正 + UiLanguageLint 静态 lint 打标（G20层1+2，堵增量+标存量）；后端 141 测试全绿。
@@ -232,6 +233,7 @@ AICaseTest/
 | v7.3 | LLM 组件稳定与生成质量约束（流取消并发/熔断隔离/SPA生效判断/截断告警/G20层1+2） | ✅ 完成 |
 | v7.4 | 分析器规则层加固（测试代码排除/HTTP方法解析/模板串/多rules块/文件排序/字段级合并/warnings/状态机来源标记） | ✅ 完成 |
 | v7.5 | 缓存与可复现基线（PRD 解析缓存/组件摘要缓存/prompt-hash 失效/降级直调） | ✅ 完成 |
+| v7.6 | 状态机与断言闭环（转换证据校验/expected 三层断言/Agent 步骤分流/错误文案对照表） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

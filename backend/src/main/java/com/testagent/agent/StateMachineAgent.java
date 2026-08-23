@@ -52,6 +52,9 @@ public class StateMachineAgent {
             log.warn("LLM state machine extraction failed, falling back to rule-based: {}", e.getMessage());
             result = extractByRules(backendResult);
         }
+        // v7.6(A17): 规则层证据校验——LLM transitions 与源码赋值证据比对，
+        // 匹配标 verified、未匹配标 unverified 并降 confidence（此前转换关系完全由 LLM 猜测）
+        applyEvidence(result, backendResult == null ? null : backendResult.getStateTransitions());
         for (StateMachine sm : result) {
             sm.setCreatedAt(LocalDateTime.now());
         }
@@ -216,6 +219,70 @@ public class StateMachineAgent {
             }
             sm.setSources(toJson(sources));
         }
+    }
+
+    // ==================== v7.6(A17): 转换证据校验 ====================
+
+    /**
+     * LLM transitions 与源码赋值证据（SpringAnalyzer 规则层提取）比对：
+     * - 匹配（from→to 相等，或证据 from="*" 且 to 相等）→ transition 标 verified=true；
+     * - 未匹配 → 标 unverified=true，状态机 confidence 降至 min(confidence, 0.4)；
+     * - 证据为空（无后端源码/无赋值点）→ 不加标记不降级——"未校验"不等于"校验失败"。
+     * 归一化：剥枚举前缀（OrderStatus.PAID → PAID）+ 忽略大小写。
+     */
+    void applyEvidence(List<StateMachine> stateMachines, List<Map<String, Object>> evidence) {
+        if (stateMachines == null || stateMachines.isEmpty()
+                || evidence == null || evidence.isEmpty()) {
+            return;
+        }
+        for (StateMachine sm : stateMachines) {
+            List<Map<String, Object>> transitions = JsonHelper.parseListMap(sm.getTransitions());
+            if (transitions.isEmpty()) {
+                continue;  // rule_based 兜底 transitions 本为空
+            }
+            boolean anyUnverified = false;
+            for (Map<String, Object> t : transitions) {
+                if (matchesEvidence(t, evidence)) {
+                    t.put("verified", true);
+                } else {
+                    t.put("unverified", true);
+                    anyUnverified = true;
+                }
+            }
+            sm.setTransitions(toJson(transitions));
+            if (anyUnverified) {
+                sm.setConfidence(Math.min(sm.getConfidence(), 0.4));
+            }
+        }
+    }
+
+    private boolean matchesEvidence(Map<String, Object> transition, List<Map<String, Object>> evidence) {
+        String from = normalizeStateCode(text(transition, "from"));
+        String to = normalizeStateCode(text(transition, "to"));
+        for (Map<String, Object> ev : evidence) {
+            String evFrom = normalizeStateCode(text(ev, "from"));
+            String evTo = normalizeStateCode(text(ev, "to"));
+            if (evTo.isEmpty() || !evTo.equals(to)) {
+                continue;
+            }
+            if (evFrom.equals("*") || evFrom.equals(from)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 剥枚举前缀（OrderStatus.PAID → PAID）+ trim + 小写归一 */
+    private String normalizeStateCode(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String s = raw.trim();
+        int idx = s.lastIndexOf('.');
+        if (idx >= 0 && idx < s.length() - 1) {
+            s = s.substring(idx + 1);
+        }
+        return s.toLowerCase();
     }
 
     private List<StateMachine> extractByRules(BackendResult backendResult) {

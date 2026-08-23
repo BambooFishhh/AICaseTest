@@ -4,6 +4,55 @@
 
 ---
 
+## v7.6 — 状态机与断言闭环
+**日期**: 2026-08-23
+**基线**: v7.5
+**主题**: 闭环可信——状态机转换有源码证据校验、expected 真正被断言、Agent 模式验证步骤不再误点、错误→文案对照表入生成上下文（对应风险清单 A17/L6/E5/G20层3）
+
+### 背景
+
+v7.5 建立了可复现基线，但三个核心闭环仍是"猜测或空转"：**A17** 状态机转换关系完全由 LLM 猜测——编的 `CREATED→CANCELLED` 只要 code 合法就入库，"状态转换覆盖率"这一核心卖点建立在未验证的猜测之上；**L6** expected 从未被验证——"用例通过"≠"预期结果成立"，v7.0(E4) 只比对 url/title，中文 toast 文案（"删除成功"）无法断言；**E5** Agent 模式把 state_assert/api_call 掉进"找元素→截图→定位→点击"流水线——验证步骤可能随机点中页面元素（描述撞上删除按钮即生产事故）；**G20层3** 前端错误展示文案（ElMessage.error 等）从未被采集，LLM 无对照表可翻译，expected 编不出真实 UI 文案。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/ExecutionAssert.java` | 新增 | **L6**：三层断言共享工具（程序化/Agent 两模式共用）——层 1 URL/标题语义（v7.0 E4 能力）；层 2 DOM 文本断言（v7.6 新增）：引号短语完整包含 + 中文段剥叙述前后缀按连接词切分，核心短语 ≥3 字 3-gram 滑窗匹配、2 字完整包含，英文 token 大小写不敏感；层 3 无法验证诚实标 skipped 不误报失败。无 textSnippet（DOM 文本快照缺失/为空）时文本断言不可执行直接 skipped |
+| `analyzer/SpringAnalyzer.java` | 修改 | **A17**：`extractStateTransitions`——JavaParser 扫描状态字段赋值点（`setStatus(X)` / `status = X`），沿父节点找赋值分支的 if 条件提取 from 状态，产出"field/from/to/method/file"证据（上限 200 条去重）；**G20层3**：`extractErrorMessages`——提取异常构造字面量（`new XxxException("...")` / `throw`），产出"exception/message/method/file"（上限 100 条） |
+| `analyzer/result/BackendResult.java` | 修改 | 新增 `stateTransitions` / `errorMessages` 字段（默认空列表） |
+| `agent/StateMachineAgent.java` | 修改 | **A17**：`applyEvidence`——LLM 推断的 transitions 与源码赋值证据比对：匹配标 `verified=true`，未匹配标 `unverified=true` 且该状态机 confidence 上限压到 0.4（此前固定 0.8 无差别信任）；证据在 `analyze` 主流程 LLM 提取后统一应用 |
+| `agent/ExecutionAgent.java` | 修改 | **E5**：`executeStep` 按步骤类型分流——`state_assert` 走 `executeStateAssert`（getPageStatus + 共享断言 + 截图留证，不再找元素点击）；`api_call` 与程序化模式一致明确 skipped（不再掉进点击流水线） |
+| `analyzer/VueAnalyzer.java` | 修改 | **G20层3**：`extractFeedbackTexts`——正则提取 `ElMessage/Message/$message.error|success|warning|info("...")` 调用字面量，产出"type/text/file"（上限 100 条去重） |
+| `analyzer/result/FrontendResult.java` | 修改 | 新增 `userFeedbackTexts` 字段（默认空列表） |
+| `agent/TestGeneratorAgent.java` | 修改 | **G20层3**：前端 userFeedbackTexts + 后端 errorMessages 合成对照表注入生成上下文（按文案去重，上限 60 条）；prompt 预期结果规范新增硬规则——expected 必须优先使用对照表中的真实提示文案原文，禁止自行编造 |
+| `service/ExecutionService.java` | 修改 | **L6**：程序化模式 state_assert 断言逻辑移至共享 `ExecutionAssert` 并升级三层断言（委托方法保留包内可见性兼容既有测试）；failed 时 error 字段带期望/实际差异描述 |
+| `test/service/ExecutionAssertTest.java` | 新增 | L6 13 用例：三层断言各路径（URL 命中/未命中、中文 toast 命中/未命中、纯叙述词不误判、多关键词全命中、大小写不敏感、API 形态 skipped、空 snippet skipped、空 expected/null 页面态 skipped、describe 摘要、snippet 截断） |
+| `test/analyzer/SpringAnalyzerStateTransitionTest.java` | 新增 | A17 7 用例：赋值点提取、if 条件 from 状态、跨 if/else 分支、去重上限、非状态字段不误采 |
+| `test/agent/StateMachineAgentEvidenceTest.java` | 新增 | A17 7 用例：证据匹配标 verified、无证据标 unverified、confidence 压降、null 容错 |
+| `test/analyzer/SpringAnalyzerErrorMessageTest.java` | 新增 | G20层3 5 用例：异常字面量提取、方法定位、去重、上限 |
+| `test/analyzer/VueAnalyzerFeedbackTest.java` | 新增 | G20层3 5 用例：ElMessage 四种类型提取、跨文件去重、模板字符串 |
+| `test/agent/ExecutionAgentStepTypeTest.java` | 新增 | E5 4 用例：state_assert 分流不走点击、断言 verdict 传递、api_call 明确 skipped、页面态读取失败不误报 |
+
+### API 契约变化
+
+- 无 REST 接口变更
+- 状态机 `transitions` JSON 各项新增 `verified` / `unverified` 布尔标记（前端可据此提示"未经源码验证"）
+- 生成上下文新增 `userFeedbackTexts`（错误→用户文案对照表，仅 prompt 内部使用）
+
+### 验证结果
+
+- 后端 `mvn test`（JDK 17 + Maven 3.9.16）：全量测试通过，BUILD SUCCESS（新增 41 个用例：ExecutionAssertTest 13 + SpringAnalyzerStateTransitionTest 7 + StateMachineAgentEvidenceTest 7 + SpringAnalyzerErrorMessageTest 5 + VueAnalyzerFeedbackTest 5 + ExecutionAgentStepTypeTest 4；v7.0 既有 ExecutionServiceAssertTest 7 用例经委托路径回归通过）
+
+### 预期影响（闭环可信）
+
+- 状态机转换有 ground truth：LLM 编造的转换标 unverified 且 confidence ≤0.4，"状态转换覆盖率"不再建立在无差别信任上；真实转换标 verified 可区分展示
+- expected 真正被断言：中文 toast 文案（"删除成功"）在 DOM 文本快照中比对，断言失败步骤记 failed 并带期望/实际差异——"用例通过"从此等于"预期结果成立"（UI 可感知形态）
+- Agent 模式安全性：验证步骤不再进入点击流水线，消除"断言步骤随机点中删除按钮"的生产事故风险
+- expected 文案真实性：生成侧拿到被测系统源码提取的真实提示文案对照表，禁止编造——expected 与页面实际展示的文案一致率提升，L6 断言命中率随之提升（G20层3 与 L6 闭环联动）
+- 无法验证的场景诚实标 skipped（无 DOM 快照 / API 形态断言），不误报失败也不假通过
+
+---
+
 ## v7.5 — 缓存与可复现基线
 **日期**: 2026-08-23
 **基线**: v7.4

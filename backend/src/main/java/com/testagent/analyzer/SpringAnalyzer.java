@@ -12,9 +12,15 @@ import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.AnnotationExpr;
+import com.github.javaparser.ast.expr.AssignExpr;
+import com.github.javaparser.ast.expr.BinaryExpr;
+import com.github.javaparser.ast.expr.Expression;
+import com.github.javaparser.ast.expr.FieldAccessExpr;
+import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.NormalAnnotationExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.expr.SingleMemberAnnotationExpr;
+import com.github.javaparser.ast.expr.StringLiteralExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.stmt.ThrowStmt;
 import com.github.javaparser.ast.stmt.IfStmt;
@@ -75,6 +81,10 @@ public class SpringAnalyzer {
         List<EntityInfo> entities = new ArrayList<>();
         List<BusinessRule> businessRules = new ArrayList<>();
         List<OperationDep> dependencyGraph = new ArrayList<>();
+        // v7.6(A17): 状态字段赋值证据（规则层，零 LLM 成本）——setStateTransitions ground truth
+        List<Map<String, Object>> stateTransitions = new ArrayList<>();
+        // v7.6(G20层3): 后端异常用户消息字面量——错误→用户文案对照表
+        List<Map<String, Object>> errorMessages = new ArrayList<>();
 
         List<String> parseFailures = new ArrayList<>();
         for (File javaFile : javaFiles) {
@@ -85,6 +95,8 @@ public class SpringAnalyzer {
                 enums.addAll(extractEnums(cu, relativePath));
                 entities.addAll(extractEntities(cu, relativePath));
                 businessRules.addAll(extractBusinessRules(cu, relativePath));
+                stateTransitions.addAll(extractStateTransitions(cu, relativePath));
+                errorMessages.addAll(extractErrorMessages(cu, relativePath));
             } catch (Exception e) {
                 // skip single file parse failure so the whole analysis is not broken
                 parseFailures.add(relativePath);
@@ -99,6 +111,12 @@ public class SpringAnalyzer {
         }
         dependencyGraph.addAll(extractDependencyGraph(dir, javaFiles));
 
+        // v7.6(A17/G20层3): 证据去重 + 上限（100/200 条）
+        stateTransitions = dedupeByKeys(stateTransitions, List.of("field", "from", "to", "method"), 200,
+                "状态转换证据", warnings);
+        errorMessages = dedupeByKeys(errorMessages, List.of("exception", "message"), 100,
+                "异常消息", warnings);
+
         enhanceWithLlmIfConfigured(dir, javaFiles, endpoints, enums, entities, businessRules, warnings);
 
         return BackendResult.builder()
@@ -108,6 +126,8 @@ public class SpringAnalyzer {
                 .entities(entities)
                 .businessRules(businessRules)
                 .dependencyGraph(dependencyGraph)
+                .stateTransitions(stateTransitions)
+                .errorMessages(errorMessages)
                 .fileCount(javaFiles.size())
                 .status("ok")
                 .warnings(warnings)
@@ -321,6 +341,247 @@ public class SpringAnalyzer {
         return clsName.endsWith("Service") || clsName.endsWith("ServiceImpl")
                 || clsName.endsWith("Facade") || clsName.endsWith("FacadeImpl")
                 || clsName.endsWith("Manager") || clsName.endsWith("ManagerImpl");
+    }
+
+    // ==================== v7.6(A17): 状态转换证据提取（规则层） ====================
+
+    /**
+     * 扫描状态字段赋值点，从赋值方法上下文提取"转换来源→目标"证据：
+     * - setStatus(X) / setStatus(EnumClass.X) / setXxxStatus(X) 调用
+     * - status = X / this.orderStatus = X 直接赋值
+     * from 取自同方法体内条件判断（getXxxStatus() == Y / Y.equals(getStatus()) / status == Y），
+     * 无条件判断时标记 "*"（任意状态可达）。证据是状态机 transitions 的 ground truth（A17）。
+     */
+    List<Map<String, Object>> extractStateTransitions(CompilationUnit cu, String filePath) {
+        List<Map<String, Object>> evidence = new ArrayList<>();
+        // 赋值点 1：setStatus(X) 形态的方法调用
+        for (MethodCallExpr call : cu.findAll(MethodCallExpr.class)) {
+            String name = call.getNameAsString();
+            if (!isStateSetterName(name) || call.getArguments().isEmpty()) {
+                continue;
+            }
+            String to = stateConstantOf(call.getArgument(0));
+            if (to == null) {
+                continue;
+            }
+            String field = setterToField(name);
+            String method = call.findAncestor(MethodDeclaration.class)
+                    .map(MethodDeclaration::getNameAsString).orElse("");
+            collectEvidence(evidence, field, method, findFromStates(call, field), to, filePath);
+        }
+        // 赋值点 2：status = X 直接赋值
+        for (AssignExpr assign : cu.findAll(AssignExpr.class)) {
+            if (assign.getOperator() != AssignExpr.Operator.ASSIGN) {
+                continue;
+            }
+            String field = statusFieldName(assign.getTarget());
+            if (field == null) {
+                continue;
+            }
+            String to = stateConstantOf(assign.getValue());
+            if (to == null) {
+                continue;
+            }
+            String method = assign.findAncestor(MethodDeclaration.class)
+                    .map(MethodDeclaration::getNameAsString).orElse("");
+            collectEvidence(evidence, field, method, findFromStates(assign, field), to, filePath);
+        }
+        return evidence;
+    }
+
+    private void collectEvidence(List<Map<String, Object>> evidence, String field, String method,
+                                 Set<String> froms, String to, String filePath) {
+        List<String> fromList = froms.isEmpty() ? List.of("*") : new ArrayList<>(froms);
+        for (String from : fromList) {
+            Map<String, Object> ev = new LinkedHashMap<>();
+            ev.put("field", field);
+            ev.put("from", from);
+            ev.put("to", to);
+            ev.put("method", method);
+            ev.put("file", filePath);
+            evidence.add(ev);
+        }
+    }
+
+    /** setStatus / setXxxStatus 判定（setter 名以 set 开头且以 Status 结尾，忽略大小写） */
+    private boolean isStateSetterName(String name) {
+        if (name == null || name.length() <= 3 || !name.startsWith("set")) {
+            return false;
+        }
+        return name.toLowerCase().endsWith("status");
+    }
+
+    private String setterToField(String setterName) {
+        String rest = setterName.substring(3);
+        return rest.isEmpty() ? "status"
+                : Character.toLowerCase(rest.charAt(0)) + rest.substring(1);
+    }
+
+    /** 赋值目标是否状态字段（status / this.orderStatus），是则返回字段名 */
+    private String statusFieldName(Expression target) {
+        if (target instanceof NameExpr ne) {
+            return containsStatus(ne.getNameAsString()) ? ne.getNameAsString() : null;
+        }
+        if (target instanceof FieldAccessExpr fae) {
+            return containsStatus(fae.getNameAsString()) ? fae.getNameAsString() : null;
+        }
+        return null;
+    }
+
+    private boolean containsStatus(String name) {
+        return name != null && name.toLowerCase().contains("status");
+    }
+
+    /**
+     * 解析枚举常量表达式：PAID / OrderStatus.PAID → "PAID"；变量/方法调用/构造 → null（无法静态确定）。
+     */
+    private String stateConstantOf(Expression expr) {
+        if (expr instanceof NameExpr ne) {
+            String name = ne.getNameAsString();
+            return looksLikeEnumConstant(name) ? name : null;
+        }
+        if (expr instanceof FieldAccessExpr fae) {
+            String name = fae.getNameAsString();
+            return looksLikeEnumConstant(name) ? name : null;
+        }
+        return null;
+    }
+
+    /** 枚举常量命名约定：全大写 + 下划线（如 PAID / STATUS_PAID） */
+    private boolean looksLikeEnumConstant(String name) {
+        return name != null && !name.isBlank() && name.equals(name.toUpperCase())
+                && name.matches("[A-Z][A-Z0-9_]*");
+    }
+
+    /**
+     * 从赋值点向上找最近的状态来源条件（内层 IfStmt 优先）：
+     * if (getStatus() == Y) { ... setStatus(X) } / if (Y.equals(order.getStatus())) { ... }
+     * 只取赋值点所在分支链上的条件（整个方法扫描会把兄弟分支的条件误记为来源）；
+     * 无命中表示无条件（* 任意可达）。
+     */
+    private Set<String> findFromStates(com.github.javaparser.ast.Node node, String field) {
+        Set<String> froms = new LinkedHashSet<>();
+        com.github.javaparser.ast.Node current = node;
+        while (current != null) {
+            com.github.javaparser.ast.Node parent = current.getParentNode().orElse(null);
+            if (parent instanceof IfStmt ifStmt) {
+                froms.addAll(statusConstantsIn(ifStmt.getCondition(), field));
+                if (!froms.isEmpty()) {
+                    return froms;  // 内层条件已能定位来源
+                }
+            }
+            current = parent;
+        }
+        return froms;
+    }
+
+    /** 条件表达式中出现的状态常量（== 比较 / equals 调用两种形态） */
+    private Set<String> statusConstantsIn(Expression condition, String field) {
+        Set<String> constants = new LinkedHashSet<>();
+        for (BinaryExpr be : condition.findAll(BinaryExpr.class)) {
+            if (be.getOperator() != BinaryExpr.Operator.EQUALS) {
+                continue;
+            }
+            String left = stateConstantOf(be.getLeft());
+            String right = stateConstantOf(be.getRight());
+            if (left != null && isStatusRead(be.getRight(), field)) {
+                constants.add(left);
+            } else if (right != null && isStatusRead(be.getLeft(), field)) {
+                constants.add(right);
+            }
+        }
+        for (MethodCallExpr call : condition.findAll(MethodCallExpr.class)) {
+            if (!"equals".equals(call.getNameAsString()) || call.getArguments().size() != 1) {
+                continue;
+            }
+            String scopeConst = call.getScope().map(this::stateConstantOf).orElse(null);
+            String argConst = stateConstantOf(call.getArgument(0));
+            if (scopeConst != null && isStatusRead(call.getArgument(0), field)) {
+                constants.add(scopeConst);
+            } else if (argConst != null && call.getScope().isPresent()
+                    && isStatusRead(call.getScope().get(), field)) {
+                constants.add(argConst);
+            }
+        }
+        return constants;
+    }
+
+    /** 表达式是否状态读取：getXxxStatus() 调用 / 名字含 status 的标识符 */
+    private boolean isStatusRead(Expression expr, String field) {
+        if (expr instanceof MethodCallExpr mc) {
+            String name = mc.getNameAsString();
+            return name.toLowerCase().startsWith("get") && name.toLowerCase().endsWith("status");
+        }
+        if (expr instanceof NameExpr ne) {
+            return ne.getNameAsString().equals(field) || containsStatus(ne.getNameAsString());
+        }
+        if (expr instanceof FieldAccessExpr fae) {
+            return fae.getNameAsString().equals(field) || containsStatus(fae.getNameAsString());
+        }
+        return false;
+    }
+
+    // ==================== v7.6(G20层3): 异常用户消息提取 ====================
+
+    /**
+     * 提取 throw new XxxException("用户可读消息") 的 message 字面量——
+     * 与前端 ElMessage 文案合成"错误→用户文案"对照表，供生成侧写 UI 现象形 expected。
+     * 仅收纯字符串字面量（含字面量拼接），message 长度 2~100。
+     */
+    List<Map<String, Object>> extractErrorMessages(CompilationUnit cu, String filePath) {
+        List<Map<String, Object>> messages = new ArrayList<>();
+        for (ThrowStmt ts : cu.findAll(ThrowStmt.class)) {
+            if (!(ts.getExpression() instanceof ObjectCreationExpr oce)) {
+                continue;
+            }
+            String literal = stringLiteralOf(oce.getArguments().isEmpty() ? null : oce.getArgument(0));
+            if (literal == null || literal.length() < 2 || literal.length() > 100) {
+                continue;
+            }
+            Map<String, Object> msg = new LinkedHashMap<>();
+            msg.put("exception", oce.getType().asString());
+            msg.put("message", literal);
+            msg.put("file", filePath);
+            messages.add(msg);
+        }
+        return messages;
+    }
+
+    /** 解析字符串字面量（含纯字面量拼接）；含变量则返回 null */
+    private String stringLiteralOf(Expression expr) {
+        if (expr == null) {
+            return null;
+        }
+        if (expr instanceof StringLiteralExpr sle) {
+            return sle.getValue();
+        }
+        if (expr instanceof BinaryExpr be && be.getOperator() == BinaryExpr.Operator.PLUS) {
+            String left = stringLiteralOf(be.getLeft());
+            String right = stringLiteralOf(be.getRight());
+            return (left != null && right != null) ? left + right : null;
+        }
+        return null;
+    }
+
+    /** v7.6: 按 key 集合去重并限制条数，超限记 warning */
+    private List<Map<String, Object>> dedupeByKeys(List<Map<String, Object>> items, List<String> keys,
+                                                   int limit, String label, List<String> warnings) {
+        if (items.size() <= 1) {
+            return items;
+        }
+        List<Map<String, Object>> deduped = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (Map<String, Object> item : items) {
+            String key = keys.stream().map(k -> String.valueOf(item.get(k))).reduce((a, b) -> a + "|" + b).orElse("");
+            if (seen.add(key)) {
+                deduped.add(item);
+            }
+        }
+        if (deduped.size() > limit) {
+            warnings.add(label + "超上限 " + deduped.size() + " 条，截断为 " + limit + " 条");
+            return new ArrayList<>(deduped.subList(0, limit));
+        }
+        return deduped;
     }
 
     private String compactMethodBody(MethodDeclaration method) {

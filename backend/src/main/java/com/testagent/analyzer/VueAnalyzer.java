@@ -62,6 +62,10 @@ public class VueAnalyzer {
     private static final Pattern AXIOS_PATTERN = Pattern.compile(
             "\\.(get|post|put|delete|patch)\\s*\\(\\s*['\"]([^'\"]+)['\"]");
 
+    // v7.6(G20层3): 前端用户反馈文案——ElMessage.error("...") / Message.error(...) / this.$message.error(...)
+    private static final Pattern FEEDBACK_TEXT_PATTERN = Pattern.compile(
+            "(?:ElMessage|Message|\\$message)\\.(error|success|warning|info)\\s*\\(\\s*['\"`]([^'\"`]+)['\"`]");
+
     public FrontendResult analyze(String frontendDir) {
         File dir = new File(frontendDir);
         if (!dir.exists() || !dir.isDirectory()) {
@@ -80,6 +84,9 @@ public class VueAnalyzer {
         List<Map<String, Object>> componentStates = extractComponentStates(dir, warnings);
         List<Map<String, Object>> domSelectors = extractDomSelectors(dir, warnings);
         List<Map<String, Object>> pageFlows = extractPageFlows(dir, warnings);
+
+        // v7.6(G20层3): 用户反馈文案（错误→用户文案对照表的前端侧）
+        List<Map<String, Object>> userFeedbackTexts = extractFeedbackTexts(dir, warnings);
 
         // v6.1 (Agentic RAG): 逐组件语义摘要 + 按需源码片段 + 业务分，供前端组件级索引
         List<Map<String, Object>> componentSummaries = new ArrayList<>();
@@ -110,6 +117,7 @@ public class VueAnalyzer {
                 .domSelectors(domSelectors)
                 .pageFlows(pageFlows)
                 .componentSummaries(componentSummaries)
+                .userFeedbackTexts(userFeedbackTexts)
                 .fileCount(fileCount)
                 .status("ok")
                 .warnings(warnings)
@@ -227,6 +235,46 @@ public class VueAnalyzer {
             }
         }
         return apiCalls;
+    }
+
+    /**
+     * v7.6(G20层3): 提取用户反馈文案——ElMessage.error("删除成功") / Message.success(...) / this.$message.warning(...)
+     * 调用的字符串字面量。扫描全部 .vue/.js/.ts（跳过 node_modules/dist/.git），
+     * 按 (type+text) 去重，上限 100 条，超限记 warning。
+     * 价值：expected 的"错误→用户文案"对照表——LLM 生成 UI 现象形预期结果的可翻译素材。
+     */
+    List<Map<String, Object>> extractFeedbackTexts(File frontendDir, List<String> warnings) {
+        List<Map<String, Object>> texts = new ArrayList<>();
+        List<File> scriptFiles = new ArrayList<>();
+        collectScriptFiles(frontendDir, scriptFiles);
+        Set<String> seen = new LinkedHashSet<>();
+        for (File file : scriptFiles) {
+            String content = readFile(file);
+            if (content == null) {
+                continue;
+            }
+            Matcher m = FEEDBACK_TEXT_PATTERN.matcher(content);
+            while (m.find()) {
+                String type = m.group(1);
+                String text = m.group(2).trim();
+                if (text.isEmpty() || text.length() > 100) {
+                    continue;
+                }
+                if (!seen.add(type + "|" + text)) {
+                    continue;
+                }
+                Map<String, Object> item = new HashMap<>();
+                item.put("type", type);
+                item.put("text", text);
+                item.put("file", file.getName());
+                texts.add(item);
+            }
+        }
+        if (texts.size() > 100) {
+            warnings.add("用户反馈文案超上限 " + texts.size() + " 条，截断为 100 条");
+            return new ArrayList<>(texts.subList(0, 100));
+        }
+        return texts;
     }
 
     private List<File> findRouterFiles(File frontendDir) {

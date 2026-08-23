@@ -376,6 +376,9 @@ public class TestGeneratorAgent {
               机器常量（如 status=PENDING_PAYMENT）、响应体键名
             - 仅 api_call 类型步骤的 expected 允许描述接口行为（如"接口返回 400"）；
               含 UI 步骤的用例，最终断言步骤必须回到页面可感知现象
+            - v7.6: 上下文中的 userFeedbackTexts 是从被测系统源码提取的真实提示文案对照表
+              （前端 ElMessage / 后端异常消息）——编写 expected 时必须优先使用其中的原文，
+              禁止自行编造提示文案
 
             ## coverageRefs 覆盖要求（v5.12）
             - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}
@@ -983,6 +986,36 @@ public class TestGeneratorAgent {
             }
         }
         context.put("businessRules", ruleList);
+
+        // v7.6(G20层3): 错误→用户文案对照表——前端 ElMessage 文案 + 后端异常消息字面量，
+        // 让 expected 用页面真实提示文案而非 HTTP 码/字段名（配合 v7.3 prompt 约束治本）
+        List<Map<String, Object>> feedbackTexts = new ArrayList<>();
+        Set<String> seenTexts = new HashSet<>();
+        if (frontendResult != null && frontendResult.getUserFeedbackTexts() != null) {
+            for (Map<String, Object> ft : frontendResult.getUserFeedbackTexts()) {
+                String text = String.valueOf(ft.getOrDefault("text", ""));
+                if (!text.isBlank() && seenTexts.add(text)) {
+                    feedbackTexts.add(ft);
+                }
+            }
+        }
+        if (backendResult != null && backendResult.getErrorMessages() != null) {
+            for (Map<String, Object> em : backendResult.getErrorMessages()) {
+                String message = String.valueOf(em.getOrDefault("message", ""));
+                if (message.isBlank() || !seenTexts.add(message)) {
+                    continue;
+                }
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("type", "backend_error");
+                item.put("text", message);
+                item.put("source", em.getOrDefault("exception", ""));
+                feedbackTexts.add(item);
+            }
+        }
+        if (!feedbackTexts.isEmpty()) {
+            context.put("userFeedbackTexts", feedbackTexts.size() > 60
+                    ? new ArrayList<>(feedbackTexts.subList(0, 60)) : feedbackTexts);
+        }
 
         // v1.11: 前端上下文（辅助）
         // v6.1fix: 只把 RAG 检索命中的组件对应 UI 元素注入 prompt；未命中时兜底全量，避免丢 UI 步骤

@@ -35,6 +35,10 @@ public class FrontendResult {
     // v6.1 (Agentic RAG): 逐组件语义摘要（交互事件/API/状态/路由 + 按需源码片段 + 业务分）
     private List<Map<String, Object>> componentSummaries;
 
+    // v7.6(G20层3): 前端用户反馈文案——{type: error|success|warning|info, text, file}，
+    // ElMessage.error("...") 等调用字面量；与后端 errorMessages 合成对照表供生成侧使用
+    private List<Map<String, Object>> userFeedbackTexts;
+
     private int fileCount;
 
     private String status;
@@ -53,6 +57,7 @@ public class FrontendResult {
                 .domSelectors(List.of())
                 .pageFlows(List.of())
                 .componentSummaries(List.of())
+                .userFeedbackTexts(List.of())
                 .fileCount(0)
                 .warnings(List.of())
                 .build();
