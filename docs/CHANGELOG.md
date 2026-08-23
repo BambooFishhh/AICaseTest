@@ -4,6 +4,59 @@
 
 ---
 
+## v7.14 — 生成 Prompt 重复注入治理
+**日期**: 2026-08-23
+**基线**: v7.13
+**主题**: 修复真实大项目（220 接口/182 规则）生成 prompt 432KB 触发 300k 保险丝的根因——coverageChecklist 全量详情重复注入（159KB 冗余，G24）+ context.endpoints 无容量控制（G25）+ embedding 默认端点 404 致 RAG 持续降级（E17）
+
+### 背景
+
+用户实测日志：`[LLM] prompt 超限 432497 → 截断到 300000`，`[G17] endpoints 220/220, rules 182/182`。拆解发现 432KB 中约 159KB 是纯重复：`buildCoverageChecklist` 对每个接口 `putAll(ep.toContextMap())` 把 requestBody/responseBody/businessLogic 完整字段塞进覆盖清单，而同一内容已在 context.endpoints/businessRules/operationDependencies 完整出现过一次；G17 过滤阈值 `>0`（任一 token 重叠即过）在需求词汇覆盖广的大项目全放行且无总量控制；embedding 默认端点回落 chat 网关（无 embeddings 路由，404），RAG 检索持续降级为空。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `agent/TestGeneratorAgent.java` | 修改 | **G24 覆盖清单摘要化**——endpoints 项只留 `{id, method, path, function}`、rules 项 `{id, ruleType, rule 截80}`、dependencies 项仅 `{id}`、components 项 `{id, component, summary 截80}`（消费方核实：remainingGaps/TestCaseReviewAgent 只读 id/method/path；requirements/transitions 不动——G4 兜底匹配依赖 title/description）；**G25 容量控制**——G17 过滤后超上限（endpoints 80/rules 100）按相关性降序稳定排序保留 top-N + 尾部追加截断说明条目，关键词空白保序截断；**prd map 剥离 ragContexts**（策展版 context.ragContexts 已单独注入，模板无 prd.ragContexts 路径引用已核实） |
+| `service/EmbeddingService.java` | 修改 | E17 失败日志带模型名诊断（404=模型不存在/端点错配，401=密钥问题一眼可判） |
+| `application.yml` | 修改 | E17：embedding 默认端点改 DashScope 兼容模式（`https://dashscope.aliyuncs.com/compatible-mode/v1`，不再回落 chat 网关）、默认模型 `qwen3.7-text-embedding`→`text-embedding-v4`（1024 维=Milvus 默认）；新增 `app.generation.endpoints-context-max:80`/`rules-context-max:100` |
+| `application-prod.yml` | 修改 | embedding 段同款默认值修正 |
+| `docker-compose.yml` | 修改 | E17：`LLM_EMBEDDING_BASE_URL` 空 `:-` 默认改 DashScope 端点——原空默认把变量设为空串，Spring 占位符对"已设置但为空"不回落 yml 默认值，空 base-url 落 api.openai.com + 不存在模型名 → 404；模型默认值同步 text-embedding-v4 |
+| `.env.example` | 修改 | embedding 配置默认值与注释指引同步 |
+| `test/.../TestGeneratorAgentChecklistSummaryTest.java` | 新增 | 4 用例：endpoint 项无详情字段、rule 截 80、dependency 仅 id、requirements 结构回归保护 |
+| `test/.../TestGeneratorAgentContextCapTest.java` | 新增 | 5 用例：top-80 高相关必入选、未超限同实例、空白关键词保序、同分稳定排序确定性、rules top-100 |
+
+### 前端变更
+
+无（零改动回归）。
+
+### API 契约变化
+
+无。
+
+### 验证结果
+
+- 后端全量 `mvn test`：全部通过（v7.14 新增 2 个测试类 9 用例）
+- 前端 `npm run build`：通过
+
+### 预期影响（用户实测场景复算）
+
+- 432KB → 约 200KB：checklist 重复注入 159KB→约 12KB（摘要化）；context.endpoints 128KB→约 47KB（top-80）；context.businessRules 50KB→约 28KB（top-100）；prd 剥离 ragContexts 原始切片；300k 保险丝不再触发
+- 未入选 top-80 的接口仍在 checklist 摘要中可引用（id/method/path/function），coverageRefs 对账协议零变化
+- embedding 修复后 RAG 检索恢复——需求/组件相关上下文质量回升，前端组件语义摘要不再降级为空
+- 评审 prompt 同步瘦身（评审 payload 携带同一 checklist）
+
+### 配置项速查
+
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `app.generation.endpoints-context-max` | 80 | context.endpoints 完整详情上限（top-N 相关性） |
+| `app.generation.rules-context-max` | 100 | context.businessRules 完整详情上限 |
+| `LLM_EMBEDDING_BASE_URL` | DashScope 兼容端点 | 不再回落 chat 网关 |
+| `LLM_EMBEDDING_MODEL` | text-embedding-v4 | 1024 维=Milvus 默认 |
+
+---
+
 ## v7.13 — 输入截断上限扩容
 **日期**: 2026-08-23
 **基线**: v7.12

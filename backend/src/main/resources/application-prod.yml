@@ -24,10 +24,11 @@ spring:
           model: ${LLM_MODEL:mimo-v2.5-pro}
       embedding:
         api-key: ${LLM_EMBEDDING_API_KEY:${DASHSCOPE_API_KEY:${LLM_API_KEY:}}}
-        base-url: ${LLM_EMBEDDING_BASE_URL:${LLM_BASE_URL:https://api.xiaomimimo.com/v1}}
+        # v7.14(E17): 默认端点改 DashScope 兼容模式（chat 网关无 embeddings 路由，回落=404）
+        base-url: ${LLM_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
         embeddings-path: /embeddings
         options:
-          model: ${LLM_EMBEDDING_MODEL:qwen3.7-text-embedding}
+          model: ${LLM_EMBEDDING_MODEL:text-embedding-v4}
 llm:
   provider: ${LLM_PROVIDER:mimo}
   model: ${LLM_MODEL:mimo-v2.5-pro}

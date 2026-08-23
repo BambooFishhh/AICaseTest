@@ -26,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,6 +35,7 @@ import java.util.Set;
 
 import com.testagent.common.BusinessException;
 import com.testagent.common.GenerationCancelledException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 
 @Component
@@ -45,6 +47,15 @@ public class TestGeneratorAgent {
     // v5.14: 自动多轮补齐上限，避免无限调用 LLM
     private static final int MAX_GENERATION_ROUNDS = 4;
     private static final int MAX_GENERATED_CASES = 60;
+
+    // v7.14(G25): context.endpoints/businessRules 完整详情容量上限——G17 弱过滤（>0 即过）
+    // 全放行后无总量控制，大项目 220 接口 × 全量详情 = 128KB 灌 prompt。字段初始化默认值
+    // 兜底：单测直接 new 不走容器，纯 @Value 下 int 为 0 会把上下文截没
+    @Value("${app.generation.endpoints-context-max:80}")
+    private int endpointsContextMax = 80;
+
+    @Value("${app.generation.rules-context-max:100}")
+    private int rulesContextMax = 100;
 
     // v1.6: 进度回调接口，供调用方感知分模块生成进度
     @FunctionalInterface
@@ -593,9 +604,15 @@ public class TestGeneratorAgent {
         List<Map<String, Object>> endpoints = new ArrayList<>();
         if (backendResult != null && backendResult.getEndpoints() != null) {
             for (EndpointInfo ep : backendResult.getEndpoints()) {
+                // v7.14(G24): 覆盖清单只放对账标识字段——完整详情已在 context.endpoints 注入过一次，
+                // 旧实现 putAll(toContextMap()) 等于把全量接口详情重复灌进 prompt（实测 159KB 冗余，
+                // 432KB prompt 触发 300k 保险丝的直接元凶）。消费方核实：remainingGaps 与
+                // TestCaseReviewAgent 只读 id/method/path；prompt 侧 checklist 用于 coverageRefs 对账
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("id", (ep.getMethod() == null ? "" : ep.getMethod().toUpperCase()) + " " + ep.getPath());
-                item.putAll(ep.toContextMap());
+                item.put("method", ep.getMethod());
+                item.put("path", ep.getPath());
+                item.put("function", ep.getFunction());
                 endpoints.add(item);
             }
         }
@@ -604,8 +621,12 @@ public class TestGeneratorAgent {
         if (backendResult != null && backendResult.getBusinessRules() != null) {
             int i = 1;
             for (BusinessRule br : backendResult.getBusinessRules()) {
-                Map<String, Object> item = new LinkedHashMap<>(br.toContextMap());
+                // v7.14(G24): 规则全文在 context.businessRules（G25 top-N 完整详情），清单只留识别字段
+                Map<String, Object> item = new LinkedHashMap<>();
                 item.put("id", "rule-" + i++);
+                item.put("ruleType", br.getRuleType());
+                String ruleText = br.getRule() == null ? "" : br.getRule();
+                item.put("rule", ruleText.length() > 80 ? ruleText.substring(0, 80) + "..." : ruleText);
                 rules.add(item);
             }
         }
@@ -618,16 +639,21 @@ public class TestGeneratorAgent {
                 prdResult != null ? prdResult.getFrontendComponents() : null);
         if (!businessComps.isEmpty()) {
             for (Map<String, Object> c : businessComps) {
+                // v7.14(G24): 组件完整 map 在 context.frontendComponents 注入，清单只留识别字段
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("id", c.getOrDefault("id", ""));
-                item.putAll(c);
+                item.put("component", c.getOrDefault("component", ""));
+                String summary = c.get("summary") == null ? "" : String.valueOf(c.get("summary"));
+                item.put("summary", summary.length() > 80 ? summary.substring(0, 80) + "..." : summary);
                 components.add(item);
             }
         }
         List<Map<String, Object>> dependencies = new ArrayList<>();
         if (backendResult != null && backendResult.getDependencyGraph() != null) {
             for (OperationDep od : backendResult.getDependencyGraph()) {
-                Map<String, Object> item = new LinkedHashMap<>(od.toContextMap());
+                // v7.14(G24): 依赖明细（dependsOn 调用链）在 context.operationDependencies 注入，
+                // 清单只留对账键 id（= operation 全名）
+                Map<String, Object> item = new LinkedHashMap<>();
                 item.put("id", od.getOperation());
                 dependencies.add(item);
             }
@@ -1010,7 +1036,12 @@ public class TestGeneratorAgent {
         Map<String, Object> context = new LinkedHashMap<>();
 
         // PRD 为主上下文
-        context.put("prd", objectMapper.convertValue(prdResult, Map.class));
+        // v7.14(G24): prd 序列化剥离 ragContexts 原始切片——策展版 context.ragContexts
+        // （truncateStrings 6×1200）已单独注入，原始切片全量随 prd 再灌一遍是重复；
+        // prompt 模板已核实只引用顶层 ragContexts 键，无 prd.ragContexts 路径引用
+        Map<String, Object> prdMap = objectMapper.convertValue(prdResult, Map.class);
+        prdMap.remove("ragContexts");
+        context.put("prd", prdMap);
         // v5.4: RAG 语义检索上下文（v6.4 切片化后按切片限流，避免大块上下文撑爆 prompt）
         context.put("ragContexts", truncateStrings(prdResult.getRagContexts(), 1200, 6));
         // v6.4: 历史失败经验注入，避免生成时重复已知失败路径
@@ -1070,15 +1101,33 @@ public class TestGeneratorAgent {
             log.info("[G17] backend context filtered by requirement keywords: endpoints {}/{}, rules {}/{}",
                     relevantEps.size(), eps.size(), relevantRules.size(), bizRules.size());
         }
+        // v7.14(G25): 弱过滤后的总量控制层——超上限按相关性降序保留 top-N（稳定排序，同分保持原序），
+        // 未入选接口仍在 coverageChecklist 摘要中可引用（id/method/path/function），只是无 schema 详情
+        int relevantEpCount = relevantEps.size();
+        int relevantRuleCount = relevantRules.size();
+        relevantEps = capEndpointsByRelevance(relevantEps, keywordText);
+        relevantRules = capRulesByRelevance(relevantRules, keywordText);
         List<Map<String, Object>> epList = new ArrayList<>();
         for (EndpointInfo ep : relevantEps) {
             epList.add(ep.toContextMap());
+        }
+        if (relevantEps.size() < relevantEpCount) {
+            Map<String, Object> note = new LinkedHashMap<>();
+            note.put("note", "endpoints 已按需求相关性保留前 " + relevantEps.size() + "/" + relevantEpCount
+                    + " 条完整详情，其余接口见 coverageChecklist.endpoints 摘要");
+            epList.add(note);
         }
         context.put("endpoints", epList);
 
         List<Map<String, Object>> ruleList = new ArrayList<>();
         for (BusinessRule br : relevantRules) {
             ruleList.add(br.toContextMap());
+        }
+        if (relevantRules.size() < relevantRuleCount) {
+            Map<String, Object> note = new LinkedHashMap<>();
+            note.put("note", "businessRules 已按需求相关性保留前 " + relevantRules.size() + "/" + relevantRuleCount
+                    + " 条完整详情，其余规则见 coverageChecklist.businessRules 摘要");
+            ruleList.add(note);
         }
         context.put("businessRules", ruleList);
 
@@ -1535,6 +1584,42 @@ public class TestGeneratorAgent {
         return String.join(" ",
                 br.getRule() == null ? "" : br.getRule(),
                 br.getRuleType() == null ? "" : br.getRuleType());
+    }
+
+    /**
+     * v7.14(G25): context.endpoints 完整详情容量控制。超上限时按 G17 相关性分数降序保留
+     * top-N（List.sort 稳定排序，同分保持原序——确定性）；关键词空白时保序截断。
+     * 未超上限原样返回（同实例）。包级可见供单测。
+     */
+    List<EndpointInfo> capEndpointsByRelevance(List<EndpointInfo> eps, String keywordText) {
+        if (eps.size() <= endpointsContextMax) {
+            return eps;
+        }
+        List<EndpointInfo> sorted = new ArrayList<>(eps);
+        if (keywordText != null && !keywordText.isBlank()) {
+            sorted.sort(Comparator.comparingInt(
+                    (EndpointInfo ep) -> scoreTextOverlap(endpointText(ep), keywordText)).reversed());
+        }
+        List<EndpointInfo> capped = new ArrayList<>(sorted.subList(0, endpointsContextMax));
+        log.info("[G25] context endpoints capped: {}/{} (top by relevance, rest in checklist summary)",
+                capped.size(), eps.size());
+        return capped;
+    }
+
+    /** v7.14(G25): capEndpointsByRelevance 的规则同构——上限 rulesContextMax。包级可见供单测。 */
+    List<BusinessRule> capRulesByRelevance(List<BusinessRule> rules, String keywordText) {
+        if (rules.size() <= rulesContextMax) {
+            return rules;
+        }
+        List<BusinessRule> sorted = new ArrayList<>(rules);
+        if (keywordText != null && !keywordText.isBlank()) {
+            sorted.sort(Comparator.comparingInt(
+                    (BusinessRule br) -> scoreTextOverlap(ruleText(br), keywordText)).reversed());
+        }
+        List<BusinessRule> capped = new ArrayList<>(sorted.subList(0, rulesContextMax));
+        log.info("[G25] context businessRules capped: {}/{} (top by relevance, rest in checklist summary)",
+                capped.size(), rules.size());
+        return capped;
     }
 
     // v1.11: 将前端上下文注入 context Map，截断避免 token 超限

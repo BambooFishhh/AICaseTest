@@ -60,14 +60,18 @@ spring:
           temperature: 0.4
       embedding:
         api-key: ${LLM_EMBEDDING_API_KEY:${DASHSCOPE_API_KEY:${LLM_API_KEY:}}}
-        base-url: ${LLM_EMBEDDING_BASE_URL:${LLM_BASE_URL:https://opencode.ai/zen/go/v1}}
+        # v7.14(E17): 默认端点改 DashScope 兼容模式——原默认回落 chat 网关(opencode.ai/zen/go/v1)，
+        # 该网关无 embeddings 路由必然 404，RAG 检索持续降级为空。不再回落 LLM_BASE_URL
+        base-url: ${LLM_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
         embeddings-path: /embeddings
         options:
-          model: ${LLM_EMBEDDING_MODEL:qwen3.7-text-embedding}
+          # v7.14(E17): qwen3.7-text-embedding → text-embedding-v4（DashScope 兼容端点模型名，
+          # 默认 1024 维 = Milvus 集合默认维度）
+          model: ${LLM_EMBEDDING_MODEL:text-embedding-v4}
 llm:
   provider: ${LLM_PROVIDER:bailian}
   model: ${LLM_MODEL:mimo-v2.5}
-  embedding-model: ${LLM_EMBEDDING_MODEL:qwen3.7-text-embedding}
+  embedding-model: ${LLM_EMBEDDING_MODEL:text-embedding-v4}
   enable-thinking: ${LLM_ENABLE_THINKING:false}
   # v7.10(L3): thinking 为咨询性配置——Spring AI OpenAI starter 无法透传 enable_thinking，
   # 开启后不生效（启动时会输出 warn 日志提醒）；LLM_ENABLE_THINKING 仅对 MCP 多模态链路有意义

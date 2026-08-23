@@ -155,16 +155,20 @@ services:
       - EXECUTOR_LLM_CONCURRENCY=${EXECUTOR_LLM_CONCURRENCY:-4}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://opencode.ai/zen/go/v1}
       # embedding 独立端点与 key（chat 继续走 LLM_BASE_URL / LLM_API_KEY）
-      - LLM_EMBEDDING_BASE_URL=${LLM_EMBEDDING_BASE_URL:-}
+      # v7.14(E17): 默认端点/模型修正——原 `:-` 空默认把变量设为空串，Spring 占位符
+      # 对"已设置但为空"不回落 yml 默认值，空 base-url 落到 api.openai.com + 不存在的
+      # 模型名 qwen3.7-text-embedding → 404。默认改 DashScope 兼容端点 + text-embedding-v4
+      - LLM_EMBEDDING_BASE_URL=${LLM_EMBEDDING_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
       - LLM_EMBEDDING_API_KEY=${LLM_EMBEDDING_API_KEY:-${DASHSCOPE_API_KEY:-}}
-      - LLM_EMBEDDING_MODEL=${LLM_EMBEDDING_MODEL:-qwen3.7-text-embedding}
+      - LLM_EMBEDDING_MODEL=${LLM_EMBEDDING_MODEL:-text-embedding-v4}
       - LLM_ENABLE_THINKING=${LLM_ENABLE_THINKING:-false}
       - LLM_THINKING_ANALYSIS=${LLM_THINKING_ANALYSIS:-true}
       - LLM_THINKING_GENERATION=${LLM_THINKING_GENERATION:-false}
       # v6.5: LLM 重试次数（分类 + 抖动）
       - LLM_RETRY_MAX_ATTEMPTS=${LLM_RETRY_MAX_ATTEMPTS:-3}
       # v6.1 (B 方案): 统一 prompt 上限与 LLM HTTP 超时
-      - LLM_MAX_PROMPT_CHARS=${LLM_MAX_PROMPT_CHARS:-60000}
+      # v7.13: 默认 60000 → 300000（与 application.yml / LlmService 默认值对齐）
+      - LLM_MAX_PROMPT_CHARS=${LLM_MAX_PROMPT_CHARS:-300000}
       - LLM_MAX_CONTEXT_CHARS=${LLM_MAX_CONTEXT_CHARS:-24000}
       - LLM_CONNECT_TIMEOUT_MS=${LLM_CONNECT_TIMEOUT_MS:-30000}
       - LLM_READ_TIMEOUT_MS=${LLM_READ_TIMEOUT_MS:-600000}

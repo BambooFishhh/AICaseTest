@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -21,6 +22,10 @@ public class EmbeddingService {
 
     @Autowired
     private EmbeddingModel embeddingModel;
+
+    // v7.14(E17): 失败日志带模型名——404（模型不存在）/401（密钥）一眼可判
+    @Value("${spring.ai.openai.embedding.options.model:}")
+    private String embeddingModelName;
 
     public boolean isConfigured() {
         return embeddingModel != null;
@@ -54,7 +59,8 @@ public class EmbeddingService {
             }
             return result;
         } catch (Exception e) {
-            log.warn("Embedding failed: {}", e.getMessage());
+            // v7.14(E17): 带模型名诊断——404=模型不存在（端点/模型名错配），401=密钥问题
+            log.warn("Embedding failed (model={}): {}", embeddingModelName, e.getMessage());
             return List.of();
         }
     }

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.FrontendResult;
 import com.testagent.common.BusinessException;
+import com.testagent.common.GenerationCancelledException;
 import com.testagent.dto.GenerationParams;
 import com.testagent.dto.JsonHelper;
 import com.testagent.dto.PrdAnalysisResult;
@@ -133,7 +134,7 @@ public class OrchestratorAgent {
         TelemetryService.TelemetryContext telemetry = telemetryService.start("generation", projectId);
         boolean ok = false;
         try {
-            GenContext ctx = loadGenerationContext(projectId, progressCallback);
+            GenContext ctx = loadGenerationContext(projectId, progressCallback, cancelled);
             telemetryService.beginPhaseIfActive("generation");
             List<TestCase> result = testGeneratorAgent.generateStreaming(ctx.prdResult(), ctx.stateMachines(),
                     ctx.backendResult(), ctx.frontendResult(), progressCallback, caseCallback, cancelled,
@@ -149,6 +150,11 @@ public class OrchestratorAgent {
     // v3.2: 抽取生成上下文加载（PRD 解析 + 代码/前端结果加载），供 generate 与 generateStreaming 复用
     // v3.4: 解析 Project.settings 得到 GenerationParams，空/失败降级默认值
     private GenContext loadGenerationContext(String projectId, TestGeneratorAgent.ProgressCallback progressCallback) {
+        return loadGenerationContext(projectId, progressCallback, null);
+    }
+
+    private GenContext loadGenerationContext(String projectId, TestGeneratorAgent.ProgressCallback progressCallback,
+                                             CancellationSignal cancelled) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new IllegalStateException("项目不存在: " + projectId));
 
@@ -228,11 +234,13 @@ public class OrchestratorAgent {
         if (progressCallback != null) {
             progressCallback.update("正在解析需求资料（PRD/上下文文档/补充需求）...");
         }
+        checkCancelled(cancelled);
         boolean prdPhase = telemetryService.beginPhaseIfActive("prd");
         prdResult = prdAgent.analyze(prdDocs, contextDocs, supplementary);
         if (prdPhase) {
             telemetryService.endPhase();
         }
+        checkCancelled(cancelled);
         if (prdResult == null || prdResult.isEmpty()) {
             throw new BusinessException(50015, "PRD 解析失败：未能从需求文档中提取有效需求",
                     HttpStatus.INTERNAL_SERVER_ERROR);
@@ -249,6 +257,7 @@ public class OrchestratorAgent {
             // v6.4: 模块/需求/上下文文档/补充需求分段查询，RRF 融合，且只召回需求类切片
             // v7.10(G9): 分类别配额（requirements 6 + modules 3 + contextDocs 2 + supplementary 1），
             // 需求优先，取代旧的顺序拼接 + 总量截断
+            checkCancelled(cancelled);
             List<String> ragQueries = buildRagQueries(prdResult);
             List<String> ragContexts = semanticService.retrieveContexts(
                     projectId, ragQueries, ragContextTopK, RAG_CONTEXT_MODULES);
@@ -256,6 +265,7 @@ public class OrchestratorAgent {
             if (!ragContexts.isEmpty()) {
                 log.info("RAG retrieved {} contexts for project {}", ragContexts.size(), projectId);
             }
+            checkCancelled(cancelled);
             // v6.4: 历史失败经验闭环——生成前检索相似失败并注入 prompt
             // v7.10(G18): 失败专用查询——需求形查询打动作形语料向量天然弱，
             // 取前 6 条（需求优先）+ 操作/页面类关键词后缀，embedding 调用 12→7
@@ -265,6 +275,7 @@ public class OrchestratorAgent {
             if (!ragFailures.isEmpty()) {
                 log.info("RAG retrieved {} failures for project {}", ragFailures.size(), projectId);
             }
+            checkCancelled(cancelled);
             // v6.1 (前端 Agentic RAG): 用需求文本定位相关组件摘要，供端到端生成融合 UI 语义
             List<Map<String, Object>> frontendComponents =
                     semanticService.retrieveComponents(projectId, ragQueries, 6);
@@ -304,6 +315,12 @@ public class OrchestratorAgent {
         applyStateFlowConsistency(prdResult, stateMachines);
 
         return new GenContext(prdResult, stateMachines, backendResult, frontendResult, params);
+    }
+
+    private void checkCancelled(CancellationSignal cancelled) {
+        if (cancelled != null && cancelled.isCancelled()) {
+            throw new GenerationCancelledException("用例生成已取消");
+        }
     }
 
     // v7.10(C2): 证据链新鲜度对账——需求资料（project.updatedAt）晚于代码侧最新产物
