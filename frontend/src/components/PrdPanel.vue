@@ -171,6 +171,8 @@ import {
 } from '@/api/project'
 
 const props = defineProps({ projectId: String })
+// 保存成功后通知父组件刷新项目状态（prdContent 变化影响生成按钮可用性）
+const emit = defineEmits(['saved'])
 
 const reqDocs = ref([])
 const supplementaryRequirements = ref('')
@@ -245,6 +247,7 @@ async function persistDocs(showMessage, message) {
         id, title, content, sourceType, sourceRef, docType
       }))
     })
+    emit('saved')
     if (showMessage) ElMessage.success(message || '需求文档已保存')
   } finally {
     savingContext.value = false

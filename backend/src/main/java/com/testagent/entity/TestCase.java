@@ -16,8 +16,13 @@ public class TestCase {
     @Id
     private String id;
 
-    @Column(name = "project_id")
-    private String projectId;
+@Column(name = "project_id")
+private String projectId;
+
+// v7.15(2a): 项目内展示序号——id 仍为全局唯一 TC-xxx（防跨项目撞号静默覆盖），
+// 展示层用项目内从 1 连续的编号，兼顾唯一性与可读性
+@Column(name = "project_seq")
+private Integer projectSeq;
 
     private String title;
 

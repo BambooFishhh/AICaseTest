@@ -16,6 +16,9 @@ public class TestCaseDTO {
 
     private String projectId;
 
+    // v7.15(2a): 项目内展示序号（id 仍为全局唯一 TC-xxx）
+    private Integer projectSeq;
+
     private String title;
 
     private String module;
@@ -60,6 +63,7 @@ public class TestCaseDTO {
         return TestCaseDTO.builder()
                 .id(entity.getId())
                 .projectId(entity.getProjectId())
+                .projectSeq(entity.getProjectSeq())
                 .title(entity.getTitle())
                 .module(entity.getModule())
                 .type(entity.getType())

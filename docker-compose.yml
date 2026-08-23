@@ -229,8 +229,8 @@ services:
       # 数据与输出持久化
       - ./data:/app/data
       - ./outputs:/app/outputs
-      # 待分析项目代码（只读挂载 litemall）
-      - E:/java_project/litemall:/app/projects/litemall:ro
+      # 待分析项目代码（只读挂载 litemall，后台管理代码已移除）
+      - E:/java_project/litemall:/app/projects/litemall-mall:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]

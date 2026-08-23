@@ -130,6 +130,10 @@ public class TestCaseService {
     @Autowired
     private TestCaseIdAllocator idAllocator;
 
+    // v7.15(2a): 项目内展示序号分配器（与全局 id 双编号制）
+    @Autowired
+    private ProjectSeqAllocator projectSeqAllocator;
+
     @Autowired
     private TestCaseReviewAgent testCaseReviewAgent;
 
@@ -504,6 +508,8 @@ public class TestCaseService {
             // 3. 续号保存（v7.11(T1): 逐条走全局分配器，缓存随批量同步推进）
             for (TestCase tc : toAppend) {
                 tc.setId(idAllocator.nextId());
+                // v7.15(2a): 项目内展示序号
+                tc.setProjectSeq(projectSeqAllocator.nextId(projectId));
                 tc.setProjectId(projectId);
                 tc.setCreatedAt(LocalDateTime.now());
                 testCaseRepository.save(tc);
@@ -982,6 +988,7 @@ public class TestCaseService {
             }
             // v7.11(T1): 逐条走全局分配器
             tc.setId(idAllocator.nextId());
+            tc.setProjectSeq(projectSeqAllocator.nextId(projectId));
             tc.setProjectId(projectId);
             tc.setSource("imported");
             tc.setCreatedAt(LocalDateTime.now());
@@ -1029,6 +1036,7 @@ public class TestCaseService {
             }
             // v7.11(T1): 逐条走全局分配器
             tc.setId(idAllocator.nextId());
+            tc.setProjectSeq(projectSeqAllocator.nextId(projectId));
             tc.setProjectId(projectId);
             tc.setSource("xmind_import");
             tc.setCreatedAt(LocalDateTime.now());
@@ -1070,6 +1078,7 @@ public class TestCaseService {
             TestCase copy = cloneTestCase(tc);
             // v7.11(T1): 逐条走全局分配器
             copy.setId(idAllocator.nextId());
+            copy.setProjectSeq(projectSeqAllocator.nextId(targetProjectId));
             copy.setProjectId(targetProjectId);
             copy.setSource("copied");
             copy.setCreatedAt(LocalDateTime.now());
@@ -1193,6 +1202,8 @@ public class TestCaseService {
         // v7.11(T2): 弃用 size()+1（删除中间用例后会与现存同号用例 merge 静默覆盖），
         // 统一走全局唯一分配器
         tc.setId(idAllocator.nextId());
+        // v7.15(2a): 项目内展示序号
+        tc.setProjectSeq(projectSeqAllocator.nextId(projectId));
 
         testCaseRepository.save(tc);
         // v5.6: 手工创建用例同步语义索引

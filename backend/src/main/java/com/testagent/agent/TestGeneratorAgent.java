@@ -2,6 +2,7 @@ package com.testagent.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.BusinessRule;
 import com.testagent.analyzer.result.EndpointInfo;
@@ -203,7 +204,7 @@ public class TestGeneratorAgent {
             tc.setPreconditions(serializeStringArray(node.path("preconditions")));
             tc.setSteps(serializeStringArray(node.path("steps")));
             tc.setExpectedResults(serializeStringArray(node.path("expectedResults")));
-            tc.setStructuredSteps(nodeToJson(node.path("structuredSteps"), "[]"));
+            tc.setStructuredSteps(sanitizeUiSelectors(nodeToJson(node.path("structuredSteps"), "[]")));
             tc.setApiEndpoints(nodeToJson(node.path("apiEndpoints"), "[]"));
             tc.setTestData(nodeToJson(node.path("testData"), "{}"));
             tc.setExecutionHints(mergeCoverageRefs(node.path("coverageRefs"),
@@ -387,9 +388,14 @@ public class TestGeneratorAgent {
             ## structuredSteps / testData / executionHints 要求（必须严格遵守）
             - structuredSteps 必须是非空数组，按真实操作顺序 3-10 步展开：进入页面→定位元素→输入/点击→断言
             - 页面操作优先用 ui_action 类型步骤描述（点哪个按钮、输入什么），不要只写接口调用
-            - ui_action 步骤必须携带 uiSelector：{type, value}
-              - type 取 id / ref / data-testid / aria-label / text / path
-              - value 从 frontendSelectors 中选最匹配的真实选择器；无精确匹配时用 {type:"text", value:"可见文案"}
+            - v7.15(A): ui_action 的 target 必须是页面元素/区域的人话描述（如"登录按钮"），
+              严禁出现 HTTP 方法+路径格式（如 "GET /wx/home/index"、"POST /api/order"）；
+              接口信息只能放在 apiEndpoints 关联字段或 type=api_call 的步骤中
+            - ui_action 步骤可携带 uiSelector：{type, value}
+              - type 白名单（执行器仅支持这些）：id / css / class / data-testid / aria-label / xpath
+              - 禁止编造 text / path / ref 等执行器不支持的类型
+              - value 从 frontendSelectors 中选最匹配的真实选择器；无精确匹配时省略 uiSelector 字段
+              （后端会按前端分析结果自动补齐），严禁虚构选择器值
             - 输入类步骤 data 必须含具体字段值（按 frontendForms 的字段名）
             - state_assert 的 expected 写可验证断言；api_call 的 target 用真实接口路径
             - target、expected 都不能为空；testData 含具体字段值
@@ -777,7 +783,8 @@ public class TestGeneratorAgent {
                                           GenerationReport report) {
         GenerationReport r = report != null ? report : new GenerationReport();
         // v3.13: 包装回调，仅透传聚焦类型（SSE 推送与落库一致）
-        CaseCallback effectiveCb = wrapFocusFilter(params, caseCb);
+        // v7.15: 外层再套跨轮推送去重——同题草稿只推首见那次，后续补齐轮不再重复发 SSE
+        CaseCallback effectiveCb = wrapPushDedup(wrapFocusFilter(params, caseCb));
 
         // v5.13: 生成必须基于 PRD，代码只作为辅助上下文
         if (prdResult == null || prdResult.isEmpty()) {
@@ -878,6 +885,24 @@ public class TestGeneratorAgent {
         };
     }
 
+    // v7.15: 跨轮推送去重——补齐轮针对同一覆盖缺口常再生成同题用例，
+    // 流式草稿按标题（忽略大小写与首尾空白）只推首次，消除前端重复卡片。
+    // 仅收敛 SSE 展示；轮次收集与落库侧 deduplicate() 语义不变。
+    static CaseCallback wrapPushDedup(CaseCallback caseCb) {
+        if (caseCb == null) {
+            return null;
+        }
+        Set<String> seenTitles = new HashSet<>();
+        return tc -> {
+            String key = tc == null || tc.getTitle() == null
+                    ? "" : tc.getTitle().trim().toLowerCase();
+            if (!seenTitles.add(key)) {
+                return;
+            }
+            caseCb.onCase(tc);
+        };
+    }
+
     /**
      * 前端选择器补齐：LLM 未给 uiSelector 时，根据 action/target 文案从前端分析结果中
      * 匹配最可能的 DOM 选择器/表单字段，补到 ui_action 步骤上，让执行更精确。
@@ -927,7 +952,37 @@ public class TestGeneratorAgent {
                 // Agent 模式的输入值由 LLM 决定，分析器目前也无默认值/示例值来源，宁缺勿错
             }
         }
-        tc.setStructuredSteps(toJson(steps));
+        tc.setStructuredSteps(sanitizeUiSelectors(toJson(steps)));
+    }
+
+    // v7.15(B): uiSelector 类型白名单——执行器 buildCssSelector 仅支持以下类型，
+    // text/path/ref 等 LLM 编造类型会转成无效 CSS 必然定位失败；解析与补齐后统一清洗，
+    // 非法 uiSelector 整体剔除（后续 enrichStructuredSteps 可再按前端分析结果补真实选择器）
+    private static final Set<String> EXECUTABLE_SELECTOR_TYPES =
+            Set.of("id", "css", "class", "data-testid", "aria-label", "xpath");
+
+    String sanitizeUiSelectors(String stepsJson) {
+        if (stepsJson == null || stepsJson.isBlank()) {
+            return stepsJson;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(stepsJson);
+            if (!root.isArray()) {
+                return stepsJson;
+            }
+            boolean changed = false;
+            for (JsonNode step : root) {
+                JsonNode sel = step.path("uiSelector");
+                if (sel.isObject() && !EXECUTABLE_SELECTOR_TYPES.contains(sel.path("type").asText(""))) {
+                    ((ObjectNode) step).remove("uiSelector");
+                    changed = true;
+                }
+            }
+            return changed ? objectMapper.writeValueAsString(root) : stepsJson;
+        } catch (Exception e) {
+            log.warn("sanitizeUiSelectors failed, keep original: {}", e.getMessage());
+            return stepsJson;
+        }
     }
 
     // 按关键词包含匹配最合适的 DOM 选择器/表单字段
@@ -1774,7 +1829,7 @@ public class TestGeneratorAgent {
                     tc.setPreconditions(serializeStringArray(node.path("preconditions")));
                     tc.setSteps(serializeStringArray(node.path("steps")));
                     tc.setExpectedResults(serializeStringArray(node.path("expectedResults")));
-                    tc.setStructuredSteps(nodeToJson(node.path("structuredSteps"), "[]"));
+                    tc.setStructuredSteps(sanitizeUiSelectors(nodeToJson(node.path("structuredSteps"), "[]")));
                     tc.setApiEndpoints(nodeToJson(node.path("apiEndpoints"), "[]"));
                     tc.setTestData(nodeToJson(node.path("testData"), "{}"));
                     tc.setExecutionHints(mergeCoverageRefs(node.path("coverageRefs"),

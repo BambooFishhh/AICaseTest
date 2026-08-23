@@ -177,7 +177,7 @@
       </Transition>
 
       <!-- PRD 面板 -->
-      <PrdPanel :project-id="projectId" />
+      <PrdPanel :project-id="projectId" @saved="refreshProject" />
 
       <!-- v4.3: 只读提示 -->
       <el-alert

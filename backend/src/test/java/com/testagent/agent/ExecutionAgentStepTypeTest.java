@@ -12,6 +12,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -105,5 +106,30 @@ class ExecutionAgentStepTypeTest {
         assertEquals("Agent 模式暂不支持 API 调用步骤", step.getError());
         verify(playwrightSkill, never()).getPageStatus(anyString());
         verify(playwrightSkill, never()).visualClick(anyString(), anyInt(), anyInt());
+    }
+
+    @Test
+    void uiActionWithHttpStyleTargetIsSkippedNotClicked() throws Exception {
+        // v7.15(C): ui_action 的 target 是 "METHOD /path" 形态（生成数据缺陷），
+        // 不再进入点击流水线，自动降级 skip 并如实记录原因
+        PlaywrightRecordSkill playwrightSkill = mock(PlaywrightRecordSkill.class);
+        ExecutionAgent agent = agent(playwrightSkill);
+
+        ExecutionStep step = agent.executeStep("session-1", objectMapper.readTree("""
+                {"type":"ui_action","action":"验证首页加载","target":"GET /wx/home/index",
+                 "expected":"首页数据加载成功","data":{},"uiSelector":{"type":"path","value":"/"}}
+                """), "用例: 首页展示", 1, "exec-1");
+
+        assertEquals("skipped", step.getResult());
+        assertTrue(step.getError().contains("接口引用"));
+        verify(playwrightSkill, never()).domClick(anyString(), anyString(), anyString());
+        verify(playwrightSkill, never()).visualClick(anyString(), anyInt(), anyInt());
+
+        // 对照：非 HTTP 形态的 target 不触发该防御（走原有流水线，由其余用例覆盖）
+        ExecutionStep passThrough = agent.executeStep("session-1", objectMapper.readTree("""
+                {"type":"ui_action","action":"点击登录按钮","target":"登录按钮","expected":"提交登录"}
+                """), "用例: 登录", 3, "exec-1");
+        assertFalse(passThrough.getError() != null && passThrough.getError().contains("接口引用"),
+                "正常人话 target 不应被 C 防御拦截");
     }
 }

@@ -26,4 +26,11 @@ public class CoverageController {
         projectAccessService.assertViewAccess(projectId);
         return ApiResponse.success(coverageService.getCoverageMatrix(projectId));
     }
+
+    // v7.15(3b): 未覆盖接口清单——缺口可操作化
+    @GetMapping("/uncovered-endpoints")
+    public ApiResponse<Object> getUncoveredEndpoints(@PathVariable String projectId) {
+        projectAccessService.assertViewAccess(projectId);
+        return ApiResponse.success(coverageService.uncoveredEndpoints(projectId));
+    }
 }

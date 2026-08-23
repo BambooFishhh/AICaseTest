@@ -29,14 +29,21 @@ public class TestCasePersistenceService {
     @Autowired
     private TestCaseReviewAgent testCaseReviewAgent;
 
+    // v7.15(2a): 项目内展示序号分配器（与全局 id 双编号制）
+    @Autowired
+    private ProjectSeqAllocator projectSeqAllocator;
+
     @Transactional
     public List<TestCase> replaceAll(String projectId, List<TestCase> cases) {
         testCaseVersionRepository.deleteByProjectId(projectId);
         // v5.14fix: 重新生成时同步清理旧 AI 评审历史，避免与新评审记录混存
         aiReviewRepository.deleteByProjectId(projectId);
         testCaseRepository.deleteAll(testCaseRepository.findByProjectId(projectId));
+        // v7.15(2a): 项目已清空，展示序号从 1 重新计数（先丢弃旧缓存）
+        projectSeqAllocator.reset(projectId);
         for (TestCase tc : cases) {
             tc.setProjectId(projectId);
+            tc.setProjectSeq(projectSeqAllocator.nextId(projectId));
             testCaseRepository.save(tc);
         }
         // v5.12: 项目归属确定后补记 AI 评审历史

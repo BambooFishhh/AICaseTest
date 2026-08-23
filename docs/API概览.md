@@ -40,6 +40,7 @@
 | PUT | `/api/projects/{id}/generation-params` | 更新生成参数（v3.4，v3.12 含 defaultTargetUrl） |
 | GET | `/api/projects/{id}/testcases` | 用例列表（分页+筛选+覆盖率，v3.12 支持 executionStatus 筛选） |
 | GET | `/api/projects/{id}/coverage/matrix` | 覆盖率矩阵（每转换覆盖详情） |
+| GET | `/api/projects/{id}/coverage/uncovered-endpoints` | 未覆盖接口清单（与接口覆盖率同口径差集，v7.15） |
 | GET | `/api/projects/{id}/testcases/{tcId}` | 用例详情 |
 | PUT | `/api/projects/{id}/testcases/{tcId}` | 更新用例（v5.12 支持可选 reviewStatus） |
 | DELETE | `/api/projects/{id}/testcases/{tcId}` | 删除用例 |

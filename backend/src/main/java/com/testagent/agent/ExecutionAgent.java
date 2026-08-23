@@ -95,6 +95,23 @@ public class ExecutionAgent {
                         .error("Agent 模式暂不支持 API 调用步骤")
                         .build();
             }
+            // v7.15(C): 脏数据防御——ui_action 的 target 是 "METHOD /path" 形态，
+            // 说明接口引用被误标为页面操作（生成数据缺陷），点击必然失败；
+            // 自动降级 skip 并如实记录原因，不再进入"找元素→截图→定位→点击"流水线
+            if ("ui_action".equals(stepType)
+                    && target != null && target.trim().matches(
+                            "(?i)^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\\s+/\\S+$")) {
+                return ExecutionStep.builder()
+                        .id(newStepId())
+                        .executionId(executionId)
+                        .stepIndex(stepIndex)
+                        .action(action)
+                        .target(target)
+                        .strategy("skip")
+                        .result("skipped")
+                        .error("target 为接口引用而非页面元素（生成数据缺陷），已自动跳过点击")
+                        .build();
+            }
             if ("input".equals(step.path("type").asText())) {
                 JsonNode selector = step.path("uiSelector");
                 String inputValue = step.path("inputValue").asText(step.path("value").asText(""));

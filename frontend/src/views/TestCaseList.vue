@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="testcase-list page-container" v-loading="loading">
     <!-- 页头 -->
     <header class="page-header">
@@ -88,17 +88,45 @@
         <div class="stat-icon"><el-icon :size="18"><DataAnalysis /></el-icon></div>
         <div class="stat-body">
           <div class="stat-value">{{ coverage ? `${Math.round(coverage.stateTransition.rate * 100)}%` : '—' }}</div>
-          <div class="stat-label">状态机覆盖</div>
+          <div class="stat-label">
+            <el-tooltip content="口径：状态机转换。分母为状态机提取的全部转换；计划引用与已执行用例均计入" placement="top">
+              <span>状态机覆盖</span>
+            </el-tooltip>
+          </div>
         </div>
       </div>
       <div class="stat-card stat-coverage stat-coverage-api">
         <div class="stat-icon"><el-icon :size="18"><DataAnalysis /></el-icon></div>
         <div class="stat-body">
           <div class="stat-value">{{ coverage ? `${Math.round(coverage.apiEndpoint.rate * 100)}%` : '—' }}</div>
-          <div class="stat-label">接口覆盖</div>
+          <div class="stat-label">
+            <el-tooltip content="口径：API 接口。分母为代码分析出的全部接口（与状态机覆盖不同口径）；未执行用例仅计划引用计入，执行后按实际调用接口计入" placement="top">
+              <span>接口覆盖</span>
+            </el-tooltip>
+          </div>
         </div>
       </div>
     </div>
+    <!-- v7.15: 口径说明——两个覆盖率分母不同，避免误读为同一指标 -->
+    <div class="coverage-caliber-note">两个覆盖率口径不同：状态机覆盖以转换为分母，接口覆盖以代码分析出的接口为分母，数值不具备可比性。</div>
+
+    <!-- v7.15(3b): 未覆盖接口清单——缺口可操作化 -->
+    <section v-if="uncoveredEndpoints.total > 0" class="uncovered-section">
+      <div class="uncovered-head" @click="uncoveredOpen = !uncoveredOpen">
+        <span class="uncovered-title">
+          未覆盖接口 {{ uncoveredEndpoints.uncoveredCount }} / {{ uncoveredEndpoints.total }}
+        </span>
+        <el-icon :size="14"><component :is="uncoveredOpen ? 'ArrowUp' : 'ArrowDown'" /></el-icon>
+      </div>
+      <div v-if="!uncoveredOpen" class="uncovered-hint">这些接口没有任何用例计划引用或执行覆盖，可针对性追加生成</div>
+      <ul v-else class="uncovered-list">
+        <li v-for="(ep, i) in uncoveredEndpoints.uncovered" :key="i" class="uncovered-item">
+          <el-tag size="small" effect="plain" class="ep-method">{{ ep.method }}</el-tag>
+          <span class="ep-path">{{ ep.path }}</span>
+          <span v-if="ep.description" class="ep-desc">{{ ep.description }}</span>
+        </li>
+      </ul>
+    </section>
 
     <!-- 筛选卡片 -->
     <section class="filter-section">
@@ -389,7 +417,10 @@
           <template #default="{ row }">
             <span v-if="row.isModule"></span>
             <span v-else-if="streaming" class="text-muted">生成中</span>
-            <span v-else class="case-id">{{ row.id }}</span>
+            <!-- v7.15(2a): 双编号——展示项目内序号，悬浮显示平台全局唯一 id -->
+            <el-tooltip v-else :content="'平台编号 ' + row.id" placement="top">
+              <span class="case-id">#{{ row.projectSeq ?? row.id }}</span>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip>
@@ -831,7 +862,7 @@
             <el-checkbox label="boundary">边界</el-checkbox>
             <el-checkbox label="data">数据</el-checkbox>
           </el-checkbox-group>
-          <div class="form-tip">不选 = 全部类型；勾选后仅生成对应类型用例（v3.13 起强制过滤）</div>
+          <div class="form-tip">不选 = 全部类型；勾选后仅生成对应类型用例</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -924,7 +955,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, Delete, Download, Upload, Check, ArrowDown, VideoPlay,
+  Search, Delete, Download, Upload, Check, ArrowDown, ArrowUp, VideoPlay,
   Setting, Plus, View, RefreshRight, Share, Files, Document, MoreFilled, CircleCheck,
   CircleClose, Aim, Coin, FolderOpened, ArrowLeft, Loading, DataAnalysis,
   Clock, Filter, CopyDocument, Operation, Connection, MagicStick, EditPen, Select
@@ -949,7 +980,7 @@ import { useProjectStore } from '@/stores/project'
 import TestCaseCard from '@/components/TestCaseCard.vue'
 import TestCaseVersionDrawer from '@/components/TestCaseVersionDrawer.vue'
 import CoverageMatrix from '@/components/CoverageMatrix.vue'
-import { getCoverageMatrix } from '@/api/coverage'
+import { getCoverageMatrix, getUncoveredEndpoints } from '@/api/coverage'
 import { hasSuggestedChanges, pollAiReview } from '@/utils/aiReview'
 
 const route = useRoute()
@@ -1100,6 +1131,9 @@ const xmindFileInput = ref(null)
 const mindmapGenerated = ref(false)
 
 const coverageMatrix = ref(null)
+// v7.15(3b): 未覆盖接口清单
+const uncoveredEndpoints = ref({ total: 0, covered: 0, uncoveredCount: 0, uncovered: [] })
+const uncoveredOpen = ref(false)
 
 async function loadCoverageMatrix() {
   try {
@@ -1107,6 +1141,13 @@ async function loadCoverageMatrix() {
     coverageMatrix.value = res.data
   } catch {
     // 错误已由响应拦截器统一提示
+  }
+  // v7.15(3b): 未覆盖接口清单随覆盖率一并刷新（所有刷新点都走本函数）
+  try {
+    const res = await getUncoveredEndpoints(projectId)
+    uncoveredEndpoints.value = res.data || { total: 0, covered: 0, uncoveredCount: 0, uncovered: [] }
+  } catch {
+    // 清单加载失败不阻塞页面，保持上次数据
   }
 }
 
@@ -2047,6 +2088,16 @@ async function handleVersionRollback() {
   }
 }
 
+// v7.15: 流式草稿按标题 upsert——后端已做跨轮推送去重，这里兜底防同题堆卡：
+// 同题草稿存在则移除旧条目，新草稿置顶
+function upsertStreamedCase(tc) {
+  const key = String(tc?.title ?? '').trim().toLowerCase()
+  const idx = streamedCases.value.findIndex(
+    (d) => String(d?.title ?? '').trim().toLowerCase() === key)
+  if (idx >= 0) streamedCases.value.splice(idx, 1)
+  streamedCases.value.unshift(tc)
+}
+
 async function handleRegenerate() {
   try {
     await ElMessageBox.confirm(
@@ -2069,9 +2120,7 @@ async function handleRegenerate() {
     onProgress: (msg) => {
       streamProgress.value = msg
     },
-    onCase: (tc) => {
-      streamedCases.value.unshift(tc)
-    },
+    onCase: upsertStreamedCase,
     onComplete: async (data) => {
       // v7.1(G2): complete 携带 total/pushed/dropped——流式推送的是草稿，
       // 落库前经评审/去重会丢弃部分，差异原因对用户可见，不再静默
@@ -2213,9 +2262,7 @@ async function startAppendStream(type) {
     onProgress: (msg) => {
       streamProgress.value = msg
     },
-    onCase: (tc) => {
-      streamedCases.value.unshift(tc)
-    },
+    onCase: upsertStreamedCase,
     onComplete: async (data) => {
       const appended = data?.appended ?? 0
       const dropped = data?.dropped ?? 0
@@ -2435,8 +2482,84 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: var(--space-md);
-  margin-bottom: var(--space-lg);
+  margin-bottom: var(--space-md);
 }
+
+.coverage-caliber-note {
+  margin-bottom: var(--space-lg);
+  font-size: 12px;
+  color: var(--text-secondary, #909399);
+  line-height: 1.5;
+}
+
+/* v7.15(3b): 未覆盖接口清单 */
+.uncovered-section {
+  margin-bottom: var(--space-lg);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+}
+
+.uncovered-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  cursor: pointer;
+  user-select: none;
+}
+
+.uncovered-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-warning, #e6a23c);
+}
+
+.uncovered-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary, #909399);
+}
+
+.uncovered-list {
+  list-style: none;
+  margin: var(--space-sm) 0 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.uncovered-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 4px 0;
+  border-top: 1px dashed var(--card-border);
+  font-size: 12px;
+
+  &:first-child {
+    border-top: none;
+  }
+
+  .ep-method {
+    width: 56px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .ep-path {
+    color: var(--text-primary, #303133);
+    font-family: monospace;
+  }
+
+  .ep-desc {
+    color: var(--text-secondary, #909399);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
 
 .stat-card {
   display: flex;

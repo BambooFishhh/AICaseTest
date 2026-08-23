@@ -5,7 +5,7 @@
         <div class="matrix-head">
           <div class="matrix-head-text">
             <h2 class="matrix-title">覆盖率矩阵</h2>
-            <p class="matrix-desc">状态机转换路径的计划覆盖与执行验证（v7.8 双栏口径）</p>
+            <p class="matrix-desc">状态机转换路径的计划覆盖与执行验证（分母为状态机全部转换）</p>
           </div>
           <div v-if="matrix" class="matrix-summary">
             <div class="summary-row">

@@ -180,7 +180,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v7.14（生成 Prompt 重复注入治理）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v7.15（执行可信与双编号制）**，生产线基线为 vP5（压测与容量）。
+
+- v7.15 要点：执行可信与双编号制——**流式重复草稿治理**（后端 wrapPushDedup 跨轮推送去重 + 前端 onCase 按标题 upsert 兜底，同题草稿只出现一张；期间发现生产镜像曾以含未提交改动的源码构建致 standard 档误跑 6 轮，已重建回 3/4 轮）；**用例双编号制**（全局 TC-id 不变防撞号，新增 project_seq 项目内展示序号 #1 起连续、悬浮见全局 id，V12 迁移回填存量，全量重生成归 1 重计，六条创建路径全覆盖）；**未覆盖接口清单**（新端点 /coverage/uncovered-endpoints 与接口覆盖率完全同口径，前端折叠面板列出无用例引用的接口，缺口可操作化）；**覆盖率口径标注**（统计卡 tooltip + 说明行 + 矩阵分母注明，两口径数值不具可比性不再误读）；**执行数据防御三件套**（A prompt 硬约束 ui_action target 严禁 HTTP 形态+uiSelector 类型白名单对齐执行器能力 / B 解析期 sanitizeUiSelectors 清洗非法类型 / C ExecutionAgent 对 `METHOD /path` 形态 target 的 ui_action 自动降级 skip 如实标注）；PrdPanel 保存联动刷新项目状态（保存 PRD 后生成按钮即时解禁）；用户可见文案版本标注泄漏清理。后端 405 测试全绿。
 
 - v7.14 要点：修复真实大项目（220 接口/182 规则）生成 prompt 432KB 触发 300k 保险丝——coverageChecklist 全量详情重复注入治理（G24，旧实现 putAll(toContextMap()) 把接口/规则/依赖完整详情在清单里再灌一遍，159KB 纯冗余；清单只留对账标识字段，消费方核实只读 id/method/path）；context.endpoints/businessRules 容量控制（G25，G17 弱过滤全放行后按相关性降序保留 top-80/top-100 + 截断说明，未入选项仍在清单摘要中可引用）；prd 序列化剥离 ragContexts 原始切片（策展版已单独注入）；embedding 默认端点 404 修复（E17，默认改 DashScope 兼容端点 + text-embedding-v4，docker-compose 空 `:-` 默认值陷阱同步修正——空串环境变量不回落 yml 默认值）；实测场景 432KB→约 200KB；后端 398 测试全绿。
 - v7.13 要点：分析器 LLM 增强输入预算配置化并放大至"大项目全覆盖"（Spring 源码总量 16k→120k、单文件 1500→10k≈30-40 个 Java 文件全覆盖；Vue 总量 12k→96k、template/script 800/700→3000/3000≈20-30 个组件全覆盖；总闸 max-prompt-chars 60k→300k，全部 `app.analyzer.*` 环境变量可回调）；规则摘要合法化收敛（`buildRuleSummary` 旧实现 `json.substring(0, 30000)` 会砍出非法 JSON 塞进 prompt，新实现每轮条目 ×0.7 重序列化至 ≤80k、5 轮后兜底 counts-only 骨架，endpointCount 恒为真实总数）；Vue 文件页面优先排序（A9 字典序确定性保留，views/pages/App.vue > components > 其他——纯字典序下 components 会把页面挤出预算，优先级正好反了）；移除死配置 `llm.max-context-chars`（登记后从未被读取）；大项目三层演进方案（分批增强 → map-reduce 摘要 → 按需检索）落盘 `docs/大项目代码分析演进提案.md` 作 v8.x 候选；后端 389 测试全绿。
@@ -255,6 +257,7 @@ AICaseTest/
 | v7.12 | 复审 P1/P2 修复（reject 分母/选择器池纯化/判重口径对齐/熔断半开/Redis 租约信号量/报告流式/SSE 断连降级） | ✅ 完成 |
 | v7.13 | 输入截断上限扩容（分析器预算配置化放大/规则摘要合法化/Vue 页面优先排序/死配置清理） | ✅ 完成 |
 | v7.14 | 生成 Prompt 重复注入治理（checklist 摘要化/context 容量控制/embedding 404 修复） | ✅ 完成 |
+| v7.15 | 执行可信与双编号制（流式跨轮去重/双编号制/未覆盖接口清单/口径标注/执行数据防御三件套） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

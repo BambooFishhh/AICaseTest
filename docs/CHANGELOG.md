@@ -4,6 +4,60 @@
 
 ---
 
+## v7.15 — 执行可信与双编号制
+**日期**: 2026-08-23
+**基线**: v7.14
+**主题**: 流式重复草稿治理（跨轮推送去重+前端 upsert 兜底）、用例双编号制（全局 TC-id + 项目内 project_seq）、未覆盖接口清单（缺口可操作化）、覆盖率口径标注、执行数据防御三件套（HTTP 形态 target / 非法 uiSelector 类型）、PrdPanel 保存联动刷新
+
+### 背景
+
+一次真实使用暴露三类可信度问题：①追加生成时同题草稿卡在界面堆叠 N 次——运行镜像为回退前源码构建（standard 档误为 6 轮）放大了多轮补齐对未收敛缺口的反复再生成，而 SSE 推送发生在落库去重之前；②v7.11 全局编号修复后新项目首条用例直接是 TC-171，用户失去项目内序号感知；③接口覆盖与状态机矩阵口径不同却无数值外说明，28/86 未覆盖接口不可见不可操作。另有 TC-171 六步全败的执行案例：LLM 把 `GET /wx/home/index` 塞进 ui_action 的 target、uiSelector 使用执行器不支持的 `ref` 类型、期望文本叙述化不可断言——页面本身正常，脏数据导致全败。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `agent/TestGeneratorAgent.java` | 修改 | **wrapPushDedup 跨轮推送去重**——推送链改为 wrapPushDedup(wrapFocusFilter(caseCb))，按标题（忽略大小写/空白）只推首见，仅收敛 SSE 展示，轮次收集与落库 deduplicate() 不变；**A prompt 硬约束**——ui_action target 严禁 HTTP 方法+路径格式、uiSelector.type 白名单对齐执行器真实能力（id/css/class/data-testid/aria-label/xpath，删除执行器不支持的 text/path/ref）、无精确匹配时省略 uiSelector 禁止虚构；**B sanitizeUiSelectors**——解析两处 LLM 输出与 enrichStructuredSteps 写回统一清洗非法类型 uiSelector |
+| `agent/ExecutionAgent.java` | 修改 | **C 脏数据防御分流**——ui_action 的 target 匹配 `^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+/\S+$` 时自动降级 skip 并如实标注"接口引用而非页面元素"，不再进入找元素→截图→定位→点击流水线 |
+| `service/ProjectSeqAllocator.java` | **新增** | 项目内展示序号分配器——per-project AtomicInteger 缓存 + 冷启动加载 max(project_seq)；reset() 供全量重生成清缓存 |
+| `service/TestCasePersistenceService.java` | 修改 | replaceAll 清库后 reset 分配器并逐条分配序号（全量重生成序号从 1 重计） |
+| `service/TestCaseService.java` | 修改 | 追加/JSON 导入/XMind 导入/复制/手动创建五条路径接入 project_seq 分配 |
+| `entity/TestCase.java`、`dto/TestCaseDTO.java` | 修改 | 新增 projectSeq 字段并透出列表/详情响应 |
+| `repository/TestCaseRepository.java` | 修改 | 新增 findMaxProjectSeq 查询 |
+| `db/migration/mysql/V12__add_project_seq.sql` | **新增** | 加列 project_seq + ROW_NUMBER 物化派生表 JOIN 回填存量（规避 MySQL 1093）+ (project_id, project_seq) 索引；仅 mysql profile Flyway 执行，H2 dev 由 JPA ddl-auto 建列 |
+| `service/CoverageService.java` | 修改 | **3b uncoveredEndpoints**——分母取最新分析接口全集，covered=计划引用∪已执行调用（与接口覆盖率完全同口径），返回差集清单 |
+| `controller/CoverageController.java` | 修改 | 新端点 GET /api/projects/{projectId}/coverage/uncovered-endpoints |
+| `test/.../TestGeneratorAgentExecutionGuardTest.java` 等 | **新增** | 跨轮去重 3 用例、uiSelector 白名单 3 用例、ExecutionAgentStepTypeTest 增 C 防御 1 用例 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `views/TestCaseList.vue` | 修改 | **upsertStreamedCase** 两处 onCase 统一按标题 upsert（兜底防堆卡）；编号列改显 #projectSeq（悬浮见 TC-id，空值回退）；新增未覆盖接口折叠面板（收起显 N/M+提示，展开列 method/path/描述）；统计卡口径 tooltip + 说明行；移除用户可见版本标注 |
+| `components/CoverageMatrix.vue` | 修改 | 矩阵描述补"分母为状态机全部转换"；移除版本标注泄漏 |
+| `components/PrdPanel.vue` | 修改 | 新增 saved emit（persistDocs 成功后触发） |
+| `views/ProjectDetail.vue` | 修改 | 监听 PrdPanel @saved → refreshProject()，保存 PRD 后生成按钮即时解禁 |
+| `api/coverage.js` | 修改 | 新增 getUncoveredEndpoints |
+
+### API 契约变化
+
+- 新增：`GET /api/projects/{projectId}/coverage/uncovered-endpoints`
+- 兼容扩展：testcases 响应新增 `projectSeq`
+
+### 其他
+
+- docker-compose 待分析项目只读挂载改名：`/app/projects/litemall` → `/app/projects/litemall-mall`（DB 存量 source_path 同步更新）
+- 生产镜像治理：v7.15 开发期间曾以含未提交改动（6/8 轮）的源码构建后端镜像并上线运行，已重建回提交版（3/4 轮）——镜像构建必须以干净基线为准
+
+### 验证结果
+
+- 后端全量 `mvn test`：405 tests, 0 failures
+- 前端 vitest 7/7 通过；`npm run build` 通过
+- 生产实测：Flyway v12 应用成功；列表接口 projectSeq 连续正确（TC-171→#1…）；
+  uncovered-endpoints 返回 total=86 / covered=58 / uncoveredCount=28 与统计卡一致
+
+---
+
 ## v7.14 — 生成 Prompt 重复注入治理
 **日期**: 2026-08-23
 **基线**: v7.13
