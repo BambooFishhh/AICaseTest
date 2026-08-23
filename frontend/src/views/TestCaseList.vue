@@ -107,8 +107,6 @@
         </div>
       </div>
     </div>
-    <!-- v7.15: 口径说明——两个覆盖率分母不同，避免误读为同一指标 -->
-    <div class="coverage-caliber-note">两个覆盖率口径不同：状态机覆盖以转换为分母，接口覆盖以代码分析出的接口为分母，数值不具备可比性。</div>
 
     <!-- v7.15(3b): 未覆盖接口清单——缺口可操作化 -->
     <section v-if="uncoveredEndpoints.total > 0" class="uncovered-section">
@@ -2497,14 +2495,7 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: var(--space-md);
-  margin-bottom: var(--space-md);
-}
-
-.coverage-caliber-note {
   margin-bottom: var(--space-lg);
-  font-size: 12px;
-  color: var(--text-secondary, #909399);
-  line-height: 1.5;
 }
 
 /* v7.15(3b): 未覆盖接口清单 */

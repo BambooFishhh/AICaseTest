@@ -184,10 +184,16 @@ public class CoverageService {
                 BackendResult backendResult = objectMapper.readValue(analysis.getBackendResult(), BackendResult.class);
                 if (backendResult.getEndpoints() != null) {
                     for (EndpointInfo ep : backendResult.getEndpoints()) {
+                        // v7.15.2: description 为空时回退 function（类.方法名）——
+                        // LLM 增强只覆盖了部分接口的 description，纯规则提取的接口没有
+                        String desc = ep.getDescription() == null ? "" : ep.getDescription().trim();
+                        if (desc.isEmpty()) {
+                            desc = ep.getFunction() == null ? "" : ep.getFunction().trim();
+                        }
                         Map<String, Object> item = new LinkedHashMap<>();
                         item.put("method", ep.getMethod() == null ? "" : ep.getMethod());
                         item.put("path", ep.getPath() == null ? "" : ep.getPath());
-                        item.put("description", ep.getDescription() == null ? "" : ep.getDescription());
+                        item.put("description", desc);
                         total.add(item);
                     }
                 }
