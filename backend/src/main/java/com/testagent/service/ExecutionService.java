@@ -598,10 +598,13 @@ public class ExecutionService {
         }
 
         // v5.4: 失败步骤写入语义失败经验库
+        // v7.10(R13): 语料补用例标题与页面 URL——检索侧向量相似度从"需求 vs 动作"
+        // 改善为"需求 vs 标题+动作"；入库按内容 hash 稳定 ID 去重（SemanticService 内部处理）
         if ("failed".equals(status)) {
             for (ExecutionStep step : steps) {
                 if ("failed".equals(step.getResult())) {
-                    semanticService.recordFailure(testCase.getProjectId(), executionId, step.getAction(), step.getError());
+                    semanticService.recordFailure(testCase.getProjectId(), executionId,
+                            step.getAction(), step.getError(), testCase.getTitle(), targetUrl);
                 }
             }
         }
@@ -927,10 +930,13 @@ public class ExecutionService {
         }
 
         // v5.4: 失败步骤写入语义失败经验库
+        // v7.10(R13): 语料补用例标题与页面 URL——检索侧向量相似度从"需求 vs 动作"
+        // 改善为"需求 vs 标题+动作"；入库按内容 hash 稳定 ID 去重（SemanticService 内部处理）
         if ("failed".equals(status)) {
             for (ExecutionStep step : steps) {
                 if ("failed".equals(step.getResult())) {
-                    semanticService.recordFailure(testCase.getProjectId(), executionId, step.getAction(), step.getError());
+                    semanticService.recordFailure(testCase.getProjectId(), executionId,
+                            step.getAction(), step.getError(), testCase.getTitle(), targetUrl);
                 }
             }
         }

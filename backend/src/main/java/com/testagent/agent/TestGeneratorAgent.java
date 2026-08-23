@@ -22,6 +22,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -118,6 +120,9 @@ public class TestGeneratorAgent {
         private boolean inString = false;
         private boolean escaped = false;
         private int parsedCount = 0;
+        // v7.10(G8): 解析结果收集列表——流式解析器是唯一解析真源，
+        // 调用方直接取收集结果，消除"流式/全量双解析索引错位"（重复推/漏推）
+        private final List<TestCase> collected = new ArrayList<>();
 
         public StreamingTestCaseParser(CaseCallback caseCb) {
             this.caseCb = caseCb;
@@ -196,6 +201,7 @@ public class TestGeneratorAgent {
             tc.setSource("ai_generation");
             tc.setConfidence(0.8);
             parsedCount++;
+            collected.add(tc);   // v7.10(G8): 收集即返回源
             if (caseCb != null) {
                 try { caseCb.onCase(tc); } catch (Exception ex) {
                     log.warn("caseCallback failed, continue: {}", ex.getMessage());
@@ -205,6 +211,11 @@ public class TestGeneratorAgent {
 
         public int getParsedCount() {
             return parsedCount;
+        }
+
+        /** v7.10(G8): 流式解析收集的全部用例（含 L8 截断抢救条目） */
+        public List<TestCase> getCollected() {
+            return collected;
         }
 
         // ==================== v7.3(L8): 截断检测与局部补全 ====================
@@ -386,7 +397,7 @@ public class TestGeneratorAgent {
             ## coverageRefs 覆盖要求（v5.12）
             - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}
             - id 只能从 coverageChecklist 中选取真实存在的项：
-              transitionIds 用 "from->to"；endpointIds 用 "METHOD /path"；ruleIds 用 "rule-N"；requirementIds 用 "req-N"
+              transitionIds 用 "from->to"；endpointIds 用 "METHOD /path"；ruleIds 用 "rule-N"；requirementIds 原样使用 coverageChecklist.requirements[].id
             - 优先覆盖 coverageGaps 列出的缺口；整体用例集必须让每个 transition/endpoint/rule 至少被一条用例引用
             - 单次只输出 8-15 条用例，不要尝试一次性输出全部缺口
 
@@ -510,36 +521,49 @@ public class TestGeneratorAgent {
     }
 
     // v5.12: 构建覆盖清单与缺口（需求/转换/接口/规则），供生成与评审使用
-    private Map<String, Object> buildCoverageChecklist(PrdAnalysisResult prdResult,
-                                                       List<StateMachine> stateMachines,
-                                                       BackendResult backendResult) {
+    // v7.10(G7): 包级可见，供单测直接验证需求 ID 内容 hash 稳定性
+    Map<String, Object> buildCoverageChecklist(PrdAnalysisResult prdResult,
+                                               List<StateMachine> stateMachines,
+                                               BackendResult backendResult) {
         List<Map<String, Object>> requirements = new ArrayList<>();
+        // v7.10(G7): 需求 ID 内容 hash 稳定化——旧实现 "req-" + i++ 是解析顺序临时编号，
+        // PRD 局部修改即全量漂移（追加生成时旧用例 coverageRefs.req-3 与新 checklist 的 req-3 可能指向不同需求）。
+        // 新 id = "req-" + SHA-256(title + '\u0001' + description) 前 10 位十六进制：
+        // 同一需求内容在任意解析顺序/轮次/任务中 id 一致，局部修改只影响变更项。
+        Set<String> seenReqIds = new HashSet<>();
         if (prdResult != null && prdResult.getRequirements() != null) {
-            int i = 1;
             for (Map<String, Object> req : prdResult.getRequirements()) {
+                String title = req.get("title") == null ? "" : String.valueOf(req.get("title"));
+                String description = req.get("description") == null ? "" : String.valueOf(req.get("description"));
                 Map<String, Object> item = new LinkedHashMap<>();
-                item.put("id", "req-" + i++);
+                item.put("id", "req-" + contentHash(title, description));
                 item.put("title", req.get("title"));
                 item.put("description", req.get("description"));
-                requirements.add(item);
+                if (seenReqIds.add(String.valueOf(item.get("id")))) {
+                    requirements.add(item);   // 同内容重复需求合并为一条
+                }
             }
         }
         // v7.7(G16): RAG 检索切片并入考点清单——PRD 解析截断/漂移丢失的需求点通过切片找回；
         // 三重限制控噪声：最短标题 4 字符 + token 重叠 ≥3 视为已覆盖（不重复加）+ 上限 20 条
+        // v7.10(G7): rag-req-N 序号编号同款改为内容 hash（rag- 前缀保留 source 区分）
         if (prdResult != null && prdResult.getRagContexts() != null) {
-            int ragSeq = 1;
+            int ragCount = 0;
             for (String slice : prdResult.getRagContexts()) {
-                if (ragSeq > 20) break;
+                if (ragCount >= 20) break;
                 if (slice == null || slice.isBlank()) continue;
                 String title = extractRagTitle(slice);
                 if (title.length() < 4) continue;
                 if (maxSimilarityScore(title, requirements) >= 3) continue;
                 Map<String, Object> item = new LinkedHashMap<>();
-                item.put("id", "rag-req-" + ragSeq++);
+                item.put("id", "rag-" + contentHash(title, slice));
                 item.put("title", title);
                 item.put("description", slice.length() > 200 ? slice.substring(0, 200) + "..." : slice);
                 item.put("source", "rag");
-                requirements.add(item);
+                if (seenReqIds.add(String.valueOf(item.get("id")))) {
+                    requirements.add(item);
+                    ragCount++;
+                }
             }
         }
 
@@ -882,10 +906,15 @@ public class TestGeneratorAgent {
     }
 
     // 按关键词包含匹配最合适的 DOM 选择器/表单字段
-    private Map<String, Object> bestSelector(List<Map<String, Object>> pool, String text) {
+    // v7.10(L12): 阈值 2→3 且要求唯一最高分——旧实现单个 2 字 token 命中（score≥2）即匹配，
+    // "删除"会匹配到"批量删除"按钮；并列最高分时取先遍历者，错误被固化进用例资产。
+    // 无匹配/并列宁留空，由 Agent 模式执行时 LLM 自定位。
+    // v7.10(L12): 包级可见，供单测直接验证阈值与唯一最高分语义
+    Map<String, Object> bestSelector(List<Map<String, Object>> pool, String text) {
         String lower = text.toLowerCase();
         Map<String, Object> best = null;
         int bestScore = 0;
+        int bestCount = 0;
         for (Map<String, Object> s : pool) {
             String value = s.get("value") == null ? "" : String.valueOf(s.get("value"));
             String element = s.get("element") == null ? "" : String.valueOf(s.get("element"));
@@ -902,9 +931,15 @@ public class TestGeneratorAgent {
             if (score > bestScore) {
                 bestScore = score;
                 best = s;
+                bestCount = 1;
+            } else if (score == bestScore && score > 0) {
+                bestCount++;
             }
         }
-        return bestScore >= 2 ? best : null;
+        if (bestScore < 3 || bestCount > 1) {
+            return null;   // 分数不足或并列最高：宁留空不赌错
+        }
+        return best;
     }
 
     // v7.1(G5): 删除代码驱动生成链（generateCodeDrivenCases / generateByLlmForStateMachine /
@@ -982,15 +1017,19 @@ public class TestGeneratorAgent {
         // v6.4: 历史失败经验注入，避免生成时重复已知失败路径
         context.put("ragFailures", truncateStrings(prdResult.getRagFailures(), 800, 3));
         // v5.10/v5.11: 补充需求与 PRD/上下文文档（随需求上下文一起注入，来源保持区分）
-        if (prdResult.getOtherContextInfo() != null && !prdResult.getOtherContextInfo().isBlank()) {
-            context.put("supplementaryRequirements", prdResult.getOtherContextInfo());
-            context.put("otherContextInfo", prdResult.getOtherContextInfo());
-        }
-        if (prdResult.getPrdDocs() != null && !prdResult.getPrdDocs().isEmpty()) {
-            context.put("prdDocs", truncateDocs(prdResult.getPrdDocs(), 3000, 3));
-        }
-        if (prdResult.getContextDocs() != null && !prdResult.getContextDocs().isEmpty()) {
-            context.put("contextDocs", truncateDocs(prdResult.getContextDocs(), 3000, 3));
+        // v7.10(G12): 第 2+ 轮不再注入原文——补齐轮所需信息（结构化 prd 摘要/checklist/gaps/
+        // 已生成摘要）已完整，重复注入大块原文是纯 token 消耗；首轮保留以建立全局理解
+        if (round == 1) {
+            if (prdResult.getOtherContextInfo() != null && !prdResult.getOtherContextInfo().isBlank()) {
+                context.put("supplementaryRequirements", prdResult.getOtherContextInfo());
+                context.put("otherContextInfo", prdResult.getOtherContextInfo());
+            }
+            if (prdResult.getPrdDocs() != null && !prdResult.getPrdDocs().isEmpty()) {
+                context.put("prdDocs", truncateDocs(prdResult.getPrdDocs(), 3000, 3));
+            }
+            if (prdResult.getContextDocs() != null && !prdResult.getContextDocs().isEmpty()) {
+                context.put("contextDocs", truncateDocs(prdResult.getContextDocs(), 3000, 3));
+            }
         }
 
         // 代码侧为辅（精简，避免 token 超限）
@@ -1134,6 +1173,21 @@ public class TestGeneratorAgent {
         context.put("coverageChecklist", capChecklistForPrompt(coverage.get("checklist")));
         context.put("coverageGaps", gaps);
 
+        // v7.10(C2): 证据链对账结果注入——需求资料晚于代码分析（staleness）或
+        // PRD 状态流与代码状态机无对应状态（stateFlowConflicts）时显式标注，
+        // 让 LLM 知道两条证据链的分歧点（以代码为准，需人工确认），不再静默分叉
+        if (prdResult.isEvidenceStale()
+                || (prdResult.getEvidenceInconsistencies() != null && !prdResult.getEvidenceInconsistencies().isEmpty())) {
+            Map<String, Object> evidenceConsistency = new LinkedHashMap<>();
+            if (prdResult.isEvidenceStale()) {
+                evidenceConsistency.put("staleness", "需求资料在代码分析后有更新，代码上下文可能过期，建议重新分析");
+            }
+            if (prdResult.getEvidenceInconsistencies() != null && !prdResult.getEvidenceInconsistencies().isEmpty()) {
+                evidenceConsistency.put("stateFlowConflicts", prdResult.getEvidenceInconsistencies());
+            }
+            context.put("evidenceConsistency", evidenceConsistency);
+        }
+
         // v7.7(G4): 轮间摘要注入——前几轮已生成用例的标题/类型列表，配合 roundNote 禁止重复
         if (round > 1 && previousCases != null && !previousCases.isEmpty()) {
             List<Map<String, String>> summary = new ArrayList<>();
@@ -1171,13 +1225,17 @@ public class TestGeneratorAgent {
                 report.streamTruncated = true;
                 report.truncatedRecovered = parser.getRecovered();
             }
-            // 兜底：用完整响应重新解析，推送流式期间未推送的用例
-            String json = extractJsonArray(response);
-            List<TestCase> roundCases = parseTestCases(json, null);
-            for (int i = parser.getParsedCount(); i < roundCases.size(); i++) {
-                try { caseCb.onCase(roundCases.get(i)); } catch (Exception ex) {
-                    log.warn("兜底推送失败: {}", ex.getMessage());
+            // v7.10(G8): 流式解析结果为唯一返回源（消除双解析索引错位）；
+            // 解析数为 0 时（数组起点检测失败等边角）兜底全量重解析并推送全部
+            List<TestCase> roundCases = parser.getCollected();
+            if (roundCases.isEmpty()) {
+                List<TestCase> reparsed = parseTestCases(extractJsonArray(response), null);
+                for (TestCase tc : reparsed) {
+                    try { caseCb.onCase(tc); } catch (Exception ex) {
+                        log.warn("兜底推送失败: {}", ex.getMessage());
+                    }
                 }
+                return reparsed;
             }
             return roundCases;
         }
@@ -1346,6 +1404,27 @@ public class TestGeneratorAgent {
             }
         }
         return score;
+    }
+
+    /**
+     * v7.10(G7): 内容 hash——SHA-256(各部分以 '\u0001' 连接) 前 10 位十六进制。
+     * 分隔符用不可见控制字符，避免 "ab"+"c" 与 "a"+"bc" 拼接歧义。
+     * 包级可见，供单测直接验证 id 稳定语义。
+     */
+    String contentHash(String... parts) {
+        try {
+            String joined = String.join("\u0001", parts);
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(joined.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < 5; i++) {
+                sb.append(String.format("%02x", digest[i]));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            // SHA-256 必然可用；极端情况下退化为内容 hashcode，仍满足"同内容同 id"
+            return Integer.toHexString(String.join("\u0001", parts).hashCode());
+        }
     }
 
     // v7.7(G16): RAG 切片标题——首个非空行剥离 "#*-" 等标记前缀，截 60 字符
@@ -1740,9 +1819,14 @@ public class TestGeneratorAgent {
 
     // ==================== 质量评分（v1.2） ====================
 
-    private void calculateQualityScores(List<TestCase> cases) {
+    // v7.10(G13): 包级可见，供单测直接验证 confidence 派生语义
+    void calculateQualityScores(List<TestCase> cases) {
         for (TestCase tc : cases) {
-            tc.setQualityScore(calculateQualityScore(tc));
+            int score = calculateQualityScore(tc);
+            tc.setQualityScore(score);
+            // v7.10(G13): confidence 从硬编码 0.8 改为质量分派生（qualityScore/100）——
+            // 评分公式已含评审结论（v7.8 G6），confidence 与 qualityScore 同源同刻才有信息量
+            tc.setConfidence(Math.round(score) / 100.0);
         }
     }
 

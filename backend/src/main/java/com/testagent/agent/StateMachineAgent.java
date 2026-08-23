@@ -297,7 +297,10 @@ public class StateMachineAgent {
                 continue;
             }
             String lowerName = name.toLowerCase();
-            if (lowerName.contains("status") || lowerName.contains("state")) {
+            // v7.10(A18): 枚举/常量类名判定加 type——OrderType/UserType 等类型枚举也是常见状态承载；
+            // 同时对 constants 启发式（静态常量兜底路径）起类名语义过滤作用，
+            // 类名不含 status/state/type 的常量类（如 MAX_PAGE_SIZE 所在的 PageConstants）不生成状态机
+            if (lowerName.contains("status") || lowerName.contains("state") || lowerName.contains("type")) {
                 StateMachine sm = new StateMachine();
                 sm.setId(UUID.randomUUID().toString().substring(0, 8));
                 sm.setName(name + "StateMachine");

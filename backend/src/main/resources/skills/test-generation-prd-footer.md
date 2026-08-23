@@ -25,7 +25,7 @@
 ## coverageRefs 覆盖要求（v5.12）
 - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}
 - id 只能从 coverageChecklist 中选取真实存在的项：
-  transitionIds 用 "from->to"；endpointIds 用 "METHOD /path"；ruleIds 用 "rule-N"；requirementIds 用 "req-N"
+  transitionIds 用 "from->to"；endpointIds 用 "METHOD /path"；ruleIds 用 "rule-N"；requirementIds 原样使用 coverageChecklist.requirements[].id
 - 优先覆盖 coverageGaps 列出的缺口；整体用例集必须让每个 transition/endpoint/rule 至少被一条用例引用
 - 单次只输出 8-15 条用例，不要尝试一次性输出全部缺口
 

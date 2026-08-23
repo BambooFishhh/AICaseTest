@@ -69,6 +69,8 @@ llm:
   model: ${LLM_MODEL:mimo-v2.5}
   embedding-model: ${LLM_EMBEDDING_MODEL:qwen3.7-text-embedding}
   enable-thinking: ${LLM_ENABLE_THINKING:false}
+  # v7.10(L3): thinking 为咨询性配置——Spring AI OpenAI starter 无法透传 enable_thinking，
+  # 开启后不生效（启动时会输出 warn 日志提醒）；LLM_ENABLE_THINKING 仅对 MCP 多模态链路有意义
   thinking:
     analysis: ${LLM_THINKING_ANALYSIS:true}
     generation: ${LLM_THINKING_GENERATION:false}

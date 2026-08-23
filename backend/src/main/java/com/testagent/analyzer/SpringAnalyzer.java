@@ -17,6 +17,7 @@ import com.github.javaparser.ast.expr.AssignExpr;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
+import com.github.javaparser.ast.expr.IntegerLiteralExpr;
 import com.github.javaparser.ast.expr.MemberValuePair;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.NormalAnnotationExpr;
@@ -99,7 +100,7 @@ public class SpringAnalyzer {
                 endpoints.addAll(extractEndpoints(cu, relativePath));
                 enums.addAll(extractEnums(cu, relativePath));
                 entities.addAll(extractEntities(cu, relativePath));
-                businessRules.addAll(extractBusinessRules(cu, relativePath));
+                businessRules.addAll(extractBusinessRules(cu, relativePath, warnings));
                 stateTransitions.addAll(extractStateTransitions(cu, relativePath));
                 errorMessages.addAll(extractErrorMessages(cu, relativePath));
             } catch (Exception e) {
@@ -185,7 +186,8 @@ public class SpringAnalyzer {
         return tech;
     }
 
-    private List<EndpointInfo> extractEndpoints(CompilationUnit cu, String filePath) {
+    // v7.10(A3): 包级可见，供单测直接验证多异常收集语义
+    List<EndpointInfo> extractEndpoints(CompilationUnit cu, String filePath) {
         List<EndpointInfo> endpoints = new ArrayList<>();
         for (ClassOrInterfaceDeclaration cls : cu.findAll(ClassOrInterfaceDeclaration.class)) {
             if (cls.isInterface()) {
@@ -217,13 +219,20 @@ public class SpringAnalyzer {
                     String methodPath = extractAnnotationPath(ann);
                     String fullPath = joinPath(classPath, methodPath);
                     // v6.1 (SAINT): 确定性采集响应结构/业务逻辑/异常类型
+                    // v7.10(A3): 收集方法体内全部 throw 的异常类型（旧实现 findFirst 只看
+                    // 第一个 throw 的第一个 new，多异常端点只暴露一个）；上限 5 防长方法撑爆上下文
                     List<String> exceptionTypes = new ArrayList<>();
-                    method.findFirst(ThrowStmt.class)
-                            .flatMap(t -> t.getExpression().findFirst(ObjectCreationExpr.class))
-                            .ifPresent(c -> exceptionTypes.add(c.getType().asString()));
+                    for (ThrowStmt ts : method.findAll(ThrowStmt.class)) {
+                        if (ts.getExpression() instanceof ObjectCreationExpr oce) {
+                            String type = oce.getType().asString();
+                            if (!exceptionTypes.contains(type) && exceptionTypes.size() < 5) {
+                                exceptionTypes.add(type);
+                            }
+                        }
+                    }
                     for (var thrown : method.getThrownExceptions()) {
                         String thrownName = thrown.asString();
-                        if (!exceptionTypes.contains(thrownName)) {
+                        if (!exceptionTypes.contains(thrownName) && exceptionTypes.size() < 5) {
                             exceptionTypes.add(thrownName);
                         }
                     }
@@ -478,12 +487,16 @@ public class SpringAnalyzer {
         }
     }
 
-    /** setStatus / setXxxStatus 判定（setter 名以 set 开头且以 Status 结尾，忽略大小写） */
+    /**
+     * setStatus / setXxxStatus 判定（setter 名以 set 开头且以 Status 结尾，忽略大小写）
+     * v7.10(A18): 扩展到 state/type 结尾——order.type / userType / paymentType 是常见状态承载字段
+     */
     private boolean isStateSetterName(String name) {
         if (name == null || name.length() <= 3 || !name.startsWith("set")) {
             return false;
         }
-        return name.toLowerCase().endsWith("status");
+        String lower = name.toLowerCase();
+        return lower.endsWith("status") || lower.endsWith("state") || lower.endsWith("type");
     }
 
     private String setterToField(String setterName) {
@@ -492,23 +505,31 @@ public class SpringAnalyzer {
                 : Character.toLowerCase(rest.charAt(0)) + rest.substring(1);
     }
 
-    /** 赋值目标是否状态字段（status / this.orderStatus），是则返回字段名 */
+    /** 赋值目标是否状态字段（status / state / type 类字段名），是则返回字段名 */
     private String statusFieldName(Expression target) {
         if (target instanceof NameExpr ne) {
-            return containsStatus(ne.getNameAsString()) ? ne.getNameAsString() : null;
+            return isStateFieldName(ne.getNameAsString()) ? ne.getNameAsString() : null;
         }
         if (target instanceof FieldAccessExpr fae) {
-            return containsStatus(fae.getNameAsString()) ? fae.getNameAsString() : null;
+            return isStateFieldName(fae.getNameAsString()) ? fae.getNameAsString() : null;
         }
         return null;
     }
 
-    private boolean containsStatus(String name) {
-        return name != null && name.toLowerCase().contains("status");
+    /** v7.10(A18): 状态承载字段名——status/state/type 任一子串（原仅 status） */
+    private boolean isStateFieldName(String name) {
+        if (name == null) {
+            return false;
+        }
+        String lower = name.toLowerCase();
+        return lower.contains("status") || lower.contains("state") || lower.contains("type");
     }
 
     /**
      * 解析枚举常量表达式：PAID / OrderStatus.PAID → "PAID"；变量/方法调用/构造 → null（无法静态确定）。
+     * v7.10(A18): 新增 Integer/String 字面量形态——setStatus(2) / setStatus("PAID") 此前提不出
+     * （非全大写标识符），Integer/魔法数状态字段的状态赋值证据全丢。
+     * 字面量误报由 isStateFieldName 门槛（目标字段含 status/state/type）拦住大半。
      */
     private String stateConstantOf(Expression expr) {
         if (expr instanceof NameExpr ne) {
@@ -518,6 +539,12 @@ public class SpringAnalyzer {
         if (expr instanceof FieldAccessExpr fae) {
             String name = fae.getNameAsString();
             return looksLikeEnumConstant(name) ? name : null;
+        }
+        if (expr instanceof IntegerLiteralExpr ile) {
+            return ile.getValue();
+        }
+        if (expr instanceof StringLiteralExpr sle) {
+            return sle.getValue();
         }
         return null;
     }
@@ -581,17 +608,17 @@ public class SpringAnalyzer {
         return constants;
     }
 
-    /** 表达式是否状态读取：getXxxStatus() 调用 / 名字含 status 的标识符 */
+    /** 表达式是否状态读取：getXxxStatus() 等状态 getter 调用 / 状态字段名标识符 */
     private boolean isStatusRead(Expression expr, String field) {
         if (expr instanceof MethodCallExpr mc) {
-            String name = mc.getNameAsString();
-            return name.toLowerCase().startsWith("get") && name.toLowerCase().endsWith("status");
+            String name = mc.getNameAsString().toLowerCase();
+            return name.startsWith("get") && (name.endsWith("status") || name.endsWith("state") || name.endsWith("type"));
         }
         if (expr instanceof NameExpr ne) {
-            return ne.getNameAsString().equals(field) || containsStatus(ne.getNameAsString());
+            return ne.getNameAsString().equals(field) || isStateFieldName(ne.getNameAsString());
         }
         if (expr instanceof FieldAccessExpr fae) {
-            return fae.getNameAsString().equals(field) || containsStatus(fae.getNameAsString());
+            return fae.getNameAsString().equals(field) || isStateFieldName(fae.getNameAsString());
         }
         return false;
     }
@@ -764,8 +791,16 @@ public class SpringAnalyzer {
         return entities;
     }
 
-    private List<BusinessRule> extractBusinessRules(CompilationUnit cu, String filePath) {
+    /**
+     * v7.10(A6): 业务规则只收录业务语义异常——过滤 JDK/Spring 通用异常（空指针防御、参数断言）。
+     * 旧实现所有含 throw 的 if 都算规则：NPE 防御/参数断言是代码卫生不是业务规则，
+     * 收录后挤占 rule-N 覆盖清单，LLM 被迫为"传 null 报错"生成无价值用例。
+     * 过滤量进 warnings 可观测；LLM 增强仍可补规则（supplementalBusinessRules 不受限）。
+     */
+    // v7.10(A6): 包级可见，供单测直接验证噪音异常过滤语义
+    List<BusinessRule> extractBusinessRules(CompilationUnit cu, String filePath, List<String> warnings) {
         List<BusinessRule> rules = new ArrayList<>();
+        int filtered = 0;
         for (MethodDeclaration method : cu.findAll(MethodDeclaration.class)) {
             String methodName = method.getNameAsString();
             for (IfStmt ifStmt : method.findAll(IfStmt.class)) {
@@ -775,6 +810,14 @@ public class SpringAnalyzer {
                 }
                 String condition = truncate(ifStmt.getCondition().toString(), 200);
                 List<ObjectCreationExpr> creations = ifStmt.findAll(ObjectCreationExpr.class);
+                List<ObjectCreationExpr> businessCreations = new ArrayList<>();
+                for (ObjectCreationExpr creation : creations) {
+                    if (NOISE_EXCEPTIONS.contains(creation.getType().asString())) {
+                        filtered++;
+                    } else {
+                        businessCreations.add(creation);
+                    }
+                }
                 if (creations.isEmpty()) {
                     rules.add(BusinessRule.builder()
                             .file(filePath)
@@ -784,7 +827,7 @@ public class SpringAnalyzer {
                             .sources(List.of("rules"))
                             .build());
                 } else {
-                    for (ObjectCreationExpr creation : creations) {
+                    for (ObjectCreationExpr creation : businessCreations) {
                         String exceptionType = creation.getType().asString();
                         String message = "";
                         if (!creation.getArguments().isEmpty()) {
@@ -803,8 +846,17 @@ public class SpringAnalyzer {
                 }
             }
         }
+        if (filtered > 0) {
+            warnings.add("已过滤 " + filtered + " 条 JDK/Spring 通用异常规则（空指针防御/参数断言，非业务规则）");
+        }
         return rules;
     }
+
+    /** v7.10(A6): 通用异常黑名单——代码卫生型 throw，不构成业务规则 */
+    private static final Set<String> NOISE_EXCEPTIONS = Set.of(
+            "NullPointerException", "IllegalStateException",
+            "IllegalArgumentException", "AssertionError",
+            "UnsupportedOperationException", "RuntimeException");
 
     // v5.13: 规则结果作为 ground truth，LLM 只补充接口语义/参数校验/权限/业务规则
     private void enhanceWithLlmIfConfigured(File dir,

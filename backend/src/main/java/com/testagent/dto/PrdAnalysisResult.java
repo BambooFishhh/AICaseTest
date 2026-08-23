@@ -29,6 +29,11 @@ public class PrdAnalysisResult {
     // v6.4: 历史执行失败经验（RRF 检索 Top-K，生成时注入避免重复失败路径）
     private List<String> ragFailures;
 
+    // v7.10(C2): 证据链对账——需求资料晚于代码分析/状态机生成（代码上下文可能过期）
+    private boolean evidenceStale;
+    // v7.10(C2): 证据链对账——PRD 状态流在代码状态机中无对应状态的冲突项（每条一句人读说明）
+    private List<String> evidenceInconsistencies;
+
     public boolean isEmpty() {
         return (modules == null || modules.isEmpty())
                 && (requirements == null || requirements.isEmpty())

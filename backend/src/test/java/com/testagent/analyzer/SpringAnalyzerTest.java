@@ -277,7 +277,8 @@ class SpringAnalyzerTest {
                 public class OrderService {
                     public void createOrder(int stock) {
                         if (stock <= 0) {
-                            throw new IllegalArgumentException("stock exhausted");
+                            // v7.10(A6): 业务语义异常才构成规则（IllegalArgumentException 属参数断言噪音已被过滤）
+                            throw new InsufficientStockException("stock exhausted");
                         }
                     }
                 }

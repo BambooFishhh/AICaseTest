@@ -124,7 +124,81 @@ public class TestCaseReviewAgent {
         return result;
     }
 
-    private List<TestCase> llmReview(List<TestCase> cases, Map<String, Object> coverage, String source) throws Exception {
+    // v7.10(R4/R5): 包级可见，供单测直接验证缺评补评与 reject 三分带语义
+    List<TestCase> llmReview(List<TestCase> cases, Map<String, Object> coverage, String source) throws Exception {
+        Map<Integer, JsonNode> byIndex = reviewRound(cases, coverage);
+
+        // v7.10(R4): 首轮输出缺 index 的用例子集二次送评（子集规模减半，截断概率大幅下降）；
+        // 补评后仍缺 → log.warn + 保留该用例（安全默认：未评审 ≠ 删除），不再静默
+        List<TestCase> missing = new ArrayList<>();
+        List<Integer> missingOriginalIndices = new ArrayList<>();
+        for (int i = 0; i < cases.size(); i++) {
+            if (!byIndex.containsKey(i)) {
+                missing.add(cases.get(i));
+                missingOriginalIndices.add(i);
+            }
+        }
+        if (!missing.isEmpty()) {
+            log.warn("LLM review output missing {} of {} indices, re-reviewing subset",
+                    missing.size(), cases.size());
+            Map<Integer, JsonNode> secondRound = reviewRound(missing, coverage);
+            for (Map.Entry<Integer, JsonNode> entry : secondRound.entrySet()) {
+                int localIdx = entry.getKey();
+                if (localIdx < missingOriginalIndices.size()) {
+                    int originalIndex = missingOriginalIndices.get(localIdx);
+                    byIndex.putIfAbsent(originalIndex, entry.getValue());
+                }
+            }
+            long stillMissing = missingOriginalIndices.stream()
+                    .filter(i -> !byIndex.containsKey(i)).count();
+            if (stillMissing > 0) {
+                log.warn("LLM review still missing {} cases after re-review — kept without aiReview record", stillMissing);
+            }
+        }
+
+        // v7.10(R5): reject 保护三分带取代旧"超半数全保留"——旧逻辑盲区：
+        // 恰好 51% 真垃圾也全留。新规则：>70% 全保留+告警（可疑）；
+        // 40%–70% 灰区按置信度逐条裁决（≥0.75 才删，缺省 0.5 保守保留）；≤40% 照删
+        Set<Integer> rejectIndices = new HashSet<>();
+        for (Map.Entry<Integer, JsonNode> entry : byIndex.entrySet()) {
+            if ("reject".equals(entry.getValue().path("status").asText())) {
+                rejectIndices.add(entry.getKey());
+            }
+        }
+        int n = cases.size();
+        double ratio = n == 0 ? 0 : (double) rejectIndices.size() / n;
+        if (ratio > 0.7) {
+            log.warn("LLM review rejected {}% ({} cases), suspicious — keep all to avoid data loss",
+                    Math.round(ratio * 100), rejectIndices.size());
+            rejectIndices.clear();
+        } else if (ratio > 0.4) {
+            rejectIndices.removeIf(i -> {
+                double c = byIndex.get(i).path("confidence").asDouble(0.5);
+                return c < 0.75;   // 灰区低置信 reject 保守保留
+            });
+        }
+
+        List<TestCase> result = new ArrayList<>();
+        for (int i = 0; i < cases.size(); i++) {
+            if (rejectIndices.contains(i)) {
+                continue;
+            }
+            TestCase tc = cases.get(i);
+            JsonNode reviewNode = byIndex.get(i);
+            if (reviewNode != null) {
+                applyReview(tc, reviewNode, source);
+            }
+            result.add(tc);
+        }
+        return result;
+    }
+
+    /**
+     * v7.10(R4): 单轮评审——构建 brief + LLM 调用 + 结果按 index 收录。
+     * index 去重保留首个（putIfAbsent）；越界 index（LLM 编造）直接丢弃。
+     * 返回的 map 以入参列表的局部 index 为键（补评子集的 index 与原列表不同，由调用方换算）。
+     */
+    private Map<Integer, JsonNode> reviewRound(List<TestCase> cases, Map<String, Object> coverage) throws Exception {
         List<Map<String, Object>> brief = new ArrayList<>();
         for (int i = 0; i < cases.size(); i++) {
             TestCase tc = cases.get(i);
@@ -146,7 +220,7 @@ public class TestCaseReviewAgent {
                 - status：pass（通过）/ fix（需修正）/ reject（应删除）
                 - issues：列出可执行性、覆盖率、预期可验证性、重复等具体问题
                 - coverageRefs 只能引用 coverageChecklist 中真实存在的 id：
-                  transitionIds 用 "from->to"；endpointIds 用 "METHOD /path"；ruleIds 用 "rule-N"；requirementIds 用 "req-N"
+                  transitionIds 用 "from->to"；endpointIds 用 "METHOD /path"；ruleIds 用 "rule-N"；requirementIds 原样使用 coverageChecklist.requirements[].id
                 - suggestedChanges：给出可自动采纳的修正（title/module/type/priority/coverageRefs），没有修正则填 null
                 返回 JSON 数组，不要修改用例正文，不要输出其他文字：
                 [{"index":0,"status":"fix","issues":["缺少 coverageRefs"],"confidence":0.8,"coverageRefs":{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]},"suggestedChanges":{"title":null,"module":null,"type":null,"priority":null,"coverageRefs":null}}]
@@ -159,42 +233,17 @@ public class TestCaseReviewAgent {
 
         String response = llmService.chat(systemPrompt, userPrompt, 0.2);
         JsonNode array = objectMapper.readTree(extractJsonArray(response));
-        if (!array.isArray()) {
-            return cases;
-        }
-
         Map<Integer, JsonNode> byIndex = new LinkedHashMap<>();
+        if (!array.isArray()) {
+            return byIndex;
+        }
         for (JsonNode node : array) {
             int idx = node.path("index").asInt(-1);
-            if (idx >= 0) {
-                byIndex.put(idx, node);
+            if (idx >= 0 && idx < cases.size()) {
+                byIndex.putIfAbsent(idx, node);   // v7.10(R4): 重复 index 保留首个
             }
         }
-
-        Set<Integer> rejectIndices = new HashSet<>();
-        for (Map.Entry<Integer, JsonNode> entry : byIndex.entrySet()) {
-            if ("reject".equals(entry.getValue().path("status").asText())) {
-                rejectIndices.add(entry.getKey());
-            }
-        }
-        if (rejectIndices.size() > cases.size() / 2) {
-            log.warn("LLM review rejected too many cases ({}), keep all to avoid data loss", rejectIndices.size());
-            rejectIndices.clear();
-        }
-
-        List<TestCase> result = new ArrayList<>();
-        for (int i = 0; i < cases.size(); i++) {
-            if (rejectIndices.contains(i)) {
-                continue;
-            }
-            TestCase tc = cases.get(i);
-            JsonNode reviewNode = byIndex.get(i);
-            if (reviewNode != null) {
-                applyReview(tc, reviewNode, source);
-            }
-            result.add(tc);
-        }
-        return result;
+        return byIndex;
     }
 
     // v7.8(R1): 包级可见，供单测直接验证分级采纳语义

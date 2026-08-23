@@ -587,15 +587,57 @@ public class SemanticService {
         }
     }
 
-    public void recordFailure(String projectId, String executionId, String action, String error) {
+    /**
+     * v7.10(R13): 失败经验入库——按 (projectId + 归一化 action + 归一化 error) 内容 hash 稳定 ID
+     * 去重（写入前 deleteByIds 同 ID，同源失败覆盖不堆积）；语料补用例标题与页面 URL，
+     * 向量相似度从"需求 vs 动作"改善为"需求 vs 标题+动作"。
+     */
+    public void recordFailure(String projectId, String executionId, String action, String error,
+                              String caseTitle, String pageUrl) {
         if (!isAvailable()) {
             return;
         }
-        String text = (action == null ? "" : action) + " -> " + (error == null ? "" : error);
-        List<Float> vector = embeddingService.embed(text);
+        String normAction = normalizeFailureText(action);
+        String normError = normalizeFailureText(error);
+        StringBuilder text = new StringBuilder();
+        if (caseTitle != null && !caseTitle.isBlank()) {
+            text.append("[").append(caseTitle.trim()).append("] ");
+        }
+        if (pageUrl != null && !pageUrl.isBlank()) {
+            text.append("[").append(pageUrl.trim()).append("] ");
+        }
+        text.append(normAction).append(" -> ").append(normError);
+        List<Float> vector = embeddingService.embed(text.toString());
+        String id = "fail-" + sha256Hex(16, projectId == null ? "" : projectId,
+                normAction, normError);
+        // 同源失败覆盖不堆积（旧实现用 executionId 当主键，同失败 10 次占满 topK）
+        milvusService.deleteByIds(MilvusService.COLLECTION_FAILURES, projectId == null ? "" : projectId,
+                List.of(id));
         milvusService.insert(MilvusService.COLLECTION_FAILURES, projectId,
-                executionId == null ? "exec-" + UUID.randomUUID() : executionId,
-                action, "failure", text, vector);
+                id, action, "failure", text.toString(), vector);
+    }
+
+    /** 失败文本归一化：trim + 连续空白压单空格 + 小写——归一化后相同失败才命中同一稳定 ID */
+    private String normalizeFailureText(String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
+    }
+
+    /** v7.10(R13): SHA-256(各部分 '\u0001' 连接) 前 hexLen 位十六进制 */
+    private String sha256Hex(int hexLen, String... parts) {
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(String.join("\u0001", parts).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i * 2 < hexLen && i < digest.length; i++) {
+                sb.append(String.format("%02x", digest[i]));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return Integer.toHexString(String.join("\u0001", parts).hashCode());
+        }
     }
 
     public List<String> searchFailures(String projectId, String error, int topK) {

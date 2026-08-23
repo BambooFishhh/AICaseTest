@@ -6,6 +6,7 @@ import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.FrontendResult;
 import com.testagent.common.BusinessException;
 import com.testagent.dto.GenerationParams;
+import com.testagent.dto.JsonHelper;
 import com.testagent.dto.PrdAnalysisResult;
 import com.testagent.entity.CodeAnalysis;
 import com.testagent.entity.Project;
@@ -24,11 +25,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * v1.10: 用例生成编排 Agent。
@@ -49,8 +53,7 @@ public class OrchestratorAgent {
     @Value("${app.rag.failure-topk:3}")
     private int ragFailureTopK;
 
-    @Value("${app.rag.max-queries:12}")
-    private int ragMaxQueries;
+    // v7.10(G9): 删除 app.rag.max-queries 配置——分类别配额（6+3+2+1）取代总量截断
 
     @Autowired
     private ProjectRepository projectRepository;
@@ -240,9 +243,12 @@ public class OrchestratorAgent {
         // v5.4: 生成前 RAG 上下文检索（Milvus 未启用时返回空，不影响原流程）
         String ragText = ragTextBuilder.toString();
         if (!ragText.isBlank()) {
-            // v6.4: 存量项目首次生成时自动重建需求类切片，内容未变化则跳过
-            semanticService.ensureRequirementContexts(projectId, prdDocs, contextDocs, supplementary);
+            // v7.10(G19): 删除热路径 ensureRequirementContexts 调用——索引维护只在保存侧
+            // （updatePrd/uploadPrdPdf/fetchPrdUrl/updateProjectContext 四条路径已全部触发重建），
+            // 读路径藏写操作属架构卫生问题；存量项目检索为空时走既有优雅降级
             // v6.4: 模块/需求/上下文文档/补充需求分段查询，RRF 融合，且只召回需求类切片
+            // v7.10(G9): 分类别配额（requirements 6 + modules 3 + contextDocs 2 + supplementary 1），
+            // 需求优先，取代旧的顺序拼接 + 总量截断
             List<String> ragQueries = buildRagQueries(prdResult);
             List<String> ragContexts = semanticService.retrieveContexts(
                     projectId, ragQueries, ragContextTopK, RAG_CONTEXT_MODULES);
@@ -251,7 +257,10 @@ public class OrchestratorAgent {
                 log.info("RAG retrieved {} contexts for project {}", ragContexts.size(), projectId);
             }
             // v6.4: 历史失败经验闭环——生成前检索相似失败并注入 prompt
-            List<String> ragFailures = semanticService.retrieveFailures(projectId, ragQueries, ragFailureTopK);
+            // v7.10(G18): 失败专用查询——需求形查询打动作形语料向量天然弱，
+            // 取前 6 条（需求优先）+ 操作/页面类关键词后缀，embedding 调用 12→7
+            List<String> ragFailures = semanticService.retrieveFailures(
+                    projectId, buildFailureQueries(ragQueries), ragFailureTopK);
             prdResult.setRagFailures(ragFailures);
             if (!ragFailures.isEmpty()) {
                 log.info("RAG retrieved {} failures for project {}", ragFailures.size(), projectId);
@@ -287,26 +296,143 @@ public class OrchestratorAgent {
 
         // v3.4: 解析生成参数
         GenerationParams params = parseGenerationParams(project.getSettings());
+
+        // v7.10(C2): 证据链对账——PRD 与代码两条证据链无新鲜度/一致性校验时静默分叉
+        // ① 新鲜度：需求资料（project.updatedAt）晚于代码分析/状态机生成 → SSE 提示 + prompt 标注
+        applyEvidenceStaleness(project, stateMachines, prdResult, progressCallback);
+        // ② 一致性：PRD 状态流的状态在所有代码状态机中零命中 → prompt 显式标注"以代码为准，需人工确认"
+        applyStateFlowConsistency(prdResult, stateMachines);
+
         return new GenContext(prdResult, stateMachines, backendResult, frontendResult, params);
     }
 
-    // v6.4: 构建检索查询段：各模块 + 各需求 + 上下文文档片段 + 补充需求，不再用整段 PRD 自我检索。
-    private List<String> buildRagQueries(PrdAnalysisResult prdResult) {
-        List<String> queries = new ArrayList<>();
-        if (prdResult != null) {
-            if (prdResult.getModules() != null) {
-                for (Map<String, Object> m : prdResult.getModules()) {
-                    String q = joinFields(m, List.of("name", "description"));
-                    if (!q.isBlank()) {
-                        queries.add(q);
-                    }
+    // v7.10(C2): 证据链新鲜度对账——需求资料（project.updatedAt）晚于代码侧最新产物
+    // （最新 CodeAnalysis.createdAt / 最新 StateMachine.createdAt）时标记 stale。
+    // project.updatedAt 是项目任意编辑时间，存在误报可能——提示语义为"建议"非"阻断"，可接受。
+    // 任一侧无时间戳：证据缺失不判 stale（不误报）。
+    void applyEvidenceStaleness(Project project, List<StateMachine> stateMachines,
+                                PrdAnalysisResult prdResult, TestGeneratorAgent.ProgressCallback progressCallback) {
+        LocalDateTime codeSideLatest = null;
+        Optional<CodeAnalysis> analysisOpt =
+                codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(project.getId());
+        if (analysisOpt.isPresent() && analysisOpt.get().getCreatedAt() != null) {
+            codeSideLatest = analysisOpt.get().getCreatedAt();
+        }
+        if (stateMachines != null) {
+            for (StateMachine sm : stateMachines) {
+                if (sm.getCreatedAt() != null
+                        && (codeSideLatest == null || sm.getCreatedAt().isAfter(codeSideLatest))) {
+                    codeSideLatest = sm.getCreatedAt();
                 }
             }
+        }
+        if (codeSideLatest == null || project.getUpdatedAt() == null) {
+            return;
+        }
+        if (project.getUpdatedAt().isAfter(codeSideLatest)) {
+            prdResult.setEvidenceStale(true);
+            log.info("[C2] requirement docs updated at {} after code-side latest {} — code context may be stale",
+                    project.getUpdatedAt(), codeSideLatest);
+            if (progressCallback != null) {
+                progressCallback.update("提示：需求资料在代码分析后有更新，代码上下文可能过期，建议重新分析");
+            }
+        }
+    }
+
+    // v7.10(C2): PRD 状态流与代码状态机一致性对账——某 PRD 状态流的全部状态在所有代码
+    // 状态机中零命中（code/name 归一化小写包含匹配）→ 记冲突项，生成 prompt 显式标注
+    // "以代码为准，需人工确认"。无代码状态机时不判（证据缺失 ≠ 冲突）。
+    void applyStateFlowConsistency(PrdAnalysisResult prdResult, List<StateMachine> stateMachines) {
+        if (prdResult == null || prdResult.getStateFlows() == null || prdResult.getStateFlows().isEmpty()) {
+            return;
+        }
+        if (stateMachines == null || stateMachines.isEmpty()) {
+            return;
+        }
+        Set<String> codeStates = new HashSet<>();
+        for (StateMachine sm : stateMachines) {
+            for (Map<String, Object> s : JsonHelper.parseListMap(sm.getStates())) {
+                Object code = s.get("code");
+                Object name = s.get("name");
+                if (code != null && !String.valueOf(code).isBlank()) {
+                    codeStates.add(String.valueOf(code).trim().toLowerCase());
+                }
+                if (name != null && !String.valueOf(name).isBlank()) {
+                    codeStates.add(String.valueOf(name).trim().toLowerCase());
+                }
+            }
+        }
+        if (codeStates.isEmpty()) {
+            return;
+        }
+        List<String> conflicts = new ArrayList<>();
+        for (Map<String, Object> flow : prdResult.getStateFlows()) {
+            List<String> flowStates = readFlowStates(flow);
+            if (flowStates.isEmpty()) {
+                continue;
+            }
+            boolean anyHit = false;
+            for (String state : flowStates) {
+                if (codeStates.contains(state.toLowerCase())) {
+                    anyHit = true;
+                    break;
+                }
+            }
+            if (!anyHit) {
+                String flowName = flow.get("name") == null ? "未命名" : String.valueOf(flow.get("name"));
+                conflicts.add("PRD 状态流「" + flowName + "」在代码状态机中无对应状态（PRD: "
+                        + String.join("/", flowStates) + "），以代码为准，需人工确认");
+            }
+        }
+        if (!conflicts.isEmpty()) {
+            prdResult.setEvidenceInconsistencies(conflicts);
+            log.warn("[C2] {} PRD state flow(s) have no matching code states", conflicts.size());
+        }
+    }
+
+    /** PRD 状态流的 states 列表（元素可能为字符串或 {name/code} 对象），统一转字符串 */
+    private List<String> readFlowStates(Map<String, Object> flow) {
+        List<String> states = new ArrayList<>();
+        Object raw = flow == null ? null : flow.get("states");
+        if (raw instanceof List<?> list) {
+            for (Object item : list) {
+                String s = null;
+                if (item instanceof String str) {
+                    s = str;
+                } else if (item instanceof Map<?, ?> m) {
+                    Object name = m.get("name") != null ? m.get("name") : m.get("code");
+                    s = name == null ? null : String.valueOf(name);
+                }
+                if (s != null && !s.isBlank()) {
+                    states.add(s.trim());
+                }
+            }
+        }
+        return states;
+    }
+
+    // v6.4: 构建检索查询段：各模块 + 各需求 + 上下文文档片段 + 补充需求，不再用整段 PRD 自我检索。
+    // v7.10(G9): 分类别配额取代顺序拼接 + 总量截断——旧实现模块多时需求查询被挤出，
+    // 与"以需求为纲"的生成策略冲突。新配额：requirements 6 + modules 3 + contextDocs 2 + supplementary 1。
+    List<String> buildRagQueries(PrdAnalysisResult prdResult) {
+        List<String> requirementQ = new ArrayList<>();
+        List<String> moduleQ = new ArrayList<>();
+        List<String> contextDocQ = new ArrayList<>();
+        List<String> supplementaryQ = new ArrayList<>();
+        if (prdResult != null) {
             if (prdResult.getRequirements() != null) {
                 for (Map<String, Object> r : prdResult.getRequirements()) {
                     String q = joinFields(r, List.of("title", "description"));
                     if (!q.isBlank()) {
-                        queries.add(q);
+                        requirementQ.add(q);
+                    }
+                }
+            }
+            if (prdResult.getModules() != null) {
+                for (Map<String, Object> m : prdResult.getModules()) {
+                    String q = joinFields(m, List.of("name", "description"));
+                    if (!q.isBlank()) {
+                        moduleQ.add(q);
                     }
                 }
             }
@@ -317,18 +443,34 @@ public class OrchestratorAgent {
                         String title = doc.get("title") == null ? "" : String.valueOf(doc.get("title"));
                         String q = (title.isBlank() ? "" : title + "：") + truncate(content, 600);
                         if (!q.isBlank()) {
-                            queries.add(q);
+                            contextDocQ.add(q);
                         }
                     }
                 }
             }
             String supplementary = prdResult.getOtherContextInfo();
             if (supplementary != null && !supplementary.isBlank()) {
-                queries.add(truncate(supplementary, 600));
+                supplementaryQ.add(truncate(supplementary, 600));
             }
         }
-        return queries.size() > ragMaxQueries
-                ? new ArrayList<>(queries.subList(0, ragMaxQueries)) : queries;
+        List<String> queries = new ArrayList<>();
+        queries.addAll(capList(requirementQ, 6));     // 需求优先（对齐"以需求为纲"）
+        queries.addAll(capList(moduleQ, 3));
+        queries.addAll(capList(contextDocQ, 2));
+        queries.addAll(capList(supplementaryQ, 1));
+        return queries;
+    }
+
+    // v7.10(G18): 失败经验专用查询——需求形查询打动作形语料（action -> error）向量天然弱，
+    // 取前 6 条需求查询（buildRagQueries 已按需求优先排序）+ 操作/页面类关键词后缀兜一路动作形召回
+    List<String> buildFailureQueries(List<String> ragQueries) {
+        List<String> queries = new ArrayList<>(capList(ragQueries, 6));
+        queries.add("页面 操作 点击 输入 提交 断言");
+        return queries;
+    }
+
+    private List<String> capList(List<String> list, int limit) {
+        return list.size() > limit ? new ArrayList<>(list.subList(0, limit)) : list;
     }
 
     private String truncate(String s, int maxLen) {

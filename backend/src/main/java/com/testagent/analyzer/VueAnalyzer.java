@@ -76,7 +76,7 @@ public class VueAnalyzer {
         // v7.4(C1): 分析告警收集（VueAnalyzer 为单例，多项目可能并发 analyze——必须参数传递，不得用实例字段）
         List<String> warnings = new ArrayList<>();
         List<Map<String, Object>> routes = extractRoutes(dir);
-        List<Map<String, Object>> apiCalls = extractApiCalls(dir);
+        List<Map<String, Object>> apiCalls = extractApiCalls(dir, warnings);
         int fileCount = countSourceFiles(dir);
 
         // v1.11: 深度提取表单、组件状态、DOM 选择器、页面跳转
@@ -199,40 +199,53 @@ public class VueAnalyzer {
         return routes;
     }
 
-    private List<Map<String, Object>> extractApiCalls(File frontendDir) {
+    /**
+     * v7.10(A12): apiCalls 扫描范围从 src/api 目录扩到全部 .vue/.js/.ts——
+     * 组件内直书 axios.get('/api/order/' + id) 此前全漏，状态机跨端证据不完整。
+     * 按 (method+url) 去重，上限 100 条，超限记 warning（纯规则层正则，全量扫描换取证据完整性）。
+     * v7.10(A12): 包级可见，供单测直接验证全量扫描语义
+     */
+    List<Map<String, Object>> extractApiCalls(File frontendDir, List<String> warnings) {
         List<Map<String, Object>> apiCalls = new ArrayList<>();
-        File apiDir = new File(frontendDir, "src" + File.separator + "api");
-        if (!apiDir.isDirectory()) {
-            apiDir = new File(frontendDir, "api");
-        }
-        if (!apiDir.isDirectory()) {
-            return apiCalls;
-        }
+        List<File> scriptFiles = new ArrayList<>();
+        collectScriptFiles(frontendDir, scriptFiles);
 
-        List<File> apiFiles = new ArrayList<>();
-        collectScriptFiles(apiDir, apiFiles);
-
-        for (File file : apiFiles) {
+        Set<String> seen = new LinkedHashSet<>();
+        for (File file : scriptFiles) {
             String content = readFile(file);
             if (content == null) {
                 continue;
             }
             Matcher urlMatcher = URL_METHOD_PATTERN.matcher(content);
             while (urlMatcher.find()) {
+                String url = urlMatcher.group(1);
+                String method = urlMatcher.group(2) != null ? urlMatcher.group(2) : "unknown";
+                if (!seen.add(method + "|" + url)) {
+                    continue;
+                }
                 Map<String, Object> call = new HashMap<>();
-                call.put("url", urlMatcher.group(1));
-                call.put("method", urlMatcher.group(2) != null ? urlMatcher.group(2) : "unknown");
+                call.put("url", url);
+                call.put("method", method);
                 call.put("file", file.getName());
                 apiCalls.add(call);
             }
             Matcher axiosMatcher = AXIOS_PATTERN.matcher(content);
             while (axiosMatcher.find()) {
+                String method = axiosMatcher.group(1);
+                String url = axiosMatcher.group(2);
+                if (!seen.add(method + "|" + url)) {
+                    continue;
+                }
                 Map<String, Object> call = new HashMap<>();
-                call.put("url", axiosMatcher.group(2));
-                call.put("method", axiosMatcher.group(1));
+                call.put("url", url);
+                call.put("method", method);
                 call.put("file", file.getName());
                 apiCalls.add(call);
             }
+        }
+        if (apiCalls.size() > 100) {
+            warnings.add("apiCalls 超上限 " + apiCalls.size() + " 条，截断为 100 条");
+            return new ArrayList<>(apiCalls.subList(0, 100));
         }
         return apiCalls;
     }

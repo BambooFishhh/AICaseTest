@@ -99,6 +99,20 @@ public class LlmService {
     // 取消信号改为 per-request 由调用方传入（BooleanSupplier），见 chatStreamingWithUsage。
 
     /**
+     * v7.10(L3): thinking 配置诚实化——启动时告知该配置不生效（未标记的降级 = 幻觉配置）。
+     * Spring AI 1.0.0 OpenAI starter 无法透传 DashScope 的 enable_thinking，
+     * 用户开启 llm.thinking.* 后以为已生效，实际行为与关闭完全相同。
+     */
+    @jakarta.annotation.PostConstruct
+    void warnConsultativeThinking() {
+        if (analysisThinking || generationThinking) {
+            log.warn("[LLM] llm.thinking.* 已开启（analysis={}, generation={}），但当前 Spring AI OpenAI starter "
+                            + "无法透传 enable_thinking，该配置不生效（咨询性配置，仅记录意图）",
+                    analysisThinking, generationThinking);
+        }
+    }
+
+    /**
      * v6.0: 检查 Spring AI ChatModel/EmbeddingModel 是否可用（替代旧版 MCP llm 可用性检查）。
      */
     public boolean isConfigured() {

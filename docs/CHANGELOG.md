@@ -4,6 +4,76 @@
 
 ---
 
+## v7.10 — 缓冲区收尾
+**日期**: 2026-08-23
+**基线**: v7.9
+**主题**: 缓冲区 17 项 + 补入 G7/G19 两项计划遗漏，共 19 项收口——需求 ID 内容 hash 稳定化、索引维护移出热路径、流式单解析、RAG 分类配额、评审缺评补评与三分带、失败经验库治理、thinking 配置诚实化、分析器启发式扩展、证据链对账（对应风险清单 G7/G19/G8/G9/G12/G13/G18/R4/R5/R13/L3/L12/A3/A6/A12/A18/C2，A14/C3 正式关闭）
+
+### 背景
+
+v7.0–v7.9 完成 A 速赢区与 B 攻坚区后，复盘发现两项原排 v7.5 的条目实际未落地：**G7** req-N 仍是解析顺序临时编号——A15 缓存落地后"同一 PRD 两次生成"已稳定，但 PRD 一变更全量编号漂移，追加生成时旧用例 `coverageRefs.req-3` 与新 checklist 的 `req-3` 可能指向不同需求，覆盖率历史对比失真；**G19** `ensureRequirementContexts`（Milvus 索引维护）仍在生成热路径内——保存侧四条路径已全部触发重建，热路径这次调用属于"读路径藏写操作"。缓冲区剩余问题分七组：生成链路（**G8** 流式/全量双解析索引错位致重复/漏推、**G9** RAG 查询顺序截断挤占 contextDocs 配额、**G12** 多轮重复注入原文纯浪费 token、**G13** 置信度硬编码 0.8 无信息量）；评审（**R4** 输出截断时部分用例无结果且无告警、**R5** reject 半数保护"恰好一半"时真垃圾也全留）；失败经验（**G18** 需求形查询 vs 动作形语料向量天然弱、**R13** 失败记录无去重且文本贫瘠）；LLM 配置（**L3** thinking 开关是"幻觉配置"——打开无效果但用户以为已生效）；生成质量（**L12** 选择器匹配阈值 2 过宽，"删除"匹配到"批量删除"）；分析器（**A3** 异常只记第一个、**A6** 空指针防御全算业务规则、**A12** apiCalls 只扫 src/api、**A18** Integer/String 状态提不出）；一致性（**C2** PRD 与代码两条证据链无新鲜度/一致性校验静默分叉）。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `agent/TestGeneratorAgent.java` | 修改 | **G7**：requirement id 从顺序编号改内容 hash——`req-` + SHA-256(title+\u0001+description) 前 10 位十六进制（RAG 并入项 `rag-` 同款 hash），同一需求任意解析顺序/轮次 id 一致，PRD 局部修改只影响变更项；**G8**：StreamingTestCaseParser 新增收集列表为唯一返回值，流式分支直接返回收集结果，删除"完整响应重解析 + parsedCount 索引补推"双解析路径（保留 0 解析兜底全量重解析）；**G12**：第 2+ 轮不再注入 prdDocs/contextDocs/补充需求原文（保留结构化 prd 摘要 + gaps + 已生成摘要）；**G13**：confidence 从硬编码 0.8 改为 qualityScore/100（评分自 v7.8 起含评审结论）；**L12**：bestSelector 阈值 2→3 且要求唯一最高分（并列最高宁留空由 Agent 模式执行时自定位）；**C2**：context 注入 evidenceStale/evidenceInconsistencies（过期/冲突提示进 prompt） |
+| `agent/OrchestratorAgent.java` | 修改 | **G19**：删除 loadGenerationContext 内 ensureRequirementContexts 调用——索引维护只在保存侧四条路径（updatePrd/uploadPrdPdf/fetchPrdUrl/updateProjectContext）；**G9**：buildRagQueries 分类别配额（requirements 6 / modules 3 / contextDocs 2 / supplementary 1）取代顺序截断，删除 app.rag.max-queries 配置；**G18**：retrieveFailures 改失败专用查询（前 6 条需求查询 + 操作/页面关键词后缀），embedding 调用数 12→6；**C2**：applyEvidenceStaleness（project.updatedAt 晚于代码分析/状态机时间 → SSE 提示"建议重新分析"）+ stateFlow 一致性检查（PRD 状态流在代码状态机无任何状态命中 → evidenceInconsistencies 备注"以代码为准，需人工确认"） |
+| `agent/TestCaseReviewAgent.java` | 修改 | **R4**：byIndex putIfAbsent 去重保留首个；缺失 index 的用例子集二次送评（子集规模减半，截断概率大幅下降）；补评后仍缺 log.warn 告警并保留该用例（未评审≠删除）；**R5**：reject 保护三分带——>70% 全保留+告警、40%–70% 按置信度逐条裁决（confidence ≥ 0.75 才删）、≤40% 照删 |
+| `agent/StateMachineAgent.java` | 修改 | **A18**：constants 启发式加类名语义过滤（类名不含状态语义的工具常量类不再当枚举喂 LLM） |
+| `analyzer/SpringAnalyzer.java` | 修改 | **A3**：异常提取收集方法内全部 ThrowStmt 的 ObjectCreationExpr（去重上限 5 条，原只记第一个）；**A6**：NOISE_EXCEPTIONS 过滤集（NullPointerException/IllegalStateException/IllegalArgumentException 等 JDK/Spring 通用异常）不进业务规则，过滤量进 warnings；**A18**：状态字段检测扩展——字段名含 status/state/type 且 Integer/String 字面量时提取为状态候选 |
+| `analyzer/VueAnalyzer.java` | 修改 | **A12**：apiCalls 扫描范围从 src/api 扩到全部 .vue/.js/.ts 文件（排除 node_modules），状态机前端证据变全 |
+| `dto/PrdAnalysisResult.java` | 修改 | **C2**：新增 evidenceStale（证据过期标志）与 evidenceInconsistencies（PRD 与代码冲突清单）字段 |
+| `service/SemanticService.java` | 修改 | **R13**：recordFailure 稳定 ID `fail-` + SHA-256(projectId+归一化 action+归一化 error) 前 16 位，写入前 deleteByIds 同 ID 覆盖（同源失败不堆积占满 topK）；语料富化为 `[用例标题 \| 页面URL \|] action -> error` |
+| `service/ExecutionService.java` | 修改 | **R13**：失败记录调用点透传用例标题与页面 URL |
+| `service/LlmService.java` | 修改 | **L3**：@PostConstruct 启动告警——thinking 配置开启时 warn 明示"Spring AI OpenAI starter 无法透传 enable_thinking，该配置不生效（咨询性配置）" |
+| `resources/application.yml` / `.env.example` | 修改 | **L3**：thinking 三项配置注释标注咨询性（开启不生效） |
+| `resources/skills/*.md` ×3 | 修改 | **G7**：prompt 中 requirementIds "用 req-N" 表述改为"原样使用 coverageChecklist.requirements[].id" |
+| `test/agent/TestGeneratorAgentIdStabilityTest.java` | 新增 | G7 6 用例：内容 hash 确定性、重排序不变、局部修改只影响变更项、rag- 同款 hash |
+| `test/agent/TestGeneratorAgentStreamParseTest.java` | 新增 | G8 5 用例：收集结果与解析数一致、分块输入、0 解析兜底全量重解析 |
+| `test/agent/TestGeneratorAgentConfidenceTest.java` | 新增 | G13 4 用例：confidence = qualityScore/100、高质量高置信 |
+| `test/agent/TestGeneratorAgentBestSelectorTest.java` | 新增 | L12 4 用例：阈值 3、唯一最高分才绑定、并列留空 |
+| `test/agent/TestCaseReviewAgentMissingIndexTest.java` | 新增 | R4 4 用例：缺失子集补评、重复 index 保留首个、补评仍缺失保留用例 |
+| `test/agent/TestCaseReviewAgentRejectBandTest.java` | 新增 | R5 4 用例：>70% 全保留、40–70% 置信度裁决、≤40% 照删 |
+| `test/analyzer/SpringAnalyzerStateHeuristicsTest.java` | 新增 | A3/A6/A18 8 用例：多异常收集、噪音过滤、Integer/String 状态提取、过滤量进 warnings |
+| `test/analyzer/VueAnalyzerApiCallsTest.java` | 新增 | A12 3 用例：全目录扫描、去重、上限 |
+| `test/agent/OrchestratorAgentConsistencyTest.java` | 新增 | C2 5 用例：证据过期检测、状态流一致性、冲突注入 evidenceInconsistencies |
+| `test/service/SemanticServiceFailureRecordTest.java` | 新增 | R13 6 用例：稳定 ID 去重、语料含标题与 URL、归一化一致性 |
+| `test/analyzer/SpringAnalyzerTest.java` | 修改 | A6 行为变更同步：测试 fixture 改用业务语义异常（噪音异常已被过滤） |
+
+### 部署配置变化
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| `app.rag.max-queries` | 删除 | G9 分类别配额（6+3+2+1）取代总量截断，该配置不再读取 |
+| `LLM_THINKING_*` | false | L3 注释标注：三项均为咨询性配置，开启不生效（Spring AI OpenAI starter 无法透传 enable_thinking） |
+
+### API 契约变化
+
+- 无 REST 接口变更
+- **requirement id 口径切换**：新需求 id 为 `req-<hash10>`（内容 hash），存量旧 `req-N` refs 不迁移——与旧实现"顺序漂移即失配"等价，无回退风险；重新生成后 coverageRefs 将逐步切换到新口径
+- 用例 `confidence` 从硬编码 0.8 变为 qualityScore/100（0–1 区间有信息量）
+- 失败经验记录 id 从随机 UUID 变为内容 hash 稳定 ID（同源失败覆盖更新）
+
+### 验证结果
+
+- 后端定向测试：新增 10 个测试类 54 用例 + 既有 SpringAnalyzerTest 行为同步，全量 `mvn test` 通过（327 用例）
+- 前端 `npm run build`：BUILD SUCCESS（无代码变更，回归构建）
+
+### 预期影响（缓冲区收尾与口径稳定）
+
+- 覆盖率历史对比可信：需求 id 内容 hash 后 PRD 局部修改不再全量编号漂移，追加生成的新旧用例 refs 口径对齐（G7）
+- 生成热路径纯读：索引维护移出后生成延迟不再被 Milvus 写入拖累；v6.4 前存量项目首生成检索空走优雅降级，重新保存需求资料即重建（G19）
+- 流式推送不再错位：单一解析真源消除重复推送/漏推（G8）；RAG 四类查询各有配额不再被挤占（G9）；多轮 token 省约 20k×轮数（G12）
+- 评审语义完备：截断缺评自动补评一轮且不再静默（R4）；reject 保护三分带消灭"恰好一半真垃圾全留"盲区（R5）
+- 错题本可用：失败记录去重不占满 topK，语料含标题/URL 后"需求 vs 动作"的向量形状错配改善，检索调用减半（R13/G18）
+- 配置不再说谎：thinking 开关打开即见启动告警与注释说明（L3）
+- 分析器信噪比：多异常全收集（A3）、空指针防御不进业务规则（A6）、全目录 apiCalls（A12）、Integer/String 状态可提取（A18）
+- 证据链分叉可见：PRD 更新未重新分析、PRD 状态流与代码状态机冲突时，SSE 提示 + prompt 显式标注"以代码为准，需人工确认"（C2）
+- 风险清单 A/B/C 三区全部收口，剩余仅 D 延后区（效率成本 > 准确率收益，维持既定原则不做）
+
+---
+
 ## v7.9 — 执行效率与证据存储
 **日期**: 2026-08-23
 **基线**: v7.8
