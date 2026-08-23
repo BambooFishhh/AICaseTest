@@ -180,8 +180,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v7.12（复审 P1/P2 修复）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v7.13（输入截断上限扩容）**，生产线基线为 vP5（压测与容量）。
 
+- v7.13 要点：分析器 LLM 增强输入预算配置化并放大至"大项目全覆盖"（Spring 源码总量 16k→120k、单文件 1500→10k≈30-40 个 Java 文件全覆盖；Vue 总量 12k→96k、template/script 800/700→3000/3000≈20-30 个组件全覆盖；总闸 max-prompt-chars 60k→300k，全部 `app.analyzer.*` 环境变量可回调）；规则摘要合法化收敛（`buildRuleSummary` 旧实现 `json.substring(0, 30000)` 会砍出非法 JSON 塞进 prompt，新实现每轮条目 ×0.7 重序列化至 ≤80k、5 轮后兜底 counts-only 骨架，endpointCount 恒为真实总数）；Vue 文件页面优先排序（A9 字典序确定性保留，views/pages/App.vue > components > 其他——纯字典序下 components 会把页面挤出预算，优先级正好反了）；移除死配置 `llm.max-context-chars`（登记后从未被读取）；大项目三层演进方案（分批增强 → map-reduce 摘要 → 按需检索）落盘 `docs/大项目代码分析演进提案.md` 作 v8.x 候选；后端 389 测试全绿。
 - v7.12 要点：复审遗留 P1/P2 七项修复——reject 比例分母纠正（R15，分母改为已评审数而非送评总数，截断场景批量 reject 不再被缺评条目稀释，>70% 全保留保护带可靠触发）；选择器池只收 DOM 选择器（G22，表单字段无可执行 value，混池打分胜出会固化废选择器进用例资产）；两侧判重口径对齐（G23，TestCaseService 补 type 一致性要求、重叠率阈值 0.8→0.9、子串规则加 4 字最短门槛——追加生成的负向/边界用例不再被同标题正向旧用例误杀，"登录" vs "退出登录后重新登录" 之类短动词包含不再误杀）；熔断半开探测（L15，开启期过后单探测租约试探 provider 恢复，不再全量放行 doomed 请求风暴，租约超时自愈）；Redis 信号量 ZSET 租约模型（E15，计数器+TTL 在长执行下键过期超发，改为 member=permitId 租约 + 步骤心跳续租 + 按持有者精确释放，JVM 崩溃 5 分钟自愈）；执行报告流式生成（R16，HTML 分段写出、截图逐张"读取→编码→写出→释放"，峰值内存从 2×报告体积降到单截图+base64 缓冲）；SSE 断连不再误报失败（E16，区分后端下发错误与连接层断开，断连降级为进度轮询跟踪）；后端 381 测试全绿。
 - v7.11 要点：全量代码审查暴露的 7 项关键缺陷修复——流式 LLM 错误处理（L14，error 信号释放 latch 不再死循环，真实错误优先于取消判定不再谎报"用户取消"）；用例 ID 全局唯一分配器（T1/T2，test_cases.id 是全局主键而历史编号按项目独立分配，跨项目同号经 JPA merge 静默整行覆盖——生成/追加/导入/复制/手动创建五条路径统一走全库 max+1 分配器，批量逐条取号缓存同步推进）；Playwright 多会话隔离（E12，MCP Server 全局单浏览器改为 sessions Map，所有工具带 session_id，Java 侧以 executionId 派生会话，并发执行互不干扰、截图文件名带会话前缀防碰撞）；补测循环收敛（G21，componentIds/dependencyIds 不计入续跑条件，不再无限循环烧 token）；JsonHelper 可变兜底容器（T3，空值/解析失败返回 LinkedHashMap/ArrayList，评审链路不再 UnsupportedOperationException）；排队超时取消保护（E13，cancelled 终态不被翻转为 failed，exec:cancel 残留标志清理）；AgentTask 终态保护（E14，TERMINAL_STATUSES 守卫，succeed/fail/cancel 不再覆盖已终态任务）；后端 353 测试全绿。
 - v7.10 要点：缓冲区收尾（风险清单 A/B/C 三区全部完成，剩余仅 D 延后区）——需求 ID 内容 hash 稳定化（G7 补入，`req-` + SHA-256(title+description) 前 10 位，PRD 局部修改不再全量编号漂移，覆盖率历史对比可信）；索引维护移出生成热路径（G19 补入，保存侧四条路径已覆盖，热路径纯读）；流式单解析真源（G8，收集列表为唯一返回值，消除双解析索引错位）；RAG 查询分类配额（G9，requirements 6/modules 3/contextDocs 2/supplementary 1，不再被挤占）；多轮去原文注入（G12，省约 20k token×轮数）；置信度派生（G13，confidence = qualityScore/100）；失败经验库治理（R13+G18，稳定 ID 去重 + 语料补用例标题/页面 URL + 失败专用查询，embedding 调用 12→6）；评审缺评补评（R4，缺失 index 子集二次送评，不再静默）与 reject 三分带（R5，>70% 全保留/40-70% 置信度裁决/≤40% 照删）；thinking 配置诚实化（L3，启动告警 + 注释标注不生效）；选择器匹配收紧（L12，阈值 3 且唯一最高分）；分析器信噪比（A3 多异常全收集/A6 噪音异常过滤/A12 apiCalls 全目录扫描/A18 Integer·String 状态提取）；证据链对账（C2，新鲜度检测 + PRD 状态流 vs 代码状态机冲突时 prompt 显式标注"以代码为准，需人工确认"）；后端 327 测试全绿。
@@ -251,6 +252,7 @@ AICaseTest/
 | v7.10 | 缓冲区收尾（需求 ID hash 稳定化/索引维护移出热路径/流式单解析/RAG 分类配额/评审补评与三分带/失败经验治理/证据链对账） | ✅ 完成 |
 | v7.11 | 关键缺陷修复（流式错误死循环/用例 ID 全局唯一/Playwright 多会话隔离/补测循环收敛/可变兜底容器/排队取消保护/终态保护） | ✅ 完成 |
 | v7.12 | 复审 P1/P2 修复（reject 分母/选择器池纯化/判重口径对齐/熔断半开/Redis 租约信号量/报告流式/SSE 断连降级） | ✅ 完成 |
+| v7.13 | 输入截断上限扩容（分析器预算配置化放大/规则摘要合法化/Vue 页面优先排序/死配置清理） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

@@ -53,6 +53,18 @@ public class VueAnalyzer {
     @Value("${app.executor.llm-concurrency:4}")
     private int llmConcurrency;
 
+    // v7.13: LLM 增强输入预算配置化（原 v1.12 硬编码 12000/800/700，按 32k context 模型
+    // 定的保守值，现代模型 128k+ 放大至"大项目全覆盖"）。字段初始化默认值兜底：
+    // 单测直接 new 不走容器，纯 @Value 下 int 为 0 会截没全部源码
+    @Value("${app.analyzer.vue-source-total-chars:96000}")
+    private int vueSourceTotalChars = 96000;
+
+    @Value("${app.analyzer.vue-template-chars:3000}")
+    private int vueTemplateChars = 3000;
+
+    @Value("${app.analyzer.vue-script-chars:3000}")
+    private int vueScriptChars = 3000;
+
     private static final Pattern VUE_VERSION_PATTERN =
             Pattern.compile("\"vue\"\\s*:\\s*\"([^\"]+)\"");
     private static final Pattern ROUTE_PATTERN = Pattern.compile(
@@ -330,8 +342,10 @@ public class VueAnalyzer {
 
     /**
      * 递归收集所有 .vue 文件（跳过 node_modules）。
-     * v7.4(A9): 递归出口按绝对路径字典序排序——File.listFiles() 顺序依赖操作系统，
-     * 此前两次分析 LLM 看到的文件集合（12k 截断子集）不同，结果漂移。
+     * v7.4(A9): 递归出口排序——File.listFiles() 顺序依赖操作系统，
+     * 此前两次分析 LLM 看到的文件集合（截断子集）不同，结果漂移。
+     * v7.13: 纯路径字典序升级为"页面优先 + 字典序"——components 字典序在 views 之前，
+     * 截断时组件会把页面（交互入口、测试价值最高）挤出预算，优先级正好反了。
      */
     private void collectVueFiles(File dir, List<File> result) {
         File[] children = dir.listFiles();
@@ -351,7 +365,17 @@ public class VueAnalyzer {
                 }
             }
         }
-        result.sort(Comparator.comparing(File::getAbsolutePath));
+        result.sort(Comparator
+                .comparingInt(this::vueFilePriority)
+                .thenComparing(f -> f.getPath().replace('\\', '/')));
+    }
+
+    /** v7.13: 页面/路由入口优先（views/pages/App.vue），组件次之，其余最后——截断时保测试价值最高的文件 */
+    private int vueFilePriority(File f) {
+        String p = f.getPath().replace('\\', '/').toLowerCase();
+        if (p.contains("/views/") || p.contains("/pages/") || p.endsWith("/app.vue")) return 0;
+        if (p.contains("/components/")) return 1;
+        return 2;
     }
 
     private int countSourceFiles(File frontendDir) {
@@ -1463,14 +1487,14 @@ public class VueAnalyzer {
         parseAndMergeSupplements(response, forms, componentStates, domSelectors, pageFlows, warnings);
     }
 
-    // v1.12: 收集 .vue 文件源码摘要，每文件截断 1500 字符，总计上限 12000 字符
+    // v1.12: 收集 .vue 文件源码摘要；v7.13: 上限配置化（原 12000/800/700 → 96000/3000/3000）
     private String collectSourceSnippets(File dir) {
         List<File> vueFiles = new ArrayList<>();
         collectVueFiles(dir, vueFiles);
 
         StringBuilder sb = new StringBuilder();
         int totalChars = 0;
-        int maxTotal = 12000;
+        int maxTotal = vueSourceTotalChars;
 
         for (File file : vueFiles) {
             if (totalChars >= maxTotal) break;
@@ -1478,20 +1502,20 @@ public class VueAnalyzer {
                 String content = readFile(file);
                 String component = file.getName().replace(".vue", "");
 
-                // 截取 template 部分（最多 800 字符）
+                // 截取 template 部分（v7.13: 最多 vueTemplateChars 字符）
                 int templateStart = content.indexOf("<template>");
                 int templateEnd = content.indexOf("</template>");
                 String template = "";
                 if (templateStart >= 0 && templateEnd > templateStart) {
-                    template = content.substring(templateStart, Math.min(templateEnd + 11, templateStart + 811));
+                    template = content.substring(templateStart, Math.min(templateEnd + 11, templateStart + vueTemplateChars + 11));
                 }
 
-                // 截取 script 部分（最多 700 字符）
+                // 截取 script 部分（v7.13: 最多 vueScriptChars 字符）
                 int scriptStart = content.indexOf("<script");
                 int scriptEnd = content.indexOf("</script>");
                 String script = "";
                 if (scriptStart >= 0 && scriptEnd > scriptStart) {
-                    script = content.substring(scriptStart, Math.min(scriptEnd + 9, scriptStart + 709));
+                    script = content.substring(scriptStart, Math.min(scriptEnd + 9, scriptStart + vueScriptChars + 9));
                 }
 
                 String snippet = "=== " + component + ".vue ===\n" + template + "\n" + script + "\n\n";

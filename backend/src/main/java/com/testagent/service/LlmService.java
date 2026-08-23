@@ -63,7 +63,8 @@ public class LlmService {
     private boolean generationThinking;
 
     // v6.1 (B 方案): 统一 prompt 上限，防止超大上下文触发 Idle timeout
-    @Value("${llm.max-prompt-chars:60000}")
+    // v7.13: 默认 60000 → 300000（随分析器输入预算放大；此处为保险丝，正常不触发）
+    @Value("${llm.max-prompt-chars:300000}")
     private int maxPromptChars;
 
     // v6.5: LLM 重试次数（分类 + 抖动，4xx 不重试）

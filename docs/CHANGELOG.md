@@ -4,6 +4,62 @@
 
 ---
 
+## v7.13 — 输入截断上限扩容
+**日期**: 2026-08-23
+**基线**: v7.12
+**主题**: 分析器 LLM 增强输入预算配置化并放大至"大项目全覆盖"（Spring 120k/10k、Vue 96k/3k+3k、总闸 300k）+ 规则摘要非法 JSON 修复 + Vue 文件页面优先排序 + 死配置清理；大项目结构性方案（分批增强/map-reduce/按需检索）落盘为 v8.x 候选提案
+
+### 背景
+
+v7.12 收口后盘点全链路输入截断点：分析器层 4 处硬编码（Spring 源码总量 16k/单文件 1500、Vue 源码总量 12k/template 800/script 700、规则摘要 30k）+ 总闸 60k，全部是 v6.1 时代按 32k context 模型定的保守值，现代模型 128k+ tokens 容量大量闲置。其中 `buildRuleSummary` 的 `json.substring(0, 30000)` 会把 JSON 砍成**非法 JSON** 塞进 prompt。用户决策从扩大字符量入手（简单修法），结构感知截断/全局预算制/大项目分批方案留后续——大项目三层演进方案（分批增强 → map-reduce 摘要 → 按需检索）已落盘 `docs/大项目代码分析演进提案.md`。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `application.yml` | 修改 | 新增 `app.analyzer.*` 6 项配置（全部环境变量可覆盖）；`llm.max-prompt-chars` 默认 60000→300000；**移除死配置 `llm.max-context-chars`**（登记后从未被任何 @Value 读取，生成侧实际截断由 truncateStrings/truncateDocs 承担） |
+| `analyzer/SpringAnalyzer.java` | 修改 | 源码总量 16000→120000、单文件 1500→10000（≈30-40 个 Java 文件全覆盖）；**buildRuleSummary 合法化收敛**——旧实现 substring 砍出非法 JSON，新实现每轮条目 ×0.7 重新序列化直至 ≤80k，5 轮后兜底 counts-only 骨架，endpointCount 恒为真实总数 |
+| `analyzer/VueAnalyzer.java` | 修改 | 源码总量 12000→96000、template 800→3000、script 700→3000（≈20-30 个组件全覆盖）；**collectVueFiles 排序升级**——A9 字典序确定性保留，新增页面优先级（views/pages/App.vue > components > 其他），修复纯字典序下 components 把页面挤出预算的优先级反转 |
+| `service/LlmService.java` | 修改 | maxPromptChars 默认值同步 300000（@Value 兜底默认值与 yml 一致；boundPrompt 保险丝语义不变） |
+| `test/analyzer/SpringAnalyzerRuleSummaryTest.java` | 新增 | 4 用例：超量条目仍合法 JSON 且 ≤80k、endpointCount 保真（500 条截断后计数仍 500）、少量直通不降采样、极限小上限兜底 counts 骨架 |
+| `test/analyzer/VueAnalyzerFileOrderTest.java` | 新增 | 4 用例：views 排 components 前、pages/App.vue 同级优先、同级字典序 + 两次收集一致（A9 保持）、node_modules 跳过 |
+
+### 前端变更
+
+无（零改动回归）。
+
+### API 契约变化
+
+无。
+
+### 验证结果
+
+- 后端全量 `mvn test`：全部通过（v7.13 新增 2 个测试类 8 用例）
+- 前端 `npm run build`：BUILD SUCCESS
+
+### 预期影响（输入容量扩容）
+
+- 分析器 LLM 视野：Spring 16k→120k（约 12-16 文件 → 30-40 文件）、Vue 12k→96k（约 9-10 组件 → 20-30 组件）——中大型项目源码覆盖大幅提升，A4b（LLM 看不全源码）影响面收窄
+- 规则摘要永远合法 JSON（旧实现截断时下游靠 LLM 容错）
+- Vue 截断时页面优先保留（此前 components 字典序挤占页面）
+- token 成本：分析增强调用 prompt ~7x（qwen-max 单次约 ¥0.1-0.2，低频手动触发可接受；配置可回调）
+- 超大项目（500+ 文件）仍有天花板——结构性方案已落盘提案，v8.x 按需启动
+
+### 配置项速查
+
+| 配置项 | 默认值 | 原值 |
+|---|---|---|
+| `app.analyzer.spring-source-total-chars` | 120000 | 16000（硬编码） |
+| `app.analyzer.spring-source-per-file-chars` | 10000 | 1500（硬编码） |
+| `app.analyzer.rule-summary-max-chars` | 80000 | 30000（硬编码 substring） |
+| `app.analyzer.vue-source-total-chars` | 96000 | 12000（硬编码） |
+| `app.analyzer.vue-template-chars` | 3000 | 800（硬编码） |
+| `app.analyzer.vue-script-chars` | 3000 | 700（硬编码） |
+| `llm.max-prompt-chars` | 300000 | 60000 |
+| ~~`llm.max-context-chars`~~ | 已移除 | 24000（死配置） |
+
+---
+
 ## v7.12 — 复审 P1/P2 修复
 **日期**: 2026-08-23
 **基线**: v7.11

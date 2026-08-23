@@ -81,12 +81,15 @@ llm:
     failure-threshold: ${LLM_CIRCUIT_FAILURE_THRESHOLD:5}
     open-seconds: ${LLM_CIRCUIT_OPEN_SECONDS:30}
   # v6.1 (B 方案): 统一 prompt 上限，避免 277KB 超大 prompt 触发 Idle timeout/超时
-  max-prompt-chars: ${LLM_MAX_PROMPT_CHARS:60000}
+  # v7.13: 60000 → 300000——总闸 = 2k 指令 + 80k 规则摘要 + 120k Spring 源码 + 余量。
+  # 代码类内容 300k chars ≈ 90-120k tokens，128k context 模型贴边可用；
+  # boundPrompt 头部截断保留为保险丝（触发即 ERROR，说明上游预算失效）
+  max-prompt-chars: ${LLM_MAX_PROMPT_CHARS:300000}
   # v6.5: LLM 重试次数（分类 + 抖动，4xx 不重试）
   retry:
     max-attempts: ${LLM_RETRY_MAX_ATTEMPTS:3}
-  # v6.1: RAG/文档上下文拼接预算（低于 max-prompt-chars，给系统/指令/示例留余量）
-  max-context-chars: ${LLM_MAX_CONTEXT_CHARS:24000}
+  # v7.13: 移除死配置 llm.max-context-chars——v6.1 登记后从未被任何 @Value 读取，
+  # 生成侧实际截断由 TestGeneratorAgent.truncateStrings/truncateDocs 承担（G17 相关性过滤管理）
   # v6.1: Spring AI HTTP 客户端超时（自定义 ClientHttpRequestFactory，覆盖 Jetty 默认 30s idle）
   http:
     connect-timeout-ms: ${LLM_CONNECT_TIMEOUT_MS:30000}
@@ -94,6 +97,18 @@ llm:
 app:
   output-dir: outputs
   projects-dir: projects
+  # v7.13: 分析器 LLM 增强输入预算——原 v6.1 时代硬编码（16k/1500/30k/12k/800/700）
+  # 按 32k context 模型定的保守值。修正后按"大项目全覆盖"定参：
+  # Spring 120k≈30-40 文件、单文件 10k 完整覆盖绝大多数类；
+  # Vue 96k≈20-30 组件、单组件 6k 完整覆盖典型 SFC。
+  # 全部可环境变量覆盖，模型小可回调；超大项目结构性方案见 docs/大项目代码分析演进提案.md
+  analyzer:
+    spring-source-total-chars: ${APP_ANALYZER_SPRING_SOURCE_TOTAL_CHARS:120000}
+    spring-source-per-file-chars: ${APP_ANALYZER_SPRING_SOURCE_PER_FILE_CHARS:10000}
+    rule-summary-max-chars: ${APP_ANALYZER_RULE_SUMMARY_MAX_CHARS:80000}
+    vue-source-total-chars: ${APP_ANALYZER_VUE_SOURCE_TOTAL_CHARS:96000}
+    vue-template-chars: ${APP_ANALYZER_VUE_TEMPLATE_CHARS:3000}
+    vue-script-chars: ${APP_ANALYZER_VUE_SCRIPT_CHARS:3000}
   # Git URL 项目克隆目录与超时
   git:
     clone-dir: ${GIT_CLONE_DIR:data/git-repos}

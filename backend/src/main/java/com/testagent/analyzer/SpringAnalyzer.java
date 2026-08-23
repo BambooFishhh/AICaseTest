@@ -38,6 +38,7 @@ import com.testagent.service.LlmService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -71,6 +72,18 @@ public class SpringAnalyzer {
 
     @Autowired
     private LlmService llmService;
+
+    // v7.13: LLM 增强输入预算配置化（原 v6.1 硬编码 16000/1500/30000，按 32k context 模型
+    // 定的保守值，现代模型 128k+ 放大至"大项目全覆盖"）。字段初始化默认值兜底：
+    // 单测直接 new 不走容器，纯 @Value 下 int 为 0 会截没全部源码
+    @Value("${app.analyzer.spring-source-total-chars:120000}")
+    private int springSourceTotalChars = 120000;
+
+    @Value("${app.analyzer.spring-source-per-file-chars:10000}")
+    private int springSourcePerFileChars = 10000;
+
+    @Value("${app.analyzer.rule-summary-max-chars:80000}")
+    private int ruleSummaryMaxChars = 80000;
 
     public BackendResult analyze(String backendDir) {
         File dir = new File(backendDir);
@@ -980,25 +993,62 @@ public class SpringAnalyzer {
         }
     }
 
+    /**
+     * v7.13: 超长时先减条目再序列化——旧实现 json.substring(0, 30000) 会把 JSON 砍成
+     * 非法 JSON 塞进 prompt（下游靠 LLM 容错，本质是把问题推迟）。
+     * 每轮条目数 ×0.7 重新序列化，≤ 上限即返回；5 轮后仍超返回 counts-only 骨架。
+     * endpointCount 等总量计数始终真实，LLM 可感知"明细被裁剪"。
+     */
     private String buildRuleSummary(List<EndpointInfo> endpoints,
                                     List<EnumInfo> enums,
                                     List<EntityInfo> entities,
                                     List<BusinessRule> businessRules) {
+        double scale = 1.0;
+        for (int pass = 0; pass < 5; pass++) {
+            Map<String, Object> summary = buildScaledSummary(endpoints, enums, entities, businessRules, scale);
+            String json = serializeSummary(summary);
+            if (json.length() <= ruleSummaryMaxChars) {
+                return json;
+            }
+            scale *= 0.7;
+        }
+        // 兜底：counts-only 骨架（合法 JSON，无明细）
+        Map<String, Object> skeleton = new LinkedHashMap<>();
+        skeleton.put("endpointCount", endpoints.size());
+        skeleton.put("enums", enums.size());
+        skeleton.put("entities", entities.size());
+        skeleton.put("businessRules", businessRules.size());
+        skeleton.put("note", "规则明细因超出长度上限省略，仅提供总量");
+        return serializeSummary(skeleton);
+    }
+
+    /** v6.1 (B 方案): 降采样基线（200/120/200/300）防无界；v7.13: scale 在基线内按比例缩减 */
+    private Map<String, Object> buildScaledSummary(List<EndpointInfo> endpoints,
+                                                    List<EnumInfo> enums,
+                                                    List<EntityInfo> entities,
+                                                    List<BusinessRule> businessRules,
+                                                    double scale) {
+        int epLimit = (int) Math.ceil(200 * scale);
+        int enLimit = (int) Math.ceil(120 * scale);
+        int entLimit = (int) Math.ceil(200 * scale);
+        int brLimit = (int) Math.ceil(300 * scale);
         Map<String, Object> summary = new LinkedHashMap<>();
-        // v6.1 (B 方案): 降采样——只保留最有价值的子集并控制单条长度，避免全量 JSON 超限。
         summary.put("endpointCount", endpoints.size());
-        summary.put("endpoints", endpoints.stream().limit(200)
+        summary.put("endpoints", endpoints.stream().limit(epLimit)
                 .map(ep -> {
                     Map<String, Object> m = new LinkedHashMap<>(ep.toContextMap());
                     m.put("businessLogic", truncate((String) m.get("businessLogic"), 200));
                     return m;
                 }).toList());
-        summary.put("enums", enums.size() > 120 ? enums.subList(0, 120) : enums);
-        summary.put("entities", entities.stream().limit(200).map(EntityInfo::toContextMap).toList());
-        summary.put("businessRules", businessRules.stream().limit(300).map(BusinessRule::toContextMap).toList());
+        summary.put("enums", enums.size() > enLimit ? enums.subList(0, enLimit) : enums);
+        summary.put("entities", entities.stream().limit(entLimit).map(EntityInfo::toContextMap).toList());
+        summary.put("businessRules", businessRules.stream().limit(brLimit).map(BusinessRule::toContextMap).toList());
+        return summary;
+    }
+
+    private String serializeSummary(Map<String, Object> summary) {
         try {
-            String json = objectMapper.writeValueAsString(summary);
-            return json.length() > 30000 ? json.substring(0, 30000) : json;
+            return objectMapper.writeValueAsString(summary);
         } catch (Exception e) {
             return summary.toString();
         }
@@ -1009,8 +1059,9 @@ public class SpringAnalyzer {
         files.sort(Comparator.comparingInt(this::sourcePriority).thenComparing(File::getName));
         StringBuilder sb = new StringBuilder();
         int totalChars = 0;
-        int maxTotal = 16000;
-        int maxPerFile = 1500;
+        // v7.13: 硬编码 16000/1500 → 配置化（120000/10000，大项目全覆盖）
+        int maxTotal = springSourceTotalChars;
+        int maxPerFile = springSourcePerFileChars;
         for (File file : files) {
             if (totalChars >= maxTotal) {
                 break;
