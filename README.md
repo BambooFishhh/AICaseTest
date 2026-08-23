@@ -176,7 +176,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v7.6（状态机与断言闭环）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v7.7（上下文精准投喂）**，生产线基线为 vP5（压测与容量）。
+
+- v7.7 要点：投喂精准——RAG 切片并入考点清单（G16，检索回的需求类切片标题与既有需求 token 相似度 <3 时作为 `rag-req-N` 进 checklist，长 PRD 尾部需求经 Milvus 全文切片零成本找回，A14 昂贵修法被免费覆盖大半）；后端上下文按需求关键词过滤（G17，endpoints/rules 按 path/function/description/validation 与需求关键词 token 重叠打分，无关接口不进 prompt，命中为空兜底全量）；轮间摘要注入（G4，第 2+ 轮 prompt 附已生成用例标题/类型摘要 + requirementIds 语义兜底匹配，多轮补齐真实收敛不再靠事后去重）；PRD 头尾截断（L4a，超 12000/24000 字符头尾各半保留，后部验收标准不再系统性丢弃）；大 PRD 解析失败瘦身重试（A13，完整解析失败降级只求核心三块，两次均失败明确提示"输出可能被截断，请精简文档或拆分"）；规则层参数提取（A5，@RequestParam/@PathVariable/@RequestBody 注解解析零 LLM 成本入 endpoints.parameters）；LLM 补充接口源码校验（A4a，function 含已知类名或 ≥2 段路径前缀才收，丢弃记 warning）；容量事实明示（G10，gaps 按类截断标 truncated，达 60 条上限仍有缺口时 complete 事件带 `coverageCappedByLimit` 与降级信号区分）；后端 228 测试全绿。
 
 - v7.6 要点：闭环可信——状态机转换 ground truth 校验（A17，JavaParser 扫描源码状态赋值点提取"转换来源→目标"证据，LLM 推断的 transition 与证据比对：匹配标 `verified`、编造的标 `unverified` 且 confidence 压降到 ≤0.4，"状态转换覆盖率"不再建立在无差别信任上）；expected 三层断言（L6，程序化/Agent 两模式共用 `ExecutionAssert`：URL/标题语义 → DOM 文本断言（中文短语剥叙述前后缀 + 3-gram 滑窗匹配，toast 文案"删除成功"可断言）→ 无法验证诚实标 skipped，断言失败步骤记 failed 并带期望/实际差异）；Agent 模式步骤类型分流（E5，`state_assert` 走 getPageStatus+断言+截图留证、`api_call` 明确 skipped，验证步骤不再掉进"找元素→点击"流水线，消除误点生产事故风险）；错误→文案对照表（G20层3，VueAnalyzer 提取 ElMessage 调用字面量 + SpringAnalyzer 提取异常消息，合成 `userFeedbackTexts` 注入生成上下文，prompt 硬规则要求 expected 优先使用真实文案原文禁止编造）；后端 205 测试全绿。
 - v7.5 要点：基线可信——统一 LLM 结果缓存层（`llm_result_cache` 表，键 = SHA-256(模型名+systemPrompt+userPrompt)，换模型/prompt 演进/内容变化任一发生自然失效，无 TTL）；PRD 解析缓存（A15，同 PRD 二次生成不调 LLM，requirements 与首次完全一致，temp 0.2 漂移消除，追加生成与首次生成模块口径一致）；组件摘要缓存（A11，源码未变的业务组件二次分析零 LLM 调用，分析高频操作成本不再线性放大）；毒缓存自愈（解析失败自动落回 LLM 路径）+ 缓存 DB 故障降级直调 LLM 绝不阻断分析/生成；后端 164 测试全绿。
@@ -234,6 +236,7 @@ AICaseTest/
 | v7.4 | 分析器规则层加固（测试代码排除/HTTP方法解析/模板串/多rules块/文件排序/字段级合并/warnings/状态机来源标记） | ✅ 完成 |
 | v7.5 | 缓存与可复现基线（PRD 解析缓存/组件摘要缓存/prompt-hash 失效/降级直调） | ✅ 完成 |
 | v7.6 | 状态机与断言闭环（转换证据校验/expected 三层断言/Agent 步骤分流/错误文案对照表） | ✅ 完成 |
+| v7.7 | 上下文精准投喂（RAG 进考点清单/后端上下文过滤/轮间摘要/头尾截断/瘦身重试/参数提取/补充接口校验/容量明示） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

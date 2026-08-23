@@ -10,12 +10,14 @@ import com.github.javaparser.ast.body.EnumConstantDeclaration;
 import com.github.javaparser.ast.body.EnumDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.AnnotationExpr;
 import com.github.javaparser.ast.expr.AssignExpr;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
+import com.github.javaparser.ast.expr.MemberValuePair;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.NormalAnnotationExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
@@ -62,6 +64,9 @@ public class SpringAnalyzer {
             Pattern.compile("<artifactId>spring-boot-starter-parent</artifactId>\\s*<version>([^<]+)</version>");
     private static final Pattern SPRING_BOOT_VERSION_PROPERTY_PATTERN =
             Pattern.compile("<spring-boot\\.version>([^<]+)</spring-boot\\.version>");
+    /** v7.7(A4a): 控制器类级 @RequestMapping 前缀（含 value= 形态），供 supplementalEndpoints 校验 */
+    private static final Pattern CLASS_REQUEST_MAPPING_PATTERN =
+            Pattern.compile("@RequestMapping\\s*\\(\\s*(?:value\\s*=\\s*)?\"([^\"]+)\"");
 
     @Autowired
     private LlmService llmService;
@@ -222,11 +227,20 @@ public class SpringAnalyzer {
                             exceptionTypes.add(thrownName);
                         }
                     }
+                    // v7.7(A5): 规则层解析参数注解——@RequestParam/@PathVariable/@RequestBody
+                    //（此前参数全押在看不全源码的 LLM 增强上，"关联 API + 测试数据"缺数据基础）
+                    List<Map<String, Object>> parameters = extractParameters(method);
+                    String requestBodyType = parameters.stream()
+                            .filter(m -> "body".equals(m.get("in")))
+                            .map(m -> String.valueOf(m.get("type")))
+                            .findFirst().orElse(null);
                     endpoints.add(EndpointInfo.builder()
                             .method(httpMethod)
                             .path(fullPath)
                             .function(className + "." + method.getNameAsString())
                             .file(filePath)
+                            .parameters(parameters)
+                            .requestBody(requestBodyType)
                             .responseBody(method.getType().asString())
                             .businessLogic(compactMethodBody(method))
                             .exceptions(exceptionTypes)
@@ -236,6 +250,67 @@ public class SpringAnalyzer {
             }
         }
         return endpoints;
+    }
+
+    /**
+     * v7.7(A5): 规则层参数提取——@RequestParam(in=query, required 缺省 true, defaultValue)、
+     * @PathVariable(in=path)、@RequestBody(in=body 且类型写入 endpoint.requestBody)。
+     * 注解 name/value 属性缺省时用参数名；不认识的注解参数跳过。
+     */
+    private List<Map<String, Object>> extractParameters(MethodDeclaration method) {
+        List<Map<String, Object>> parameters = new ArrayList<>();
+        for (Parameter p : method.getParameters()) {
+            String type = p.getType().asString();
+            AnnotationExpr requestParam = p.getAnnotationByName("RequestParam").orElse(null);
+            AnnotationExpr pathVariable = p.getAnnotationByName("PathVariable").orElse(null);
+            AnnotationExpr requestBody = p.getAnnotationByName("RequestBody").orElse(null);
+            if (requestParam != null) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("name", annotationAttr(requestParam, null, p.getNameAsString()));
+                m.put("in", "query");
+                m.put("type", type);
+                m.put("required", !"false".equalsIgnoreCase(annotationAttr(requestParam, "required", "true")));
+                String defaultValue = annotationAttr(requestParam, "defaultValue", null);
+                if (defaultValue != null) {
+                    m.put("defaultValue", defaultValue);
+                }
+                parameters.add(m);
+            } else if (pathVariable != null) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("name", annotationAttr(pathVariable, null, p.getNameAsString()));
+                m.put("in", "path");
+                m.put("type", type);
+                m.put("required", true);
+                parameters.add(m);
+            } else if (requestBody != null) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("name", p.getNameAsString());
+                m.put("in", "body");
+                m.put("type", type);
+                m.put("required", true);
+                parameters.add(m);
+            }
+        }
+        return parameters;
+    }
+
+    /** 注解属性取值：单值注解取 value/name 属性，Normal 注解按 attr 名取；缺省返回 fallback */
+    private String annotationAttr(AnnotationExpr ann, String attr, String fallback) {
+        if (ann instanceof SingleMemberAnnotationExpr single) {
+            if (attr == null || "value".equals(attr) || "name".equals(attr)) {
+                return stripQuotes(single.getMemberValue().toString());
+            }
+            return fallback;
+        }
+        if (ann instanceof NormalAnnotationExpr normal) {
+            for (MemberValuePair pair : normal.getPairs()) {
+                String key = pair.getNameAsString();
+                if (attr == null ? (key.equals("value") || key.equals("name")) : key.equals(attr)) {
+                    return stripQuotes(pair.getValue().toString());
+                }
+            }
+        }
+        return fallback;  // MarkerAnnotationExpr（无属性）或未命中属性名
     }
 
     // v6.1 (SAINT): 确定性生成操作依赖图。以 Service/Facade 为节点，依据方法体内的
@@ -743,7 +818,7 @@ public class SpringAnalyzer {
             return;
         }
         try {
-            enhanceWithLlm(dir, javaFiles, endpoints, enums, entities, businessRules);
+            enhanceWithLlm(dir, javaFiles, endpoints, enums, entities, businessRules, warnings);
         } catch (Exception e) {
             log.warn("LLM backend enhancement failed, using rule-based results: {}", e.getMessage());
             // v7.4(C1): LLM 增强失败不再只在日志中静默降级
@@ -756,7 +831,8 @@ public class SpringAnalyzer {
                                 List<EndpointInfo> endpoints,
                                 List<EnumInfo> enums,
                                 List<EntityInfo> entities,
-                                List<BusinessRule> businessRules) {
+                                List<BusinessRule> businessRules,
+                                List<String> warnings) {
         String sourceSnippets = collectSourceSnippets(dir, javaFiles);
         if (sourceSnippets.isBlank()) {
             return;
@@ -819,7 +895,37 @@ public class SpringAnalyzer {
                 + "\n\n源码摘要：\n" + sourceSnippets
                 + "\n\n请分析源码，补充规则遗漏的接口语义、参数校验、权限和业务规则。";
         String response = llmService.chat(systemPrompt, userPrompt, 0.3);
-        parseAndMergeSupplements(response, endpoints, enums, entities, businessRules);
+        // v7.7(A4a): supplementalEndpoints 源码存在性校验证据——LLM 只见约 10 个文件片段，
+        // 补充接口无校验直接入库等于鼓励编造；类名集合 + 控制器类级路径前缀作为闸门
+        Set<String> knownClasses = new LinkedHashSet<>();
+        Set<String> knownPathPrefixes = new LinkedHashSet<>();
+        for (File file : javaFiles) {
+            String name = file.getName();
+            knownClasses.add(name.endsWith(".java") ? name.substring(0, name.length() - 5) : name);
+            if (name.toLowerCase().contains("controller")) {
+                collectControllerPathPrefix(file, knownPathPrefixes);
+            }
+        }
+        parseAndMergeSupplements(response, endpoints, enums, entities, businessRules,
+                knownClasses, knownPathPrefixes, warnings);
+    }
+
+    /** 控制器类级 @RequestMapping 前缀提取：@RequestMapping("/api/order") / @RequestMapping(value = "/api/order") */
+    private void collectControllerPathPrefix(File file, Set<String> prefixes) {
+        try {
+            String content = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            Matcher m = CLASS_REQUEST_MAPPING_PATTERN.matcher(content);
+            while (m.find()) {
+                String prefix = m.group(1).trim();
+                // v7.7(A4a): 单段前缀（如 /api、/v1）过于宽泛，几乎任何路径都能命中，
+                // 不能作为存在性证据——只收 ≥2 段的前缀
+                if (!prefix.isEmpty() && prefix.indexOf('/', 1) > 0) {
+                    prefixes.add(prefix);
+                }
+            }
+        } catch (IOException e) {
+            // 读取失败忽略——校验退化为仅类名匹配
+        }
     }
 
     private String buildRuleSummary(List<EndpointInfo> endpoints,
@@ -889,7 +995,10 @@ public class SpringAnalyzer {
                                           List<EndpointInfo> endpoints,
                                           List<EnumInfo> enums,
                                           List<EntityInfo> entities,
-                                          List<BusinessRule> businessRules) {
+                                          List<BusinessRule> businessRules,
+                                          Set<String> knownClasses,
+                                          Set<String> knownPathPrefixes,
+                                          List<String> warnings) {
         JsonNode root;
         try {
             root = objectMapper.readTree(extractJsonObject(response));
@@ -898,7 +1007,8 @@ public class SpringAnalyzer {
             return;
         }
         mergeEndpointEnhancements(root.path("endpointEnhancements"), endpoints);
-        mergeSupplementalEndpoints(root.path("supplementalEndpoints"), endpoints);
+        mergeSupplementalEndpoints(root.path("supplementalEndpoints"), endpoints,
+                knownClasses, knownPathPrefixes, warnings);
         mergeEntityEnhancements(root.path("entityEnhancements"), entities);
         mergeSupplementalBusinessRules(root.path("supplementalBusinessRules"), businessRules);
         mergeEnumEnhancements(root.path("enumEnhancements"), enums);
@@ -936,7 +1046,9 @@ public class SpringAnalyzer {
         }
     }
 
-    private void mergeSupplementalEndpoints(JsonNode nodes, List<EndpointInfo> endpoints) {
+    private void mergeSupplementalEndpoints(JsonNode nodes, List<EndpointInfo> endpoints,
+                                            Set<String> knownClasses, Set<String> knownPathPrefixes,
+                                            List<String> warnings) {
         if (nodes == null || !nodes.isArray()) {
             return;
         }
@@ -946,10 +1058,23 @@ public class SpringAnalyzer {
             if (method.isEmpty() || path.isEmpty() || findEndpoint(endpoints, node) != null) {
                 continue;
             }
+            // v7.7(A4a): 源码存在性校验——function 含已知类名，或 path 以已知控制器前缀开头，
+            // 任一通过才收（看不全源码还要求"如实补充"的 LLM 输出不可直接信任）
+            String function = node.path("function").asText("").trim();
+            boolean classMatch = !function.isBlank()
+                    && knownClasses.stream().anyMatch(function::contains);
+            boolean prefixMatch = knownPathPrefixes.stream().anyMatch(path::startsWith);
+            if (!classMatch && !prefixMatch) {
+                if (warnings.size() < 50) {
+                    warnings.add("LLM 补充接口未通过源码校验已丢弃: " + method.toUpperCase() + " " + path);
+                }
+                log.warn("LLM supplemental endpoint dropped (no source evidence): {} {}", method, path);
+                continue;
+            }
             EndpointInfo endpoint = EndpointInfo.builder()
                     .method(method.toUpperCase())
                     .path(path)
-                    .function(node.path("function").asText("").trim())
+                    .function(function)
                     .file(node.path("file").asText("").trim())
                     .description(node.path("description").asText("").trim())
                     .parameters(parseMapList(node.path("parameters")))

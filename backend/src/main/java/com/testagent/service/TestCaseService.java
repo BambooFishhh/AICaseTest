@@ -355,6 +355,8 @@ public class TestCaseService {
             // v7.1(G5): 真实降级信号一并暴露给前端
             completeData.put("roundsNotConverged", genReport.roundsNotConverged);
             completeData.put("reviewDegraded", genReport.reviewDegraded);
+            // v7.7(G10): 容量事实（非降级信号）——达 60 条上限仍有缺口，前端可提示"精简需求或拆分生成"
+            completeData.put("coverageCappedByLimit", genReport.coverageCappedByLimit);
             sendSseEvent(emitter, clientGone, "complete", completeData);
             safeSseComplete(emitter, clientGone);
             log.info("Streaming generation completed for project {}: {} cases", projectId, testCases.size());
@@ -522,6 +524,8 @@ public class TestCaseService {
             completeData.put("appended", appended);
             completeData.put("dropped", dropped);
             completeData.put("existingBefore", existing.size());
+            // v7.7(G10): 容量事实（非降级信号）——达 60 条上限仍有缺口
+            completeData.put("coverageCappedByLimit", genReport.coverageCappedByLimit);
             sendSseEvent(emitter, clientGone, "complete", completeData);
             safeSseComplete(emitter, clientGone);
             log.info("Append generation completed for project {}: generated={}, appended={}, dropped={}",

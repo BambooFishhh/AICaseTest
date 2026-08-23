@@ -83,6 +83,8 @@ public class TestGeneratorAgent {
         public boolean streamTruncated;
         /** 截断后局部补全抢救成功的用例数（字段可能不完整） */
         public int truncatedRecovered;
+        /** 因 60 条生成上限提前退出且仍有覆盖缺口——v7.7(G10) 容量事实（非降级信号） */
+        public boolean coverageCappedByLimit;
 
         public Map<String, Object> toMap() {
             Map<String, Object> map = new LinkedHashMap<>();
@@ -96,6 +98,7 @@ public class TestGeneratorAgent {
             map.put("reviewDegraded", reviewDegraded);
             map.put("streamTruncated", streamTruncated);
             map.put("truncatedRecovered", truncatedRecovered);
+            map.put("coverageCappedByLimit", coverageCappedByLimit);
             return map;
         }
     }
@@ -521,6 +524,24 @@ public class TestGeneratorAgent {
                 requirements.add(item);
             }
         }
+        // v7.7(G16): RAG 检索切片并入考点清单——PRD 解析截断/漂移丢失的需求点通过切片找回；
+        // 三重限制控噪声：最短标题 4 字符 + token 重叠 ≥3 视为已覆盖（不重复加）+ 上限 20 条
+        if (prdResult != null && prdResult.getRagContexts() != null) {
+            int ragSeq = 1;
+            for (String slice : prdResult.getRagContexts()) {
+                if (ragSeq > 20) break;
+                if (slice == null || slice.isBlank()) continue;
+                String title = extractRagTitle(slice);
+                if (title.length() < 4) continue;
+                if (maxSimilarityScore(title, requirements) >= 3) continue;
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("id", "rag-req-" + ragSeq++);
+                item.put("title", title);
+                item.put("description", slice.length() > 200 ? slice.substring(0, 200) + "..." : slice);
+                item.put("source", "rag");
+                requirements.add(item);
+            }
+        }
 
         List<Map<String, Object>> transitions = new ArrayList<>();
         if (stateMachines != null) {
@@ -591,13 +612,19 @@ public class TestGeneratorAgent {
         checklist.put("frontendComponents", components);
         checklist.put("operationDependencies", dependencies);
 
+        // v7.7(G10): 缺口清单容量上限——巨型 gaps 列表截断并明示（truncated），
+        // 避免 prompt 膨胀与"永远补不完"的轮次空转；coverage 语义与 prompt 注入分离
         Map<String, Object> gaps = new LinkedHashMap<>();
-        gaps.put("requirementIds", requirements.stream().map(r -> r.get("id")).toList());
-        gaps.put("transitionIds", transitions.stream().map(t -> t.get("id")).toList());
-        gaps.put("endpointIds", endpoints.stream().map(e -> e.get("id")).toList());
-        gaps.put("ruleIds", rules.stream().map(r -> r.get("id")).toList());
-        gaps.put("componentIds", components.stream().map(c -> c.get("id")).toList());
-        gaps.put("dependencyIds", dependencies.stream().map(d -> d.get("id")).toList());
+        boolean gapsTruncated = false;
+        gapsTruncated |= capIdsInto(gaps, "requirementIds", requirements, 40);
+        gapsTruncated |= capIdsInto(gaps, "transitionIds", transitions, 60);
+        gapsTruncated |= capIdsInto(gaps, "endpointIds", endpoints, 80);
+        gapsTruncated |= capIdsInto(gaps, "ruleIds", rules, 60);
+        gapsTruncated |= capIdsInto(gaps, "componentIds", components, 60);
+        gapsTruncated |= capIdsInto(gaps, "dependencyIds", dependencies, 60);
+        if (gapsTruncated) {
+            gaps.put("truncated", true);
+        }
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("checklist", checklist);
@@ -914,7 +941,7 @@ public class TestGeneratorAgent {
                 progressCallback.update(round == 1 ? "基于 PRD 生成用例..." : "第 " + round + " 轮补齐覆盖缺口...");
             }
             List<TestCase> roundCases = generatePrdRound(prdResult, stateMachines, backendResult, frontendResult,
-                    caseCb, cancelled, params, coverage, gaps, round, report);
+                    caseCb, cancelled, params, coverage, gaps, round, report, all);
             if (roundCases.isEmpty()) {
                 break;
             }
@@ -926,15 +953,26 @@ public class TestGeneratorAgent {
             report.roundsNotConverged = true;
             log.warn("Generation rounds exhausted with coverage gaps remaining: {} cases", all.size());
         }
+        // v7.7(G10): 达生成上限且仍有缺口——容量事实（非降级信号，不触发 markDegraded），
+        // 进度明示 + 报告收录，供 complete 事件告知前端"缺口未补齐是上限所致"
+        if (report != null && all.size() >= MAX_GENERATED_CASES
+                && hasRemainingGaps(remainingGaps(all, coverage))) {
+            report.coverageCappedByLimit = true;
+            if (progressCallback != null) {
+                progressCallback.update("已达生成上限(" + MAX_GENERATED_CASES + ")，剩余覆盖缺口未补齐");
+            }
+        }
         return all;
     }
 
     // v7.3(L8): 新增 report 参数，流式截断时记录 streamTruncated/truncatedRecovered
+    // v7.7(G4): 新增 previousCases 参数（本轮之前已生成的全部用例），轮间摘要注入用
     private List<TestCase> generatePrdRound(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                                              BackendResult backendResult, FrontendResult frontendResult,
                                              CaseCallback caseCb, CancellationSignal cancelled,
                                              GenerationParams params, Map<String, Object> coverage,
-                                             Map<String, Object> gaps, int round, GenerationReport report) throws Exception {
+                                             Map<String, Object> gaps, int round, GenerationReport report,
+                                             List<TestCase> previousCases) throws Exception {
         Map<String, Object> context = new LinkedHashMap<>();
 
         // PRD 为主上下文
@@ -971,19 +1009,38 @@ public class TestGeneratorAgent {
         }
         context.put("stateMachines", smList);
 
-        List<Map<String, Object>> epList = new ArrayList<>();
-        if (backendResult != null && backendResult.getEndpoints() != null) {
-            for (EndpointInfo ep : backendResult.getEndpoints()) {
-                epList.add(ep.toContextMap());
+        // v7.7(G17): 后端上下文按需求关键词过滤——明显无关的接口/规则不进 prompt，降低 token 噪声；
+        // 过滤后为空时兜底全量（宁多勿丢）；checklist 不动（coverage 语义与 prompt 注入分离）
+        List<EndpointInfo> eps = backendResult != null && backendResult.getEndpoints() != null
+                ? backendResult.getEndpoints() : List.of();
+        List<BusinessRule> bizRules = backendResult != null && backendResult.getBusinessRules() != null
+                ? backendResult.getBusinessRules() : List.of();
+        String keywordText = String.join(" ", requirementKeywords(prdResult));
+        List<EndpointInfo> relevantEps = eps;
+        List<BusinessRule> relevantRules = bizRules;
+        if (!keywordText.isBlank() && (!eps.isEmpty() || !bizRules.isEmpty())) {
+            List<EndpointInfo> epsHit = eps.stream()
+                    .filter(ep -> scoreTextOverlap(endpointText(ep), keywordText) > 0).toList();
+            List<BusinessRule> rulesHit = bizRules.stream()
+                    .filter(br -> scoreTextOverlap(ruleText(br), keywordText) > 0).toList();
+            if (!epsHit.isEmpty()) {
+                relevantEps = epsHit;
             }
+            if (!rulesHit.isEmpty()) {
+                relevantRules = rulesHit;
+            }
+            log.info("[G17] backend context filtered by requirement keywords: endpoints {}/{}, rules {}/{}",
+                    relevantEps.size(), eps.size(), relevantRules.size(), bizRules.size());
+        }
+        List<Map<String, Object>> epList = new ArrayList<>();
+        for (EndpointInfo ep : relevantEps) {
+            epList.add(ep.toContextMap());
         }
         context.put("endpoints", epList);
 
         List<Map<String, Object>> ruleList = new ArrayList<>();
-        if (backendResult != null && backendResult.getBusinessRules() != null) {
-            for (BusinessRule br : backendResult.getBusinessRules()) {
-                ruleList.add(br.toContextMap());
-            }
+        for (BusinessRule br : relevantRules) {
+            ruleList.add(br.toContextMap());
         }
         context.put("businessRules", ruleList);
 
@@ -1043,22 +1100,58 @@ public class TestGeneratorAgent {
             context.put("frontendComponents", businessComponents);
         }
         // v6.1 (后端 SAINT): 操作依赖图，供端到端用例按调用链组织后端断言
-        List<Map<String, Object>> opDeps = new ArrayList<>();
-        if (backendResult != null && backendResult.getDependencyGraph() != null) {
-            for (OperationDep od : backendResult.getDependencyGraph()) {
-                opDeps.add(od.toContextMap());
+        // v7.7(G17): 仅保留与过滤后接口相关的依赖——od 类名出现在任一保留 endpoint 的 function 中，空则全量
+        List<OperationDep> opDepsSrc = backendResult != null && backendResult.getDependencyGraph() != null
+                ? backendResult.getDependencyGraph() : List.of();
+        List<OperationDep> relevantDeps = opDepsSrc;
+        if (relevantEps != eps && !opDepsSrc.isEmpty()) {
+            Set<String> retainedFunctions = new HashSet<>();
+            for (EndpointInfo ep : relevantEps) {
+                if (ep.getFunction() != null && !ep.getFunction().isBlank()) {
+                    retainedFunctions.add(ep.getFunction());
+                }
             }
+            List<OperationDep> depsHit = opDepsSrc.stream()
+                    .filter(od -> {
+                        String op = od.getOperation() == null ? "" : od.getOperation();
+                        String cls = op.contains(".") ? op.substring(0, op.lastIndexOf('.')) : op;
+                        return !cls.isBlank() && retainedFunctions.stream().anyMatch(f -> f.contains(cls));
+                    }).toList();
+            if (!depsHit.isEmpty()) {
+                relevantDeps = depsHit;
+            }
+        }
+        List<Map<String, Object>> opDeps = new ArrayList<>();
+        for (OperationDep od : relevantDeps) {
+            opDeps.add(od.toContextMap());
         }
         if (!opDeps.isEmpty()) {
             context.put("operationDependencies", opDeps);
         }
 
         // v5.12: 覆盖清单与当前轮剩余缺口
-        context.put("coverageChecklist", coverage.get("checklist"));
+        // v7.7(G10): checklist.endpoints 注入 prompt 前截断到 150，超限在尾部追加说明条目
+        context.put("coverageChecklist", capChecklistForPrompt(coverage.get("checklist")));
         context.put("coverageGaps", gaps);
+
+        // v7.7(G4): 轮间摘要注入——前几轮已生成用例的标题/类型列表，配合 roundNote 禁止重复
+        if (round > 1 && previousCases != null && !previousCases.isEmpty()) {
+            List<Map<String, String>> summary = new ArrayList<>();
+            for (TestCase tc : previousCases) {
+                if (summary.size() >= 60) break;
+                Map<String, String> s = new LinkedHashMap<>();
+                String title = tc.getTitle() == null ? "" : tc.getTitle();
+                s.put("title", title.length() > 60 ? title.substring(0, 60) : title);
+                s.put("type", tc.getType() == null ? "" : tc.getType());
+                summary.add(s);
+            }
+            context.put("generatedCasesSummary", summary);
+        }
 
         String roundNote = round > 1
                 ? "\n\n这是第 " + round + " 轮补齐：以下 coverageGaps 仍未覆盖，请优先为这些缺口生成用例，不要重复已有场景。"
+                  + (context.containsKey("generatedCasesSummary")
+                        ? "以下场景已生成过（见 generatedCasesSummary），禁止重复。" : "")
                 : "";
         String userPrompt = "上下文信息：\n" + objectMapper.writeValueAsString(context)
                 + "\n\n" + FEW_SHOT_EXAMPLES
@@ -1121,6 +1214,19 @@ public class TestGeneratorAgent {
             return gaps;
         }
 
+        // v7.7(G4): requirementIds 兜底匹配用——checklist 需求项（含 G16 并入的 rag-req-*）
+        List<Map<String, Object>> checklistRequirements = new ArrayList<>();
+        Object rawChecklist = coverage.get("checklist");
+        if (rawChecklist instanceof Map<?, ?> cl && cl.get("requirements") instanceof List<?> reqs) {
+            for (Object r : reqs) {
+                if (r instanceof Map<?, ?> req) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> rm = (Map<String, Object>) req;
+                    checklistRequirements.add(rm);
+                }
+            }
+        }
+
         Set<String> coveredRequirements = new HashSet<>();
         Set<String> coveredTransitions = new HashSet<>();
         Set<String> coveredEndpoints = new HashSet<>();
@@ -1128,11 +1234,32 @@ public class TestGeneratorAgent {
         for (TestCase tc : cases) {
             Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
             Object refsObj = hints.get("coverageRefs");
+            boolean hasRequirementRefs = false;
             if (refsObj instanceof Map<?, ?> refs) {
+                hasRequirementRefs = refs.get("requirementIds") instanceof List<?> l && !l.isEmpty();
                 addCoveredIds(coveredRequirements, refs.get("requirementIds"));
                 addCoveredIds(coveredTransitions, refs.get("transitionIds"));
                 addCoveredIds(coveredEndpoints, refs.get("endpointIds"));
                 addCoveredIds(coveredRules, refs.get("ruleIds"));
+            }
+            // v7.7(G4): LLM 未填 requirementIds 时按标题语义兜底匹配 checklist 需求——
+            // 阈值 4（比 G16 的 3 严）：误判"已覆盖"会让需求永久假覆盖，漏判只是多跑一轮
+            if (!hasRequirementRefs && !checklistRequirements.isEmpty()) {
+                String title = tc.getTitle() == null ? "" : tc.getTitle();
+                String bestId = null;
+                int best = 0;
+                for (Map<String, Object> req : checklistRequirements) {
+                    String text = (req.get("title") == null ? "" : String.valueOf(req.get("title"))) + " "
+                            + (req.get("description") == null ? "" : String.valueOf(req.get("description")));
+                    int s = scoreTextOverlap(title, text);
+                    if (s > best) {
+                        best = s;
+                        bestId = String.valueOf(req.get("id"));
+                    }
+                }
+                if (best >= 4 && bestId != null) {
+                    coveredRequirements.add(bestId);
+                }
             }
             // 兜底：LLM 未填 coverageRefs 时，从用例的接口/状态机引用推断已覆盖项
             for (Map<String, Object> ep : JsonHelper.parseListMap(tc.getApiEndpoints())) {
@@ -1194,6 +1321,139 @@ public class TestGeneratorAgent {
             }
             gaps.put(key, remaining);
         }
+    }
+
+    // ==================== v7.7: 上下文精准投喂工具方法 ====================
+
+    /**
+     * v7.7(G16/G17/G4): token 重叠打分——双方按非字母数字汉字切词（token ≥2 字符），
+     * 一方 token 在另一方文本（lowercase contains）中出现 → +token 长度；双方向取最大值。
+     * 对称设计兼顾中英文：中文无空格整句成 token，反向包含可命中短语。
+     */
+    private int scoreTextOverlap(String a, String b) {
+        if (a == null || b == null || a.isBlank() || b.isBlank()) {
+            return 0;
+        }
+        return Math.max(containedScore(a, b), containedScore(b, a));
+    }
+
+    private int containedScore(String tokenSource, String text) {
+        String lower = text.toLowerCase();
+        int score = 0;
+        for (String token : tokenSource.toLowerCase().split("[^a-zA-Z0-9\\u4e00-\\u9fa5]+")) {
+            if (token.length() >= 2 && lower.contains(token)) {
+                score += token.length();
+            }
+        }
+        return score;
+    }
+
+    // v7.7(G16): RAG 切片标题——首个非空行剥离 "#*-" 等标记前缀，截 60 字符
+    private String extractRagTitle(String slice) {
+        if (slice == null) {
+            return "";
+        }
+        for (String line : slice.split("\n")) {
+            String t = line.trim();
+            if (!t.isEmpty()) {
+                t = t.replaceAll("^[#*\\-\\s]+", "");
+                return t.length() > 60 ? t.substring(0, 60) : t;
+            }
+        }
+        return "";
+    }
+
+    // v7.7(G16): 标题与既有需求列表的最大相似度（token 重叠分）
+    private int maxSimilarityScore(String title, List<Map<String, Object>> requirements) {
+        int max = 0;
+        for (Map<String, Object> req : requirements) {
+            String text = (req.get("title") == null ? "" : String.valueOf(req.get("title"))) + " "
+                    + (req.get("description") == null ? "" : String.valueOf(req.get("description")));
+            int s = scoreTextOverlap(title, text);
+            if (s > max) {
+                max = s;
+            }
+        }
+        return max;
+    }
+
+    // v7.7(G10): 提取条目 id 列表并截断到上限；发生截断返回 true
+    private boolean capIdsInto(Map<String, Object> gaps, String key, List<Map<String, Object>> items, int limit) {
+        List<Object> ids = items.stream().map(i -> i.get("id")).toList();
+        if (ids.size() <= limit) {
+            gaps.put(key, ids);
+            return false;
+        }
+        gaps.put(key, new ArrayList<>(ids.subList(0, limit)));
+        return true;
+    }
+
+    // v7.7(G10): checklist.endpoints 超过 150 条时截断并在尾部追加说明条目
+    //（仅影响 prompt 注入，不动 coverage 语义）
+    @SuppressWarnings("unchecked")
+    private Object capChecklistForPrompt(Object checklistObj) {
+        if (!(checklistObj instanceof Map<?, ?> checklist)) {
+            return checklistObj;
+        }
+        Object epsObj = checklist.get("endpoints");
+        if (!(epsObj instanceof List<?> eps) || eps.size() <= 150) {
+            return checklistObj;
+        }
+        Map<String, Object> capped = new LinkedHashMap<>((Map<String, Object>) checklist);
+        List<Object> newList = new ArrayList<>(eps.subList(0, 150));
+        Map<String, Object> note = new LinkedHashMap<>();
+        note.put("id", "endpoints-truncated");
+        note.put("path", "(接口清单超过 150 条已截断，仅展示前 150 条)");
+        newList.add(note);
+        capped.put("endpoints", newList);
+        return capped;
+    }
+
+    // v7.7(G17): 需求关键词集合——requirements 标题+描述 + ragContexts，每条截 100 字符，上限 60 条
+    private List<String> requirementKeywords(PrdAnalysisResult prdResult) {
+        List<String> out = new ArrayList<>();
+        if (prdResult == null) {
+            return out;
+        }
+        if (prdResult.getRequirements() != null) {
+            for (Map<String, Object> req : prdResult.getRequirements()) {
+                if (out.size() >= 60) {
+                    return out;
+                }
+                String text = (req.get("title") == null ? "" : String.valueOf(req.get("title"))) + " "
+                        + (req.get("description") == null ? "" : String.valueOf(req.get("description")));
+                if (!text.isBlank()) {
+                    out.add(text.length() > 100 ? text.substring(0, 100) : text);
+                }
+            }
+        }
+        if (prdResult.getRagContexts() != null) {
+            for (String s : prdResult.getRagContexts()) {
+                if (out.size() >= 60) {
+                    return out;
+                }
+                if (s != null && !s.isBlank()) {
+                    out.add(s.length() > 100 ? s.substring(0, 100) : s);
+                }
+            }
+        }
+        return out;
+    }
+
+    // v7.7(G17): endpoint 参与相关性打分的文本——path + function + description + validation 拼接
+    private String endpointText(EndpointInfo ep) {
+        return String.join(" ",
+                ep.getPath() == null ? "" : ep.getPath(),
+                ep.getFunction() == null ? "" : ep.getFunction(),
+                ep.getDescription() == null ? "" : ep.getDescription(),
+                ep.getValidation() == null ? "" : String.join(" ", ep.getValidation()));
+    }
+
+    // v7.7(G17): businessRule 参与相关性打分的文本——rule + ruleType 拼接
+    private String ruleText(BusinessRule br) {
+        return String.join(" ",
+                br.getRule() == null ? "" : br.getRule(),
+                br.getRuleType() == null ? "" : br.getRuleType());
     }
 
     // v1.11: 将前端上下文注入 context Map，截断避免 token 超限

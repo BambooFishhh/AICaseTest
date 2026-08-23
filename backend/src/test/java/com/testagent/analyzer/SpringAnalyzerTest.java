@@ -99,7 +99,9 @@ class SpringAnalyzerTest {
         assertTrue(post.getFile().endsWith("OrderController.java"));
         assertEquals("create order", post.getDescription());
         assertEquals(1, post.getParameters().size());
-        assertEquals("order creation request body", post.getRequestBody());
+        // v7.7(A5): 规则层已从 @RequestBody 提取类型写入 requestBody，
+        // 按既有"LLM 增强不覆盖规则事实"策略，LLM 的 requestBody 描述不再生效
+        assertEquals("String", post.getRequestBody());
         assertEquals(List.of("ROLE_USER"), post.getPermissions());
         assertEquals(List.of("order amount must be positive"), post.getValidation());
         assertEquals(List.of("rules", "llm"), post.getSources());

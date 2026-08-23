@@ -136,8 +136,12 @@ public class PrdAgent {
             sb.append("## 【补充需求】\n").append(truncateDoc(supplementary)).append("\n\n");
         }
         if (sb.length() > MAX_TOTAL_DOC_LENGTH) {
-            sb.setLength(MAX_TOTAL_DOC_LENGTH);
-            sb.append("\n...(需求资料已截断)");
+            // v7.7(L4a): 总量超限头尾各半保留——纯头部截断会系统性丢弃后部内容
+            String full = sb.toString();
+            int half = MAX_TOTAL_DOC_LENGTH / 2;
+            return full.substring(0, half)
+                    + "\n...(中略)...\n" + full.substring(full.length() - half)
+                    + "\n...(需求资料头尾各保留 " + half + " 字符)";
         }
         return sb.toString();
     }
@@ -147,7 +151,12 @@ public class PrdAgent {
         if (trimmed.length() <= MAX_PRD_LENGTH) {
             return trimmed;
         }
-        return trimmed.substring(0, MAX_PRD_LENGTH) + "\n...(文档已截断)";
+        // v7.7(L4a): 头尾各保留一半——验收标准/边界条件/异常流通常在文档后部，
+        // 此前尾部硬截断恰把它们丢掉
+        int half = MAX_PRD_LENGTH / 2;
+        return trimmed.substring(0, half)
+                + "\n...(中略 " + (trimmed.length() - MAX_PRD_LENGTH) + " 字符)...\n"
+                + trimmed.substring(trimmed.length() - half);
     }
 
     private PrdAnalysisResult analyzeByLlm(String requirementText) throws Exception {
@@ -188,8 +197,17 @@ public class PrdAgent {
         long elapsed = System.currentTimeMillis() - start;
         log.info("[PRD] LLM 返回, 耗时={}ms, 响应长度={}", elapsed, response == null ? 0 : response.length());
         PrdAnalysisResult result = parsePrdResponse(response);
-        if (result == null) {
-            return null;
+        if (result == null || result.isEmpty()) {
+            // v7.7(A13): 完整解析失败（大文档输出被 maxTokens 截断是主因）→ 瘦身重试一次：
+            // 只要求核心三块（modules/requirements/businessRules），stateFlows/entities 是大块
+            // 且可由代码侧 StateMachineAgent/SpringAnalyzer 提供——降级生成好过整体阻断
+            log.warn("[PRD] 完整解析失败（资料 {} 字符），降级为核心需求解析", requirementText.length());
+            PrdAnalysisResult slim = analyzeSlim(requirementText);
+            if (slim != null && !slim.isEmpty()) {
+                return slim;
+            }
+            throw new BusinessException(50015, "PRD 解析失败：需求资料 " + requirementText.length()
+                    + " 字符，模型输出可能被截断，请精简文档或拆分后重试", HttpStatus.INTERNAL_SERVER_ERROR);
         }
         log.info("PRD analyzed: modules={}, requirements={}, rules={}, flows={}",
                 result.getModules() == null ? 0 : result.getModules().size(),
@@ -199,6 +217,41 @@ public class PrdAgent {
         // v7.5(A15): 解析成功才写缓存（失败/空响应不缓存，防毒缓存）
         if (!result.isEmpty()) {
             llmResultCacheService.put("prd_analysis", systemPrompt, userPrompt, response);
+        }
+        return result;
+    }
+
+    /**
+     * v7.7(A13): 瘦身解析——完整解析失败（输出截断）后的降级重试。
+     * 只要求 modules+requirements+businessRules 核心三块（stateFlows/entities 由代码侧
+     * StateMachineAgent/SpringAnalyzer 提供），输出体积减半以上降低再截断概率。
+     * 缓存 kind 用 prd_analysis_slim，systemPrompt 不同天然分键，与完整解析互不污染。
+     */
+    private PrdAnalysisResult analyzeSlim(String requirementText) throws Exception {
+        String systemPrompt = promptSkillLoader.load("prd-analysis-slim", """
+                你是需求分析专家。输入包含 PRD 文档/上下文文档/补充需求三类资料，合并解析为结构化 JSON。
+                只返回以下核心三块（状态流与实体由代码分析提供，禁止输出，避免响应被截断）：
+                {
+                  "modules": [{"name":"模块名","description":"描述"}],
+                  "requirements": [{"title":"需求标题","description":"描述","acceptanceCriteria":["验收1"],"priority":"P0"}],
+                  "businessRules": [{"rule":"规则描述","ruleType":"validation"}]
+                }
+                priority 取值：P0/P1/P2；ruleType 取值：validation/constraint/workflow。
+                描述与验收标准务必精炼，只返回 JSON，不要其他文字。
+                """);
+        String userPrompt = "需求资料：\n" + requirementText;
+        String cached = llmResultCacheService.get("prd_analysis_slim", systemPrompt, userPrompt);
+        if (cached != null) {
+            PrdAnalysisResult cachedResult = parsePrdResponse(cached);
+            if (cachedResult != null && !cachedResult.isEmpty()) {
+                log.info("[PRD] 瘦身解析缓存命中，复用结果（跳过 LLM 调用）");
+                return cachedResult;
+            }
+        }
+        String response = llmService.chatWithAnalysis(systemPrompt, userPrompt, 0.2);
+        PrdAnalysisResult result = parsePrdResponse(response);
+        if (result != null && !result.isEmpty()) {
+            llmResultCacheService.put("prd_analysis_slim", systemPrompt, userPrompt, response);
         }
         return result;
     }

@@ -4,6 +4,53 @@
 
 ---
 
+## v7.7 — 上下文精准投喂
+**日期**: 2026-08-23
+**基线**: v7.6
+**主题**: 投喂精准——长 PRD 需求不再系统性丢失、无关后端上下文不再稀释 prompt、轮间记忆注入、容量事实明示（对应风险清单 G16/G17/G4/A13/L4a/A4a/A5/G10）
+
+### 背景
+
+v7.6 闭合了断言与状态机可信闭环，但生成侧的上下文装载仍是"粗放投喂"：**G16** RAG 检索回的需求切片只作为附加材料贴 prompt，永远成不了"考点"——多轮补齐循环绕着它转却从不瞄准它，长 PRD 尾部需求（A14）系统性丢失；**G17** 前端上下文按 RAG 命中精筛、后端 endpoints/rules 却全量注入——大项目几百个无关接口费 token 又摊薄 LLM 注意力；**G4** 多轮补齐轮间失忆，第 2+ 轮 LLM 不知道已生成什么，靠事后去重兜底；**A13** 大 PRD 完整解析失败（输出被 maxTokens 截断是主因）直接阻断整个生成；**L4a** PRD 截断只保头部，验收标准/边界条件通常在文档后部恰被丢弃；**A4a** LLM 补充接口无源码存在性校验直接入库，看不全源码还要求"如实补充"等于鼓励编造；**A5** 规则层完全不提取端点参数，"关联 API + 测试数据"缺数据基础；**G10** 巨型 gaps 清单与 60 条生成上限不匹配，用户看到大量"未覆盖"无解释。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `agent/PrdAgent.java` | 修改 | **L4a**：`truncateDoc` 单文档超 12000 字符改为头尾各半保留（原纯头部截断系统性丢弃后部验收标准）；总量超 24000 同样头尾各半并明示。**A13**：`analyzeSlim`——完整解析失败后的瘦身重试，只要求 modules/requirements/businessRules 核心三块（stateFlows/entities 由代码侧 StateMachineAgent/SpringAnalyzer 提供），输出体积减半以上降低再截断概率；两次均失败抛"输出可能被截断，请精简文档或拆分后重试"的明确错误；缓存 kind 用 `prd_analysis_slim` 与完整解析分键互不污染 |
+| `analyzer/SpringAnalyzer.java` | 修改 | **A5**：`extractParameters`——规则层 JavaParser 解析 `@RequestParam`（in=query，required 缺省 true，defaultValue）/`@PathVariable`（in=path）/`@RequestBody`（in=body 且类型写入 endpoint.requestBody），注解 name/value 缺省用参数名；**A4a**：`mergeSupplementalEndpoints` 源码存在性校验——function 含已知类名或 path 以已知控制器前缀开头才收，否则丢弃并记 warning（上限 50 条）；`collectControllerPathPrefix` 只收 ≥2 段的前缀（`/api` 这类单段前缀过于宽泛不能作为证据）；注解属性取值统一走 `annotationAttr`（单值/Normal/缺省回退） |
+| `agent/TestGeneratorAgent.java` | 修改 | **G16**：`buildCoverageChecklist` 并入 RAG 检索切片——切片标题（剥 markdown 前缀截 60 字符）与既有需求 token 重叠相似度 <3 时作为 `rag-req-N` 进考点清单（上限 20 条），长 PRD 尾部需求经 Milvus 全文切片零成本找回；**G17**：后端上下文按需求关键词过滤——requirements 标题+描述+ragContexts 汇集关键词（上限 60 条每条 100 字符），endpoints/rules 按 path/function/description/validation 拼接文本 token 重叠打分过滤，全量兜底（命中为空不过滤）；operationDependencies 同步按保留 endpoint 的 function 过滤；**G4**：轮间摘要注入——第 2+ 轮 prompt 附已生成用例标题/类型摘要（上限 60 条）配合禁重复指令；requirementIds 兜底按标题语义匹配 checklist 需求（含 rag-req-*）；**G10**：gaps 清单按类截断（requirements 40/transitions 60/endpoints 80/rules 60/components 60/dependencies 60）并标 `truncated:true`；checklist.endpoints 注入 prompt 前截断 150 条并追加说明条目；`GenerationReport` 新增 `coverageCappedByLimit`（达 60 条上限仍有缺口——容量事实非降级信号，不触发 markDegraded） |
+| `service/TestCaseService.java` | 修改 | **G10**：complete 事件携带 `coverageCappedByLimit`，前端可提示"精简需求或拆分生成" |
+| `test/agent/TestGeneratorAgentContextFeedTest.java` | 新增 | G16/G17/G4/G10 15 用例：token 重叠打分（中文子串/英文大小写/不相交）、RAG 标题提取（markdown 前缀/60 字符截断/空值）、相似度上限、capIdsInto 截断、checklist 150 条截断+说明条目、需求关键词汇集（requirements+ragContexts 合并/60 条上限/100 字符截断）、endpointText/ruleText 拼接 |
+| `test/agent/PrdAgentTruncateTest.java` | 新增 | L4a+A13 5 用例：短文档原样保留、长文档头尾各半+省略量明示、null 安全、完整解析失败降级瘦身重试成功、两次均失败抛截断提示 |
+| `test/analyzer/SpringAnalyzerParameterTest.java` | 新增 | A5+A4a 3 用例：三种参数注解规则层提取（name/required/defaultValue/requestBody）、有源码证据的补充接口接受、类名+前缀证据链校验（无证据丢弃+告警可观测、仅前缀命中接受） |
+| `test/agent/PrdAgentTest.java` | 修改 | A13 行为变更同步：空 LLM 结果两次失败后的错误消息从"未提取到有效需求"改为含"截断"提示 |
+| `test/analyzer/SpringAnalyzerTest.java` | 修改 | A5 行为变更同步：规则层先填 requestBody 后，LLM 增强按既有"不覆盖规则事实"策略不再覆盖 |
+
+### API 契约变化
+
+- 无 REST 接口变更
+- SSE complete 事件新增 `coverageCappedByLimit` 布尔字段（容量事实：达 60 条上限仍有缺口）
+- 生成上下文新增 `generatedCasesSummary`（轮间摘要，仅 prompt 内部使用）
+- endpoints 新增 `parameters` 规则层数据（`name/in/type/required/defaultValue`）
+
+### 验证结果
+
+- 后端 `mvn test`（JDK 17 + Maven 3.9.16）：全量 228 个测试通过，BUILD SUCCESS（新增 23 个用例：TestGeneratorAgentContextFeedTest 15 + PrdAgentTruncateTest 5 + SpringAnalyzerParameterTest 3）
+- 编译修复：SpringAnalyzer 导入修正（`MemberPair`→`MemberValuePair`）+ 移除重复 `stripQuotes` 方法（保留增强版）
+
+### 预期影响（投喂精准）
+
+- 长 PRD 需求不再系统性丢失：尾部内容本就在 Milvus（全文切片入库），RAG 切片并入考点清单等于零成本找回（G16 免费覆盖 A14 昂贵修法的大半）
+- prompt 噪声显著下降：无关后端接口/规则不再注入，LLM 注意力聚焦需求相关上下文（G17 准确率+效率双收益）
+- 多轮补齐真实收敛：轮间摘要让 LLM 知道已生成什么，重复率下降、缺口收敛轮次减少（G4）
+- 大 PRD 解析失败不再阻断生成：瘦身重试只求核心三块，降级生成好过整体阻断（A13）；截断错误信息明确指向"精简文档或拆分"
+- 参数数据基础补齐：规则层零 LLM 成本提取参数注解，"关联 API + 测试数据"有据可依（A5）
+- LLM 编造接口被拦截：补充接口必须有源码证据（类名或 ≥2 段路径前缀）才入库，丢弃行为 warning 可观测（A4a）
+- 容量事实诚实明示：达生成上限仍有缺口时明确告知"受生成上限影响"，与真实降级信号区分（G10）
+
+---
+
 ## v7.6 — 状态机与断言闭环
 **日期**: 2026-08-23
 **基线**: v7.5

@@ -58,6 +58,7 @@ class PrdAgentTest {
 
         PrdAgent agent = buildAgent(llmService);
 
+        // v7.7(A13): 完整解析与瘦身重试均失败 → 明确提示输出可能被截断（不再走"未提取到有效需求"分支）
         BusinessException ex = assertThrows(BusinessException.class, () ->
                 agent.analyze(List.of(Map.of(
                                 "content", "订单模块需求文档",
@@ -65,6 +66,7 @@ class PrdAgentTest {
                                 "docType", "prd")),
                         List.of(), null));
 
-        assertTrue(ex.getMessage().contains("未提取到有效需求"));
+        assertTrue(ex.getMessage().contains("PRD 解析失败"));
+        assertTrue(ex.getMessage().contains("截断"), "错误应提示输出可能被截断: " + ex.getMessage());
     }
 }
