@@ -230,7 +230,11 @@
         <div class="info-card-head">
           <div class="info-title-block">
             <h3 class="info-title">{{ testCase.title || '未命名用例' }}</h3>
-            <div class="info-id">ID: {{ testCase.id || '-' }}</div>
+            <!-- v7.15(2a): 双编号——项目内序号 + 平台全局 id -->
+            <div class="info-id">
+              <span v-if="testCase.projectSeq" class="info-seq">#{{ testCase.projectSeq }}</span>
+              <span>平台 ID: {{ testCase.id || '-' }}</span>
+            </div>
           </div>
           <div class="info-tags">
             <el-tag v-if="testCase.type" :type="getTypeTagType(testCase.type)" size="small" effect="light">
@@ -1290,6 +1294,12 @@ watch(() => props.visible, (val) => {
   color: var(--text-tertiary, #9ca3af);
   font-family: 'Consolas', 'Monaco', monospace;
   word-break: break-all;
+
+  .info-seq {
+    margin-right: 8px;
+    font-weight: 600;
+    color: var(--text-secondary, #6b7280);
+  }
 }
 .info-tags {
   display: flex;

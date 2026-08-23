@@ -544,7 +544,14 @@
           </div>
         </template>
         <el-table v-if="aiReviewRows.length" :data="aiReviewRows" size="small" stripe>
-          <el-table-column prop="id" label="编号" width="110" />
+          <el-table-column label="编号" width="110">
+            <template #default="{ row }">
+              <!-- v7.15(2a): 与用例列表同口径——项目内序号，悬浮见平台全局 id -->
+              <el-tooltip :content="'平台编号 ' + row.id" placement="top">
+                <span class="case-id">#{{ row.projectSeq ?? row.id }}</span>
+              </el-tooltip>
+            </template>
+          </el-table-column>
           <el-table-column prop="title" label="标题" min-width="180" show-overflow-tooltip />
           <el-table-column label="评审状态" width="100">
             <template #default="{ row }">
@@ -930,7 +937,14 @@
         :image-size="80"
       />
       <el-table v-else :data="semanticResults" height="360">
-        <el-table-column prop="id" label="编号" width="90" />
+        <el-table-column label="编号" width="90">
+          <template #default="{ row }">
+            <!-- v7.15(2a): 与用例列表同口径 -->
+            <el-tooltip :content="'平台编号 ' + row.id" placement="top">
+              <span class="case-id">#{{ row.projectSeq ?? row.id }}</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
         <el-table-column prop="module" label="模块" width="120" show-overflow-tooltip />
         <el-table-column label="类型" width="90">
@@ -1030,6 +1044,7 @@ const aiReviewRows = computed(() =>
       if (!review) return null
       return {
         id: tc.id,
+        projectSeq: tc.projectSeq,
         title: tc.title,
         module: tc.module,
         type: tc.type,
