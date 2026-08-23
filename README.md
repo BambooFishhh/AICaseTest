@@ -91,6 +91,8 @@ LLM_MODEL=your-model-name
 - `LLM_CIRCUIT_FAILURE_THRESHOLD` / `LLM_CIRCUIT_OPEN_SECONDS`（LLM 熔断，v6.7）
 - `RETENTION_EXECUTION_DAYS`（执行数据保留天数，0 关闭）
 - `HIKARI_MAX_POOL` / `HIKARI_MIN_IDLE`（MySQL 连接池）
+- `EXECUTOR_PROJECT_ACQUIRE_TIMEOUT_MINUTES`（项目执行并发排队超时分钟数，v7.9；超时该条执行记 failed，<=0 禁用恢复无限等待）
+- `APP_COPY_EXECUTE_REQUIRE_OPERATE`（复制执行权限收敛，v7.9；默认 false 保持 VIEW 即可，true 要求 OPERATE 权限）
 
 > ⚠️ `.env` 已被 `.gitignore` 排除，不会提交到仓库。
 
@@ -124,6 +126,8 @@ npx playwright install chromium
 
 - 用例需包含 `structuredSteps`；纯自然语言步骤在程序化模式下会跳过，Agent 模式下尝试多模态识别。
 - 执行失败不会中断后续步骤，单步失败会记录错误与截图。
+- 批量执行与复制执行单批上限 100 条（v7.9，防线程池打满把浏览器自动化挤到 HTTP 请求线程），超限返回业务错误 50014，请分批执行。
+- **多实例部署注意（v7.9）**：执行截图/录屏等证据文件保存在实例本地 `outputs/` 目录。多实例（后端副本 >1）时需将 `./outputs` 配置为共享卷（NFS/云盘）或后续接入对象存储；未配置共享卷时，报告请求路由到无证据文件的实例会在报告中显式渲染"截图文件缺失"告警占位（含丢失路径），不再静默缺图。
 - "复制执行"对选中用例做快照执行，不回写原用例执行状态。
 
 ## 测试与运维基线
@@ -176,8 +180,10 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v7.7（上下文精准投喂）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v7.9（执行效率与证据存储）**，生产线基线为 vP5（压测与容量）。
 
+- v7.9 要点：执行链路效率与可靠性收尾——生效判断两级化（E6，本地三指纹任一变化直接判生效不调 LLM——旧实现无论指纹是否变化都调 LLM 而输入与本地比较完全相同，常见成功路径每步省一次调用；指纹相同才 LLM 终审且 prompt 明示"快照无变化"）；批量执行入口限流（E7，单批上限 100 条防线程池 queue 满触发 CallerRunsPolicy 把浏览器自动化挤到 HTTP 请求线程挂死接口，超限返回 50014）+ 项目并发排队超时（RuntimeStore.tryAcquireProjectPermit 双实现，默认 30 分钟超时记 failed 无僵尸 running）；执行链路 ID 加长（E9，执行记录/步骤/批次 ID 从 UUID 前 8 位加长到 16 位，32bit→64bit 消除 7.7 万条 50% 碰撞的静默覆盖炸弹）；复制执行权限收敛开关（E10，`APP_COPY_EXECUTE_REQUIRE_OPERATE` 默认 false 保持 VIEW 口径，true 要求 OPERATE）；报告证据丢失可见化（R11，截图三态渲染——无截图不渲染/丢失显式告警占位含丢失路径与共享卷提示/正常渲染，多实例部署不再静默缺图）；后端 273 测试全绿。
+- v7.8 要点：闭环回写——评审建议分级采纳（R1，confidence ≥ 0.8 时 coverageRefs 建议（并集合并只增不减）与 priority 建议（枚举校验）自动应用并登记 autoApplied）；endpoint 匹配收紧（R3，两级匹配——归一化路径精确相等或 method 严格一致 + 相似度 ≥ 0.9 + token 数一致的高门槛模糊，编造的 CRUD 兄弟路径不再被"洗白"为已覆盖，模糊命中记 fuzzyEndpointIds 前端提示人工确认）；覆盖率计划/执行双栏（R7，每转换 planned（coverageRefs 引用）/executed（isExecuted 用例引用）双口径 + 前端双进度条，"计划覆盖 80%"不再被误读为"验证过 80%"）；质量评分并入评审结论（G6，形式分 × 0.7 + 评审分（pass 30/fix 扣减/无评审 15）- UI 语言违规扣分，去重保留高分者时编造字段填满不再挤掉真实用例）；后端 253 测试全绿。
 - v7.7 要点：投喂精准——RAG 切片并入考点清单（G16，检索回的需求类切片标题与既有需求 token 相似度 <3 时作为 `rag-req-N` 进 checklist，长 PRD 尾部需求经 Milvus 全文切片零成本找回，A14 昂贵修法被免费覆盖大半）；后端上下文按需求关键词过滤（G17，endpoints/rules 按 path/function/description/validation 与需求关键词 token 重叠打分，无关接口不进 prompt，命中为空兜底全量）；轮间摘要注入（G4，第 2+ 轮 prompt 附已生成用例标题/类型摘要 + requirementIds 语义兜底匹配，多轮补齐真实收敛不再靠事后去重）；PRD 头尾截断（L4a，超 12000/24000 字符头尾各半保留，后部验收标准不再系统性丢弃）；大 PRD 解析失败瘦身重试（A13，完整解析失败降级只求核心三块，两次均失败明确提示"输出可能被截断，请精简文档或拆分"）；规则层参数提取（A5，@RequestParam/@PathVariable/@RequestBody 注解解析零 LLM 成本入 endpoints.parameters）；LLM 补充接口源码校验（A4a，function 含已知类名或 ≥2 段路径前缀才收，丢弃记 warning）；容量事实明示（G10，gaps 按类截断标 truncated，达 60 条上限仍有缺口时 complete 事件带 `coverageCappedByLimit` 与降级信号区分）；后端 228 测试全绿。
 
 - v7.6 要点：闭环可信——状态机转换 ground truth 校验（A17，JavaParser 扫描源码状态赋值点提取"转换来源→目标"证据，LLM 推断的 transition 与证据比对：匹配标 `verified`、编造的标 `unverified` 且 confidence 压降到 ≤0.4，"状态转换覆盖率"不再建立在无差别信任上）；expected 三层断言（L6，程序化/Agent 两模式共用 `ExecutionAssert`：URL/标题语义 → DOM 文本断言（中文短语剥叙述前后缀 + 3-gram 滑窗匹配，toast 文案"删除成功"可断言）→ 无法验证诚实标 skipped，断言失败步骤记 failed 并带期望/实际差异）；Agent 模式步骤类型分流（E5，`state_assert` 走 getPageStatus+断言+截图留证、`api_call` 明确 skipped，验证步骤不再掉进"找元素→点击"流水线，消除误点生产事故风险）；错误→文案对照表（G20层3，VueAnalyzer 提取 ElMessage 调用字面量 + SpringAnalyzer 提取异常消息，合成 `userFeedbackTexts` 注入生成上下文，prompt 硬规则要求 expected 优先使用真实文案原文禁止编造）；后端 205 测试全绿。

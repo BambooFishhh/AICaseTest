@@ -24,6 +24,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -82,6 +83,34 @@ public class ExecutionService {
     private static final long HEARTBEAT_STALE_MS = 30_000L;
 
     /**
+     * v7.9(E7): 单批执行用例数上限——超过后入口直接拒绝。
+     * 旧实现无上限：批量超量时 execution 池 queue 满触发 CallerRunsPolicy，
+     * 浏览器自动化（单条数分钟）跑在 HTTP 请求线程上导致接口挂死、batchId 不返回、用户重试重复提交。
+     */
+    private static final int MAX_BATCH_SIZE = 100;
+
+    /**
+     * v7.9(E10): 复制执行权限收敛开关。默认 false 保持 VIEW 即可复制执行（v4.3 现状）；
+     * true 时要求 OPERATE 权限，防止只读成员对目标环境执行删除类用例。
+     */
+    @Value("${app.execution.copy-execute-require-operate:false}")
+    private boolean copyExecuteRequireOperate;
+
+    /**
+     * v7.9(E7): 项目执行并发配额排队超时（分钟）。超时该条执行记 failed（"排队超时"），
+     * 不再无限阻塞线程。<=0 禁用超时（保持旧行为，供排障）。
+     */
+    @Value("${app.executor.project-acquire-timeout-minutes:30}")
+    private int projectAcquireTimeoutMinutes;
+
+    /**
+     * v7.9(E9): 执行记录/批次 ID 从 UUID 前 8 位加长到 16 位（64bit），消除碰撞静默覆盖。
+     */
+    static String newId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+    }
+
+    /**
      * 异步执行测试用例。
      */
     public String execute(String projectId, String testCaseId, String targetUrl) {
@@ -111,7 +140,7 @@ public class ExecutionService {
             throw new BusinessException(50012, "该用例正在执行中，请勿重复触发", HttpStatus.BAD_REQUEST);
         }
 
-        String executionId = UUID.randomUUID().toString().substring(0, 8);
+        String executionId = newId();
         ExecutionRecord record = ExecutionRecord.builder()
                 .id(executionId)
                 .projectId(projectId)
@@ -180,10 +209,13 @@ public class ExecutionService {
 
     /**
      * v2.1: 批量执行多条测试用例。
+     * v7.9(E7): 入口限流——单批超过 MAX_BATCH_SIZE 直接拒绝，防止 execution 池 queue 满
+     * 触发 CallerRunsPolicy 把浏览器自动化挤到 HTTP 请求线程（接口挂死/批次丢失/重复提交）。
      */
     public String executeBatch(String projectId, List<String> caseIds, String targetUrl) {
         projectAccessService.assertOperateAccess(projectId);
-        String batchId = "batch-" + UUID.randomUUID().toString().substring(0, 8);
+        assertBatchSize(caseIds);
+        String batchId = "batch-" + newId();
         for (String caseId : caseIds) {
             try {
                 execute(projectId, caseId, targetUrl, "agent", batchId);
@@ -195,12 +227,20 @@ public class ExecutionService {
     }
 
     /**
-     * v4.3: 复制执行——仅需 VIEW 权限；对选中用例做快照执行，不回写原用例状态。
+     * v4.3: 复制执行——对选中用例做快照执行，不回写原用例状态。
+     * v7.9(E10): 权限收敛开关 app.execution.copy-execute-require-operate——
+     * 默认 false 维持 VIEW 口径；true 时要求 OPERATE（只读成员不能对目标环境真实执行）。
+     * v7.9(E7): 同批量执行入口限流。
      */
     public Map<String, Object> copyExecute(String projectId, List<String> caseIds,
                                            String targetUrl, String mode) {
-        projectAccessService.assertViewAccess(projectId);
-        String batchId = "copy-" + UUID.randomUUID().toString().substring(0, 8);
+        if (copyExecuteRequireOperate) {
+            projectAccessService.assertOperateAccess(projectId);
+        } else {
+            projectAccessService.assertViewAccess(projectId);
+        }
+        assertBatchSize(caseIds);
+        String batchId = "copy-" + newId();
         int started = 0;
         for (String caseId : caseIds) {
             try {
@@ -214,6 +254,56 @@ public class ExecutionService {
         result.put("batchId", batchId);
         result.put("caseCount", started);
         return result;
+    }
+
+    /**
+     * v7.9(E7): 批量入口限流——空列表拒绝；超过上限拒绝（提示分批）。
+     */
+    private void assertBatchSize(List<String> caseIds) {
+        if (caseIds == null || caseIds.isEmpty()) {
+            throw new BusinessException(50013, "执行用例列表为空", HttpStatus.BAD_REQUEST);
+        }
+        if (caseIds.size() > MAX_BATCH_SIZE) {
+            throw new BusinessException(50014,
+                    "单批执行用例数超过上限 " + MAX_BATCH_SIZE + "（当前 " + caseIds.size() + "），请分批执行",
+                    HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    /**
+     * v7.9(E7): 获取项目并发配额；排队超过 app.executor.project-acquire-timeout-minutes 时
+     * 收尾记 failed 并返回 false（不产生僵尸 running）。<=0 禁用超时（旧行为：无限等待）。
+     */
+    private boolean acquireProjectPermitOrTimeout(String executionId, TestCase testCase, boolean writeBack) {
+        String projectId = testCase.getProjectId();
+        if (projectAcquireTimeoutMinutes <= 0) {
+            projectExecutionLimiter.acquire(projectId);
+            return true;
+        }
+        long timeoutMs = projectAcquireTimeoutMinutes * 60_000L;
+        if (projectExecutionLimiter.tryAcquire(projectId, timeoutMs)) {
+            return true;
+        }
+        log.warn("Execution {} queue timeout ({} minutes) for project {}", executionId, projectAcquireTimeoutMinutes, projectId);
+        ExecutionRecord record = executionRecordRepository.findById(executionId).orElse(null);
+        if (record != null) {
+            record.setStatus("failed");
+            record.setEndTime(LocalDateTime.now());
+            record.setSummary("项目执行并发排队超时");
+            record.setErrorMessage("项目执行并发排队超时（等待 " + projectAcquireTimeoutMinutes + " 分钟未获得执行配额）");
+            executionRecordRepository.save(record);
+        }
+        if (writeBack) {
+            updateTestCaseExecutionStatus(testCase.getId(), "not_executed");
+        }
+        taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, executionId);
+        try {
+            agentTaskService.fail(executionId, "QUEUE_TIMEOUT", "项目执行并发排队超时");
+        } catch (Exception e) {
+            log.warn("Failed to fail agent task {}: {}", executionId, e.getMessage());
+        }
+        runtimeStore.removeHeartbeat(executionId);
+        return false;
     }
 
     /**
@@ -343,7 +433,10 @@ public class ExecutionService {
         boolean cancelled = false;
 
         // v4.2: 项目级并发配额（排队等待）→ 启动时置 running
-        projectExecutionLimiter.acquire(testCase.getProjectId());
+        // v7.9(E7): 排队超时上限——超时收尾记 failed，不再无限阻塞线程
+        if (!acquireProjectPermitOrTimeout(executionId, testCase, writeBack)) {
+            return;
+        }
         try {
             ExecutionRecord started = executionRecordRepository.findById(executionId).orElse(null);
             // 仅 pending 置 running，避免覆盖已取消/失败的状态
@@ -426,7 +519,7 @@ public class ExecutionService {
                     } catch (Exception e) {
                         log.warn("Agent step {} failed: {}", i + 1, e.getMessage());
                         ExecutionStep failStep = ExecutionStep.builder()
-                                .id(UUID.randomUUID().toString().substring(0, 8))
+                                .id(newId())
                                 .executionId(executionId)
                                 .stepIndex(i + 1)
                                 .action(stepNode.path("action").asText(""))
@@ -551,7 +644,10 @@ public class ExecutionService {
         boolean cancelled = false;
 
         // v4.2: 项目级并发配额 → 启动时置 running
-        projectExecutionLimiter.acquire(testCase.getProjectId());
+        // v7.9(E7): 排队超时上限——超时收尾记 failed，不再无限阻塞线程
+        if (!acquireProjectPermitOrTimeout(executionId, testCase, writeBack)) {
+            return;
+        }
         try {
             ExecutionRecord started = executionRecordRepository.findById(executionId).orElse(null);
             // 仅 pending 置 running，避免覆盖已取消/失败的状态
@@ -614,7 +710,7 @@ public class ExecutionService {
                 for (int i = 0; i < textSteps.size(); i++) {
                     String stepDesc = textSteps.get(i).asText("");
                     ExecutionStep step = ExecutionStep.builder()
-                            .id(UUID.randomUUID().toString().substring(0, 8))
+                            .id(newId())
                             .executionId(executionId)
                             .stepIndex(i + 1)
                             .action(stepDesc)
@@ -641,7 +737,7 @@ public class ExecutionService {
                     String type = node.path("type").asText("ui_action");
 
                     ExecutionStep.ExecutionStepBuilder stepBuilder = ExecutionStep.builder()
-                            .id(UUID.randomUUID().toString().substring(0, 8))
+                            .id(newId())
                             .executionId(executionId)
                             .stepIndex(i + 1)
                             .action(action)

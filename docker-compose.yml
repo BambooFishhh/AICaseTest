@@ -206,6 +206,9 @@ services:
       # v6.7: LLM provider 熔断
       - LLM_CIRCUIT_FAILURE_THRESHOLD=${LLM_CIRCUIT_FAILURE_THRESHOLD:-5}
       - LLM_CIRCUIT_OPEN_SECONDS=${LLM_CIRCUIT_OPEN_SECONDS:-30}
+      # v7.9: 执行链路收敛——批量排队超时（分钟，<=0 禁用）与复制执行权限（true 要求 OPERATE）
+      - EXECUTOR_PROJECT_ACQUIRE_TIMEOUT_MINUTES=${EXECUTOR_PROJECT_ACQUIRE_TIMEOUT_MINUTES:-30}
+      - APP_COPY_EXECUTE_REQUIRE_OPERATE=${APP_COPY_EXECUTE_REQUIRE_OPERATE:-false}
       # v5.13: tools MCP Server 访问后端桥接接口
       - MCP_BRIDGE_URL=http://backend:8000
       - MCP_BRIDGE_TOKEN=${MCP_BRIDGE_TOKEN:-aicasetest-mcp-local}

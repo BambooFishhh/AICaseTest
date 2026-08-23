@@ -32,6 +32,14 @@ public class ExecutionAgent {
     // v7.3(L5): 点击后等待 SPA 异步渲染的窗口（毫秒）
     private static final long EFFECT_CHECK_DELAY_MS = 800;
 
+    /**
+     * v7.9(E9): 步骤 ID 从 UUID 前 8 位（32bit，约 7.7 万条 50% 碰撞）加长到 16 位（64bit），
+     * 消除 JPA save 静默覆盖隐患。旧 8 位记录为 String 主键，与新 ID 共存无需迁移。
+     */
+    static String newStepId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+    }
+
     @Autowired
     private PlaywrightRecordSkill playwrightSkill;
 
@@ -77,7 +85,7 @@ public class ExecutionAgent {
             }
             if ("api_call".equals(stepType)) {
                 return ExecutionStep.builder()
-                        .id(UUID.randomUUID().toString().substring(0, 8))
+                        .id(newStepId())
                         .executionId(executionId)
                         .stepIndex(stepIndex)
                         .action(action)
@@ -107,7 +115,7 @@ public class ExecutionAgent {
                 result = "passed";
                 screenshotAfter = playwrightSkill.takeScreenshotWithMarker(sessionId, clickX, clickY);
                 return ExecutionStep.builder()
-                        .id(UUID.randomUUID().toString().substring(0, 8))
+                        .id(newStepId())
                         .executionId(executionId)
                         .stepIndex(stepIndex)
                         .action(action)
@@ -262,7 +270,7 @@ public class ExecutionAgent {
 
         // 步骤 8: 组装 ExecutionStep
         return ExecutionStep.builder()
-                .id(UUID.randomUUID().toString().substring(0, 8))
+                .id(newStepId())
                 .executionId(executionId)
                 .stepIndex(stepIndex)
                 .action(action)
@@ -292,7 +300,7 @@ public class ExecutionAgent {
         } catch (Exception e) {
             log.warn("state_assert getPageStatus failed: {}", e.getMessage());
             return ExecutionStep.builder()
-                    .id(UUID.randomUUID().toString().substring(0, 8))
+                    .id(newStepId())
                     .executionId(executionId)
                     .stepIndex(stepIndex)
                     .action(action)
@@ -316,7 +324,7 @@ public class ExecutionAgent {
             log.debug("state_assert screenshot failed: {}", e.getMessage());
         }
         return ExecutionStep.builder()
-                .id(UUID.randomUUID().toString().substring(0, 8))
+                .id(newStepId())
                 .executionId(executionId)
                 .stepIndex(stepIndex)
                 .action(action)
@@ -435,10 +443,19 @@ public class ExecutionAgent {
      * v7.3(L5): 未配置 LLM 时退化为 URL+title+textSnippet 三指纹比较——
      * 旧版仅比 URL 在 SPA（URL 不变）场景下几乎必判"未生效"，触发 DOM 兜底重复点击（重复下单/提交）。
      * textSnippet 是页面 body 文本前 500 字符快照（MCP browser_get_page_status），零额外调用。
+     * v7.9(E6): 两级判断——①本地三指纹任一变化直接判生效（省一次 LLM 调用：旧实现无论指纹
+     * 是否变化都调 LLM，而 LLM 的输入与本地比较完全相同，页面已变化时该调用纯冗余）；
+     * ②指纹完全相同（SPA 局部更新/确实无变化存疑）才调 LLM 终审，并在 prompt 中明示
+     * "快照无变化"事实，避免 LLM 无证据幻觉式判生效。
      */
     private boolean askLlmIfEffective(Map<String, String> statusBefore, Map<String, String> statusAfter, String action) {
+        boolean changed = pageChanged(statusBefore, statusAfter);
         if (!llmService.isConfigured()) {
-            return pageChanged(statusBefore, statusAfter);
+            return changed;
+        }
+        if (changed) {
+            // v7.9(E6): 指纹已变化（URL/title/文本快照任一），本地证据充分，直接判生效
+            return true;
         }
         try {
             // v7.3(L5/E6最小版): 注入操作前后文本快照，让 LLM 有证据判断而非无据猜 URL
@@ -451,6 +468,7 @@ public class ExecutionAgent {
                     + "\n操作后标题: " + (statusAfter == null ? "" : statusAfter.get("title"))
                     + "\n操作前页面文本快照: " + snippet(statusBefore)
                     + "\n操作后页面文本快照: " + snippet(statusAfter)
+                    + "\n注意：操作前后页面文本快照无变化（本地指纹比较未发现差异）。"
                     + "\n请判断操作是否生效：";
             Map<String, Object> result = llmService.chatJson(systemPrompt, userPrompt, 0.2);
             Object effective = result.get("effective");

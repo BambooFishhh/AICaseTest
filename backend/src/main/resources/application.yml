@@ -158,10 +158,15 @@ app:
     expiration-hours: ${APP_JWT_EXPIRATION_HOURS:12}
   admin:
     password: ${APP_ADMIN_PASSWORD:admin123}
+  # v7.9(E10): 复制执行权限收敛——false 保持 VIEW 即可（v4.3 现状）；true 要求 OPERATE
+  execution:
+    copy-execute-require-operate: ${APP_COPY_EXECUTE_REQUIRE_OPERATE:false}
   # v4.2: 线程池与并发配额
   executor:
     keep-alive-seconds: ${EXECUTOR_KEEP_ALIVE_SECONDS:60}
     await-termination-seconds: ${EXECUTOR_AWAIT_TERMINATION_SECONDS:30}
+    # v7.9(E7): 项目执行并发配额排队超时（分钟）。超时该条执行记 failed；<=0 禁用（旧行为无限等待）
+    project-acquire-timeout-minutes: ${EXECUTOR_PROJECT_ACQUIRE_TIMEOUT_MINUTES:30}
     analysis:
       core: ${EXECUTOR_ANALYSIS_CORE:2}
       max: ${EXECUTOR_ANALYSIS_MAX:6}

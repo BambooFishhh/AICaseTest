@@ -39,6 +39,16 @@ public interface RuntimeStore {
 
     void acquireProjectPermit(String projectId, int maxPermits);
 
+    /**
+     * v7.9(E7): 带超时的项目并发配额获取。
+     * 默认实现退化为无限等待（旧语义，内存实现外的调用方不感知变化）。
+     * @return true=获得配额；false=超时未获得（调用方应将任务记失败而非永久阻塞）
+     */
+    default boolean tryAcquireProjectPermit(String projectId, int maxPermits, long timeoutMs) {
+        acquireProjectPermit(projectId, maxPermits);
+        return true;
+    }
+
     void releaseProjectPermit(String projectId);
 
     default RuntimeFlag newFlag(String key) {

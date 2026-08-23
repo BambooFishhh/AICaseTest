@@ -4,6 +4,47 @@
 
 ---
 
+## v7.9 — 执行效率与证据存储
+**日期**: 2026-08-23
+**基线**: v7.8
+**主题**: 执行链路效率与可靠性收尾——生效判断省 LLM 调用、批量入口限流防挂死、ID 碰撞消除、复制执行权限可收敛、证据丢失可见化（对应风险清单 E6/E7/E9/E10/R11）
+
+### 背景
+
+v7.8 完成评审闭环后，执行链路仍有五个效率/可靠性问题：**E6** 生效判断的 LLM 调用在"页面已变化"场景纯冗余——LLM 的输入（URL+标题+文本快照）与本地 `pageChanged` 三指纹比较完全相同，页面已变化时花钱调 LLM 拿同样的结论还可能误判；**E7** 批量执行无数量上限，execution 池 queue 满触发 CallerRunsPolicy 后浏览器自动化（单条数分钟）跑在 HTTP 请求线程上——接口挂死、batchId 不返回、用户重试产生重复批次，且项目并发配额 acquire 无限阻塞占满线程；**E9** 执行记录/步骤/批次 ID 均取 UUID 前 8 位（32bit），约 7.7 万条记录 50% 碰撞，步骤表按执行数×步骤数累积迟早撞——JPA save 静默覆盖另一条步骤；**E10** 复制执行仅 VIEW 权限即可对目标环境真实执行删除类用例；**R11** 报告截图读取失败静默返回空串——多实例部署（截图在另一实例本地盘）下报告必然缺图且无任何告警。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `agent/ExecutionAgent.java` | 修改 | **E6**：`askLlmIfEffective` 两级化——本地三指纹（URL/title/textSnippet）任一变化直接判生效**不调 LLM**（常见成功路径每点击步骤省一次 LLM 调用）；指纹完全相同才调 LLM 终审且 prompt 明示"快照无变化"事实（降低无证据幻觉式判生效）。**E9**：步骤 ID 经 `newStepId()` 从 8 位加长到 16 位十六进制（64bit） |
+| `service/ExecutionService.java` | 修改 | **E7**：`executeBatch`/`copyExecute` 入口限流——空列表拒绝（50013）、单批 > 100 拒绝并提示分批（50014）；`acquireProjectPermitOrTimeout` 排队超时——`app.executor.project-acquire-timeout-minutes`（默认 30，<=0 禁用保持旧行为）超时该条执行记 failed（"项目执行并发排队超时"）不再无限阻塞，agent_task 标 QUEUE_TIMEOUT，无僵尸 running；**E9**：执行记录 ID/batchId/copyId 经 `newId()` 加长到 16 位；**E10**：`copyExecute` 权限开关 `app.execution.copy-execute-require-operate`（默认 false 保持 VIEW 口径，true 要求 OPERATE） |
+| `runtime/RuntimeStore.java` | 修改 | **E7**：新增默认方法 `tryAcquireProjectPermit(projectId, maxPermits, timeoutMs)`——默认退化为无限等待（旧语义），双实现覆盖 |
+| `runtime/MemoryRuntimeStore.java` | 修改 | **E7**：`Semaphore.tryAcquire(timeoutMs)` 带超时实现 |
+| `runtime/RedisRuntimeStore.java` | 修改 | **E7**：自旋循环加 deadline 超时返回 false；Redis 异常回退内存实现同样带超时 |
+| `service/ProjectExecutionLimiter.java` | 修改 | **E7**：新增 `tryAcquire(projectId, timeoutMs)` 透传 |
+| `service/ReportService.java` | 修改 | **R11**：`imageToBase64` 三态语义——null=无截图（不渲染）/""=路径非空但读取失败（渲染"截图文件缺失"告警占位，含丢失路径与共享卷提示）/base64=正常渲染；读取失败记 warn 日志；报告新增 `.shot-missing` 告警样式 |
+| `test/agent/ExecutionAgentEffectiveCheckTest.java` | 新增 | E6+E9 6 用例：指纹变化跳过 LLM 调用（verify never）、指纹相同调 LLM 且 prompt 含"快照无变化"、无 LLM 三指纹兜底、LLM 异常回退指纹比较、步骤 ID 16 位十六进制 |
+| `test/service/ExecutionServiceBatchLimitTest.java` | 新增 | E7+E9+E10 8 用例：批量 101 条被拒（50014）、复制执行同限流、空批被拒、100 条正常受理、`newId()` 16 位十六进制、执行记录 ID/batchId 长度验证、开关 false 入口走 VIEW、开关 true 入口走 OPERATE |
+| `test/runtime/MemoryRuntimeStoreTryAcquireTest.java` | 新增 | E7 4 用例：配额占满超时返回 false（真实等待）、可用配额立即获取、释放后可重取、acquire/tryAcquire 共享同一信号量池 |
+| `test/service/ReportServiceEvidenceMissingTest.java` | 新增 | R11 2 用例：单报告三态并存（无截图不渲染/双坏路径双告警/好文件渲染 base64/告警含丢失路径）、`imageToBase64` 三态语义直测 |
+
+### 部署配置变化
+
+| 配置 | 默认 | 说明 |
+|---|---|---|
+| `EXECUTOR_PROJECT_ACQUIRE_TIMEOUT_MINUTES` | 30 | 项目执行并发配额排队超时（分钟），<=0 禁用（旧无限等待行为）；docker-compose 已透传 |
+| `APP_COPY_EXECUTE_REQUIRE_OPERATE` | false | 复制执行权限收敛——false 保持 VIEW 即可（v4.3 现状），true 要求 OPERATE；docker-compose 已透传 |
+
+### API 契约变化
+
+- 无 REST 接口变更
+- 新执行记录/步骤/批次 ID 长度从 8 位变为 16 位（String 主键，旧 8 位记录共存无需迁移）
+- 批量/复制执行超限时返回业务错误 50014（HTTP 400，提示分批执行）
+- 生效判断行为变化：页面指纹变化时不再调用 LLM（结论等价：旧版 LLM 基于相同证据几乎恒判生效）
+
+---
+
 ## v7.8 — 评审闭环与覆盖率可信
 **日期**: 2026-08-23
 **基线**: v7.7

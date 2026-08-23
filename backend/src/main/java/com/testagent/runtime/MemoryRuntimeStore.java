@@ -3,6 +3,7 @@ package com.testagent.runtime;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -103,6 +104,17 @@ public class MemoryRuntimeStore implements RuntimeStore {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("执行调度被中断", e);
+        }
+    }
+
+    /** v7.9(E7): 带超时的配额获取——超时返回 false 而非永久阻塞 */
+    @Override
+    public boolean tryAcquireProjectPermit(String projectId, int maxPermits, long timeoutMs) {
+        try {
+            return semaphore(projectId, maxPermits).tryAcquire(Math.max(1, timeoutMs), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 

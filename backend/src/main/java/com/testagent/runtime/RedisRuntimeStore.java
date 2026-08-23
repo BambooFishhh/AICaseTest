@@ -200,6 +200,32 @@ public class RedisRuntimeStore implements RuntimeStore {
         }
     }
 
+    /** v7.9(E7): 带超时的配额获取——自旋加 deadline，超时返回 false 而非永久阻塞 */
+    @Override
+    public boolean tryAcquireProjectPermit(String projectId, int maxPermits, long timeoutMs) {
+        String key = "rt:sema:" + projectId;
+        long deadline = System.currentTimeMillis() + Math.max(1, timeoutMs);
+        try {
+            while (!Thread.currentThread().isInterrupted()) {
+                Long ok = redis.execute(ACQUIRE_SCRIPT, List.of(key), String.valueOf(Math.max(1, maxPermits)));
+                if (ok != null && ok == 1L) {
+                    return true;
+                }
+                if (System.currentTimeMillis() >= deadline) {
+                    return false;
+                }
+                Thread.sleep(100);
+            }
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Exception e) {
+            log.warn("Redis semaphore unavailable, fallback to memory: {}", e.getMessage());
+            return memoryFallback.tryAcquireProjectPermit(projectId, maxPermits, timeoutMs);
+        }
+    }
+
     @Override
     public void releaseProjectPermit(String projectId) {
         try {

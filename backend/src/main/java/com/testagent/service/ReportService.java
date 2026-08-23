@@ -4,6 +4,8 @@ import com.testagent.entity.ExecutionRecord;
 import com.testagent.entity.ExecutionStep;
 import com.testagent.repository.ExecutionRecordRepository;
 import com.testagent.repository.ExecutionStepRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -20,6 +22,8 @@ import java.util.List;
  */
 @Service
 public class ReportService {
+
+    private static final Logger log = LoggerFactory.getLogger(ReportService.class);
 
     /** v7.2(R12): 报告版本收敛为单一常量（旧实现两处 footer 硬编码 v2.4，从未随迭代更新） */
     private static final String APP_VERSION = "v7.2";
@@ -119,19 +123,13 @@ public class ReportService {
                 }
                 html.append("</table>");
 
-                // 截图
+                // 截图（v7.9/R11: 三态——无截图不渲染；丢失渲染告警占位；正常渲染图片）
                 String beforeBase64 = imageToBase64(step.getScreenshotBefore());
                 String afterBase64 = imageToBase64(step.getScreenshotAfter());
-                if (!beforeBase64.isEmpty() || !afterBase64.isEmpty()) {
+                if (beforeBase64 != null || afterBase64 != null) {
                     html.append("<div class=\"screenshots\">");
-                    if (!beforeBase64.isEmpty()) {
-                        html.append("<div class=\"shot\"><div class=\"shot-label\">操作前</div>");
-                        html.append("<img src=\"").append(beforeBase64).append("\" onclick=\"this.classList.toggle('zoomed')\" alt=\"操作前截图\"></div>");
-                    }
-                    if (!afterBase64.isEmpty()) {
-                        html.append("<div class=\"shot\"><div class=\"shot-label\">操作后</div>");
-                        html.append("<img src=\"").append(afterBase64).append("\" onclick=\"this.classList.toggle('zoomed')\" alt=\"操作后截图\"></div>");
-                    }
+                    appendShot(html, "操作前", beforeBase64, step.getScreenshotBefore());
+                    appendShot(html, "操作后", afterBase64, step.getScreenshotAfter());
                     html.append("</div>");
                 }
                 html.append("</div>");
@@ -248,18 +246,40 @@ public class ReportService {
     }
 
     /**
-     * 将图片文件转换为 base64 data URL。失败返回空字符串。
+     * 将图片文件转换为 base64 data URL。
+     * v7.9(R11): 三态返回——null=路径为空（无截图，不渲染）；""=路径非空但读取失败
+     * （截图丢失，渲染告警占位）；其他=base64 正常渲染。旧实现读取失败静默返回空串，
+     * 多实例部署（截图在另一实例本地盘）下报告缺图且完全不可知。
      */
     private String imageToBase64(String path) {
         if (path == null || path.isBlank()) {
-            return "";
+            return null;
         }
         try {
             byte[] bytes = Files.readAllBytes(Paths.get(path));
             return "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes);
         } catch (Exception e) {
+            log.warn("Evidence file missing, path={}: {}", path, e.getMessage());
             return "";
         }
+    }
+
+    /**
+     * v7.9(R11): 渲染单个截图位——正常图片 / 丢失告警占位 / 无截图（null 不渲染）。
+     */
+    private void appendShot(StringBuilder html, String label, String base64, String path) {
+        if (base64 == null) {
+            return;
+        }
+        if (base64.isEmpty()) {
+            html.append("<div class=\"shot shot-missing\"><div class=\"shot-label\">").append(label).append("</div>")
+                    .append("<div class=\"missing-text\">⚠ 截图文件缺失：").append(escapeHtml(safe(path)))
+                    .append("<br>多实例部署时请将 outputs 目录配置为共享卷（详见 README 部署说明）</div></div>");
+            return;
+        }
+        html.append("<div class=\"shot\"><div class=\"shot-label\">").append(label).append("</div>");
+        html.append("<img src=\"").append(base64).append("\" onclick=\"this.classList.toggle('zoomed')\" alt=\"")
+                .append(label).append("截图\"></div>");
     }
 
     /**
@@ -334,6 +354,7 @@ public class ReportService {
                 + ".step-table th{width:120px;background:#fafafa;}"
                 + ".screenshots{display:flex;gap:16px;margin-top:12px;flex-wrap:wrap;}"
                 + ".shot{flex:1;min-width:280px;}"
+                + ".shot-missing .missing-text{padding:16px;background:#fff8e6;border:1px dashed #e6a23c;border-radius:4px;color:#b88230;font-size:13px;line-height:1.6;word-break:break-all;}"
                 + ".shot-label{font-size:12px;color:#888;margin-bottom:6px;}"
                 + ".shot img{max-width:100%;border:1px solid #ddd;border-radius:4px;cursor:zoom-in;display:block;}"
                 + ".shot img.zoomed{position:fixed;top:5%;left:5%;width:90%;z-index:9999;cursor:zoom-out;border:4px solid #fff;box-shadow:0 0 20px rgba(0,0,0,.4);}"

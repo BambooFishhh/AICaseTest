@@ -26,6 +26,13 @@ public class ProjectExecutionLimiter {
         runtimeStore.acquireProjectPermit(projectId, maxConcurrent);
     }
 
+    /**
+     * v7.9(E7): 带超时的配额获取——超时返回 false（调用方将任务记失败），不再无限阻塞。
+     */
+    public boolean tryAcquire(String projectId, long timeoutMs) {
+        return runtimeStore.tryAcquireProjectPermit(projectId, maxConcurrent, timeoutMs);
+    }
+
     public void release(String projectId) {
         runtimeStore.releaseProjectPermit(projectId);
     }
