@@ -65,10 +65,16 @@ public class GitDiffService {
         } else {
             args.add(head + "~1.." + head);
         }
-        String output = tryRunGit(dir, args);
+        // v8.3fix: diff 输出不再套用 4000 字符截断——大变更集会被静默砍尾
+        // （冒烟实测：4000 cap 只留到 doc/ 目录，后续 java 条目全部丢失）
+        String output = tryRunGit(dir, args, 2_000_000);
         if (output == null && baseline != null) {
             log.info("[Scope] 三点 diff 失败，回退两点 diff: {}..{}", baseline, head);
-            output = runGit(dir, List.of("diff", "--name-status", baseline + ".." + head));
+            output = tryRunGit(dir, List.of("diff", "--name-status", baseline + ".." + head), 2_000_000);
+        }
+        if (output == null) {
+            throw new BusinessException(50003, "git diff 执行失败，请确认仓库可用",
+                    HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
         List<Map<String, String>> files = new ArrayList<>();
@@ -91,6 +97,9 @@ public class GitDiffService {
             item.put("path", path);
             files.add(item);
         }
+        long javaCount = files.stream().filter(f -> f.get("path").endsWith(".java")).count();
+        log.info("[Scope] git diff {}...{}: {} 个变更文件（.java {} 个，原始输出 {} 字符）",
+                baseline, head, files.size(), javaCount, output.length());
         return files;
     }
 
@@ -130,7 +139,7 @@ public class GitDiffService {
     }
 
     private String runGit(Path dir, List<String> args) {
-        String out = tryRunGit(dir, args);
+        String out = tryRunGit(dir, args, 4000);
         if (out == null) {
             throw new BusinessException(50003, "git 命令执行失败，请确认已安装 git 且仓库可用",
                     HttpStatus.INTERNAL_SERVER_ERROR);
@@ -138,7 +147,8 @@ public class GitDiffService {
         return out;
     }
 
-    private String tryRunGit(Path dir, List<String> args) {
+    /** maxChars: 输出保留上限（防超大输出撑爆内存）；diff 类调用传大值，引用列举用小值 */
+    private String tryRunGit(Path dir, List<String> args, int maxChars) {
         List<String> cmd = new ArrayList<>();
         cmd.add("git");
         cmd.add("-C");
@@ -153,7 +163,7 @@ public class GitDiffService {
                     new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
-                    if (output.length() < 4000) {
+                    if (output.length() < maxChars) {
                         output.append(line).append('\n');
                     }
                 }

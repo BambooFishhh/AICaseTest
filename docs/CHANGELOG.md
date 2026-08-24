@@ -41,6 +41,8 @@ v8.1/v8.2 已完成范围识别与生成收敛，但覆盖率仍以全项目为�
 
 - 后端全量 `mvn test`：405 tests, 0 failures, 0 errors
 - 前端 `npm run build` 通过
+- **Docker 生产部署实测**（v8.3 收尾补充）：镜像重建后 Flyway V13 在 MySQL 迁移成功；litemall 夹具全链路冒烟通过——git-refs 容器内真实执行、范围草稿识别出 70 条 AUTO_DIFF 接口 + 4 个受影响状态机、生成前置拦截精确命中、确认后覆盖矩阵 scoped=true 且分母=范围集合（接口 31/85 与条目数精确吻合）
+- **修复**：GitDiffService 输出截断 bug——`tryRunGit` 的 4000 字符通用上限被 diff 复用后，变更集超过 ~60 个文件即被静默砍尾（实测 v1.7.0...HEAD 完整输出 31,983 字符/591 文件/120 java 只留到 doc/ 目录，AUTO_DIFF 全丢）。diff 调用改传 2MB 上限并新增文件数/java 数/原始长度 INFO 日志
 
 ---
 
@@ -126,8 +128,8 @@ v8.1 已能确认"本期范围"，但生成链路目标集合仍是全项目接�
 
 ### 验证结果
 
-- `mvn compile` BUILD SUCCESS
-- `npm run build` 通过
+- 后端全量 `mvn test`：405 tests, 0 failures, 0 errors
+- 前端 `npm run build` 通过
 
 ---
 
