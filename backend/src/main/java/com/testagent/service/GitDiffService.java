@@ -106,7 +106,8 @@ public class GitDiffService {
     private List<String> forEachRef(Path dir, String namespace) {
         List<String> refs = new ArrayList<>();
         try {
-            String output = runGit(dir, List.of("for-each-ref", "--format=%(refname:short)", namespace));
+            // v8.3fix: 引用列举同样不走 4000 小cap——多分支仓库（数百 ref）会被静默砍尾
+            String output = tryRunGit(dir, List.of("for-each-ref", "--format=%(refname:short)", namespace), 200_000);
             for (String line : output.split("\n")) {
                 if (!line.isBlank()) {
                     refs.add(line.trim());

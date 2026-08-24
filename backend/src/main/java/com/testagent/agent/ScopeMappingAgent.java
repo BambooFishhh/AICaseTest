@@ -60,11 +60,17 @@ public class ScopeMappingAgent {
     private String buildUserPrompt(String prdText, List<Map<String, Object>> endpoints) {
         String prd = prdText.length() > MAX_PRD_LENGTH
                 ? prdText.substring(0, MAX_PRD_LENGTH) + "\n...(已截断)" : prdText;
+        if (prdText.length() > MAX_PRD_LENGTH) {
+            log.info("[Scope] LLM 映射输入：PRD {} 字符超出 {} 上限，头部截断（尾部需求可能无法参与映射）",
+                    prdText.length(), MAX_PRD_LENGTH);
+        }
         StringBuilder sb = new StringBuilder();
         sb.append("## 需求文档\n").append(prd).append("\n\n## 接口清单\n");
         int count = 0;
         for (Map<String, Object> ep : endpoints) {
             if (count >= MAX_ENDPOINTS) {
+                log.info("[Scope] LLM 映射输入：接口清单 {} 条超出 {} 上限，仅取前 {} 条",
+                        endpoints.size(), MAX_ENDPOINTS, MAX_ENDPOINTS);
                 break;
             }
             String method = str(ep.get("method")).toUpperCase();
