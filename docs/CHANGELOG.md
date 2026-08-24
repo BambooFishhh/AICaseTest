@@ -4,6 +4,48 @@
 
 ---
 
+## v8.2 — 本期聚焦生成（Scope-Aware 第 2 期）
+**日期**: 2026-08-24
+**基线**: v8.1
+**主题**: 生成目标只聚焦本期范围——状态机切片（sprint 目标/历史上下文二分）、BFS 确定性推导 setup 路径（LLM 只填数据不找路径）、prompt 分层注入与 phase 步骤标记（setup/verify）、执行 blocked 语义（前置失败 ≠ 用例失败）、生成前置校验升级（代码驱动项目必须先确认范围，破坏性变更）
+
+### 背景
+
+v8.1 已能确认"本期范围"，但生成链路目标集合仍是全项目接口/转换；且本期功能常依赖历史状态（如发货依赖订单已支付），LLM 只能凭空猜前置路径。核心原则：**本期需求定义"测什么"，历史代码只出现在前置条件与准备步骤中**。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/ScopeSlicingService.java` | **新增** | 切片服务——latestConfirmed 范围 + ENDPOINT/STATE_MACHINE 条目 → ScopeSlice{targetEndpointIds, targetEndpointsDetail, sprint/historicalTransitionsBySmId, setupHints}；转换分类复用证据匹配（normalizeStateCode 归一 + file ∈ changed_files）；BFS 求"初始态→目标转换源状态"最短路径输出 trigger 文案骨架（排除目标转换自身，无初始态标记时以未被 to 引用的状态兜底）；requireConfirmedScopeIfCodeDriven 共用校验 |
+| `agent/TestGeneratorAgent.java` | 修改 | **新 overloads**（generate/generateStreaming 带 slice 参数，既有签名不动保单测兼容）逐层透传 runPrdPipeline→generateByLlmWithPrd→generatePrdRound→buildCoverageChecklist；**checklist 收敛**——slice 非空时 endpoints/transitions 清单仅含本期项（coverageRefs 对账天然受限）；**context.scope 注入**——targets（接口完整详情+sprint 转换）/historicalTransitions/setupHints 确定性注入不走检索；SM 上下文仅保留范围内 SM 且每条转换标 role=本期目标/历史上下文；epList 先按 scope 过滤再走 G25 容量；**prompt**——HEADER 任务段加范围约束句、FOOTER 新增「本期范围」段（目标/历史角色规则+setupHints 用法+phase 字段规范）、structuredSteps 要求加 phase 说明、few-shot 增补 setup+verify 分层示例 |
+| `agent/OrchestratorAgent.java` | 修改 | GenContext 扩展 slice 字段；loadGenerationContext 尾部加载切片（EMPTY 时纯 PRD 行为不变）；generate/streaming 切换到带 slice 重载；进度提示"已加载本期范围" |
+| `service/ProjectService.java` | 修改 | triggerGenerate 在 PRD 校验后追加 requireConfirmedScopeIfCodeDriven（sourcePath 非空且有分析结果的项目强制） |
+| `service/TestCaseService.java` | 修改 | runGenerate/runGenerateStream/runGenerateStreamAppend 三入口同款校验 |
+| `service/ExecutionService.java` | 修改 | **blocked 语义**——Agent/程序化两循环解析 step.phase，setup 步骤 failed（含异常分支）即 break 并置 errorMessage="前置准备失败:…"；终态判定 blocked 分支（summary 携带原因），不进 determineStatus；blocked 不写失败经验库（failed 守卫天然排除）；getStats 增加 blocked 计数 |
+| `service/ReportService.java` | 修改 | 批次 HTML 报告汇总增加 blocked 行（含处置建议文案） |
+| `service/ScopeService.java` | 修改 | createDraft 对非 Git 仓库不再拒绝——创建空草稿（autoIdentified:false 提示手动添加条目），保证纯 PRD 项目也能建立范围通过 v8.2 校验 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `components/TestCaseCard.vue` | 修改 | structuredSteps 渲染：step.phase==='setup' 显示灰色「准备」徽标；执行状态 blocked 文案统一为"已阻断" |
+| `views/ExecutionResult.vue`、`ExecutionHistory.vue`、`BatchResult.vue` | 修改 | status 映射表增加 blocked:'已阻断'（warning） |
+| `views/ScopeReview.vue` | 修改 | createDraft 响应 autoIdentified:false 时提示"非 Git 仓库已建空草稿，请手动添加条目" |
+
+### API 契约变化
+
+- 无新增端点；createScope 响应增加可选字段 `autoIdentified`
+- executionStatus/status 新取值 `blocked`（此前仅手动标记可达，现由执行引擎自动写入）
+
+### 验证结果
+
+- 后端全量 `mvn test`：405 tests, 0 failures, 0 errors
+- 前端 `npm run build` 通过
+
+---
+
 ## v8.1 — 范围感知基础（Scope-Aware 第 1 期）
 **日期**: 2026-08-24
 **基线**: v7.15

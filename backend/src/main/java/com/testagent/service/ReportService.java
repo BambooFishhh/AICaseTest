@@ -198,6 +198,8 @@ public class ReportService {
         long running = records.stream().filter(r -> "running".equals(r.getStatus())).count();
         long pending = records.stream().filter(r -> "pending".equals(r.getStatus())).count();
         long skipped = records.stream().filter(r -> "skipped".equals(r.getStatus())).count();
+        // v8.2: blocked（前置准备失败）单独统计展示
+        long blocked = records.stream().filter(r -> "blocked".equals(r.getStatus())).count();
         // v7.2(R12): 分母 = passed + failed——running/pending/cancelled/skipped 均未形成判定，
         // 旧实现"报告生成瞬间还有任务在跑"会把通过率稀释
         double passRate = passRateOf(passed, failed);
@@ -224,6 +226,10 @@ public class ReportService {
         html.append("<tr><th>运行中</th><td>").append(running).append("</td></tr>");
         html.append("<tr><th>待执行</th><td>").append(pending).append("</td></tr>");
         html.append("<tr><th>已跳过</th><td>").append(skipped).append("</td></tr>");
+        if (blocked > 0) {
+            html.append("<tr><th>已阻断（前置准备失败）</th><td>").append(blocked)
+                .append("（前置状态无法达成，非用例本身失败，建议检查环境/数据后重跑）</td></tr>");
+        }
         html.append("<tr><th>通过率</th><td>").append(String.format("%.1f%%", passRate))
             .append(undecided > 0 ? "（" + undecided + " 条未判定记录未计入分母）" : "")
             .append("</td></tr>");

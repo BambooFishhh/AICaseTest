@@ -105,12 +105,11 @@ public class ScopeService {
         if (project.getSourcePath() == null || project.getSourcePath().isBlank()) {
             throw BusinessException.invalidParam("项目未配置源码路径，无法自动识别");
         }
-        if (!gitDiffService.isGitRepo(project.getSourcePath())) {
-            throw BusinessException.invalidParam(
-                    "源码路径不是 Git 仓库（缺少 .git），无法自动识别本期范围；请改用包含 .git 的目录或使用手动标注模式");
-        }
         CodeAnalysis analysis = latestAnalysis(projectId);
-        if (analysis == null) {
+        boolean gitRepo = gitDiffService.isGitRepo(project.getSourcePath());
+        // v8.2: 非 Git 仓库允许创建空草稿（手动添加条目），不再直接拒绝——
+        // 纯 PRD/文件夹上传项目也需要范围模型参与生成前置校验
+        if (!gitRepo && analysis == null) {
             throw BusinessException.invalidState("请先完成代码分析，再创建本期范围");
         }
 
@@ -122,9 +121,18 @@ public class ScopeService {
         def.setStatus(ScopeDefinition.STATUS_DRAFT);
         definitionRepository.save(def);
 
+        if (!gitRepo) {
+            log.info("[Scope] 草稿 {} 创建（非 Git 仓库，跳过自动识别，等待手动添加条目）", def.getId());
+            Map<String, Object> r = toMap(def);
+            r.put("autoIdentified", false);
+            return r;
+        }
+
         int created = runIdentification(def, project, analysis);
         log.info("[Scope] 草稿 {} 创建完成: {} 条范围项", def.getId(), created);
-        return toMap(def);
+        Map<String, Object> r = toMap(def);
+        r.put("autoIdentified", true);
+        return r;
     }
 
     /** 识别流水线：diff → 接口映射 → 状态机影响面 → LLM 补充。返回新建条目数 */

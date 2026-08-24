@@ -10,6 +10,8 @@ import com.testagent.repository.ExecutionStepRepository;
 import com.testagent.repository.MindMapRepository;
 import com.testagent.repository.ProjectGroupRepository;
 import com.testagent.repository.ProjectRepository;
+import com.testagent.repository.ScopeDefinitionRepository;
+import com.testagent.repository.ScopeItemRepository;
 import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.TaskTelemetryRepository;
 import com.testagent.repository.TestCaseAiReviewRepository;
@@ -45,6 +47,8 @@ class ProjectServiceTest {
     private TestCaseAiReviewRepository aiReviewRepository;
     private TaskTelemetryRepository telemetryRepository;
     private MindMapRepository mindMapRepository;
+    private ScopeDefinitionRepository scopeDefinitionRepository;
+    private ScopeItemRepository scopeItemRepository;
     private SemanticService semanticService;
     private ProjectAccessService projectAccessService;
 
@@ -62,6 +66,8 @@ class ProjectServiceTest {
         aiReviewRepository = mock(TestCaseAiReviewRepository.class);
         telemetryRepository = mock(TaskTelemetryRepository.class);
         mindMapRepository = mock(MindMapRepository.class);
+        scopeDefinitionRepository = mock(ScopeDefinitionRepository.class);
+        scopeItemRepository = mock(ScopeItemRepository.class);
         semanticService = mock(SemanticService.class);
         projectAccessService = mock(ProjectAccessService.class);
 
@@ -76,6 +82,8 @@ class ProjectServiceTest {
         ReflectionTestUtils.setField(service, "aiReviewRepository", aiReviewRepository);
         ReflectionTestUtils.setField(service, "telemetryRepository", telemetryRepository);
         ReflectionTestUtils.setField(service, "mindMapRepository", mindMapRepository);
+        ReflectionTestUtils.setField(service, "scopeDefinitionRepository", scopeDefinitionRepository);
+        ReflectionTestUtils.setField(service, "scopeItemRepository", scopeItemRepository);
         ReflectionTestUtils.setField(service, "semanticService", semanticService);
         ReflectionTestUtils.setField(service, "projectAccessService", projectAccessService);
     }

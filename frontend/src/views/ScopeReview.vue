@@ -258,8 +258,15 @@ async function handleCreate() {
   }
   creating.value = true
   try {
-    await createScope(projectId, { name: createForm.name.trim(), baselineRef: createForm.baselineRef.trim() })
-    ElMessage.success('范围草稿已创建')
+    const res = await createScope(projectId, {
+      name: createForm.name.trim(),
+      baselineRef: createForm.baselineRef.trim()
+    })
+    if (res.data && res.data.autoIdentified === false) {
+      ElMessage.warning('已创建空草稿：该项目非 Git 仓库或缺少分析结果，请手动添加条目')
+    } else {
+      ElMessage.success('范围草稿已创建')
+    }
     createVisible.value = false
     await loadList()
   } finally {

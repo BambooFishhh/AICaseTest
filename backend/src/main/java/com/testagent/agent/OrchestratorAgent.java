@@ -14,6 +14,7 @@ import com.testagent.entity.Project;
 import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
 import com.testagent.runtime.CancellationSignal;
+import com.testagent.service.ScopeSlicingService;
 import com.testagent.service.SemanticService;
 import com.testagent.service.TelemetryService;
 import com.testagent.repository.CodeAnalysisRepository;
@@ -74,14 +75,19 @@ public class OrchestratorAgent {
     @Autowired
     private SemanticService semanticService;
 
+    // v8.2: 本期范围切片
+    @Autowired
+    private ScopeSlicingService scopeSlicingService;
+
     @Autowired
     private TelemetryService telemetryService;
 
     // v3.2: 生成上下文容器，供 generate 与 generateStreaming 共用
     // v3.4: 新增 params 字段（项目级生成参数）
+    // v8.2: 新增 slice 字段（已确认本期范围，可为 EMPTY）
     private record GenContext(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
                               BackendResult backendResult, FrontendResult frontendResult,
-                              GenerationParams params) {}
+                              GenerationParams params, ScopeSlicingService.ScopeSlice slice) {}
 
     /**
      * 编排生成测试用例。
@@ -104,7 +110,8 @@ public class OrchestratorAgent {
             GenContext ctx = loadGenerationContext(projectId, progressCallback);
             telemetryService.beginPhaseIfActive("generation");
             List<TestCase> result = testGeneratorAgent.generate(ctx.prdResult(), ctx.stateMachines(),
-                    ctx.backendResult(), ctx.frontendResult(), progressCallback, ctx.params(), report);
+                    ctx.backendResult(), ctx.frontendResult(), progressCallback, ctx.params(), report,
+                    ctx.slice());
             telemetryService.endPhase();
             ok = true;
             return result;
@@ -138,7 +145,7 @@ public class OrchestratorAgent {
             telemetryService.beginPhaseIfActive("generation");
             List<TestCase> result = testGeneratorAgent.generateStreaming(ctx.prdResult(), ctx.stateMachines(),
                     ctx.backendResult(), ctx.frontendResult(), progressCallback, caseCallback, cancelled,
-                    ctx.params(), report);
+                    ctx.params(), report, ctx.slice());
             telemetryService.endPhase();
             ok = true;
             return result;
@@ -314,7 +321,18 @@ public class OrchestratorAgent {
         // ② 一致性：PRD 状态流的状态在所有代码状态机中零命中 → prompt 显式标注"以代码为准，需人工确认"
         applyStateFlowConsistency(prdResult, stateMachines);
 
-        return new GenContext(prdResult, stateMachines, backendResult, frontendResult, params);
+        // v8.2: 加载已确认本期范围切片（无确认范围返回 EMPTY，纯 PRD 项目不受影响）
+        ScopeSlicingService.ScopeSlice slice = scopeSlicingService.loadForGeneration(projectId);
+        if (!slice.isEmpty()) {
+            log.info("[Scope] generation scoped to {}: endpoints {}, SMs {}",
+                    slice.definitionId(), slice.targetEndpointsDetail().size(),
+                    slice.sprintTransitionsBySmId().size());
+            if (progressCallback != null) {
+                progressCallback.update("已加载本期范围「" + slice.name() + "」...");
+            }
+        }
+
+        return new GenContext(prdResult, stateMachines, backendResult, frontendResult, params, slice);
     }
 
     private void checkCancelled(CancellationSignal cancelled) {

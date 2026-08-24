@@ -265,7 +265,9 @@ const statusLabel = (status) => {
     failed: '失败',
     running: '执行中',
     pending: '排队中',
-    cancelled: '已取消'
+    cancelled: '已取消',
+    skipped: '已跳过',
+    blocked: '已阻断'
   }
   return map[status] || status || '-'
 }

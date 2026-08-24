@@ -118,6 +118,10 @@ public class ProjectService {
     @Autowired
     private ScopeItemRepository scopeItemRepository;
 
+    // v8.2: 生成前置校验——代码驱动项目必须有已确认本期范围
+    @Autowired
+    private ScopeSlicingService scopeSlicingService;
+
     // v1.10: PRD 解析 Agent
     @Autowired
     private PrdAgent prdAgent;
@@ -275,6 +279,8 @@ public class ProjectService {
         if (!hasPrd) {
             throw BusinessException.invalidParam("请先添加 PRD 文档");
         }
+        // v8.2: 代码驱动项目必须先确认本期范围（纯 PRD 项目不受影响）
+        scopeSlicingService.requireConfirmedScopeIfCodeDriven(project);
         // v1.6: 针对 generating 给出明确的并发提示，避免用户重复触发
         if (!"analyzed".equals(status) && !"completed".equals(status)) {
             if ("generating".equals(status)) {

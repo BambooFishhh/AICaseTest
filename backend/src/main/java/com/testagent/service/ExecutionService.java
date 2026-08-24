@@ -502,6 +502,9 @@ public class ExecutionService {
                 errorMessage = "无结构化步骤";
             } else {
                 String testCaseContext = "用例: " + testCase.getTitle() + ", 模块: " + testCase.getModule();
+                // v8.2: blocked 语义——setup 阶段步骤失败时终止后续验证，整条记 blocked
+                boolean setupFailed = false;
+                String setupError = null;
                 for (int i = 0; i < stepNodes.size(); i++) {
                     // v4.2: 取消检查点
                     if (isExecutionCancelled(executionId)) {
@@ -521,6 +524,12 @@ public class ExecutionService {
                             case "failed" -> failed++;
                             default -> skipped++;
                         }
+                        if ("setup".equalsIgnoreCase(stepNode.path("phase").asText(""))
+                                && "failed".equals(step.getResult())) {
+                            setupFailed = true;
+                            setupError = step.getError();
+                            break;   // 前置不满足，后续 verify 步骤无意义
+                        }
                     } catch (Exception e) {
                         log.warn("Agent step {} failed: {}", i + 1, e.getMessage());
                         ExecutionStep failStep = ExecutionStep.builder()
@@ -536,7 +545,15 @@ public class ExecutionService {
                         steps.add(failStep);
                         executionStepRepository.save(failStep);
                         failed++;
+                        if ("setup".equalsIgnoreCase(stepNode.path("phase").asText(""))) {
+                            setupFailed = true;
+                            setupError = e.getMessage();
+                            break;
+                        }
                     }
+                }
+                if (setupFailed) {
+                    errorMessage = "前置准备失败: " + (setupError == null ? "未知原因" : setupError);
                 }
             }
 
@@ -574,9 +591,16 @@ public class ExecutionService {
         } else {
             // v7.0(E3): 基础设施故障（浏览器启动失败/导航异常/无步骤）不再记 passed
             if (errorMessage != null && failed == 0) failed++;
-            status = determineStatus(passed, failed, skipped);
-            summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped)
-                    + (errorMessage != null ? "（" + errorMessage + "）" : "");
+            // v8.2: setup 阶段失败 → blocked（前置不满足 ≠ 用例本身失败）
+            if (errorMessage != null && errorMessage.startsWith("前置准备失败")) {
+                status = "blocked";
+                summary = String.format("通过 %d, 失败 %d, 跳过 %d（%s）",
+                        passed, failed, skipped, errorMessage);
+            } else {
+                status = determineStatus(passed, failed, skipped);
+                summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped)
+                        + (errorMessage != null ? "（" + errorMessage + "）" : "");
+            }
         }
         ExecutionRecord finalRecord = executionRecordRepository.findById(executionId).orElse(null);
         if (finalRecord != null && !"cancelled".equals(finalRecord.getStatus())) {
@@ -865,6 +889,12 @@ public class ExecutionService {
                     executionStepRepository.save(step);
                     agentTaskService.checkpoint(executionId, "step_" + (i + 1), null);
                     pauseForRecording();
+                    // v8.2: setup 阶段步骤失败 → 终止后续验证步骤
+                    if ("setup".equalsIgnoreCase(node.path("phase").asText(""))
+                            && "failed".equals(step.getResult())) {
+                        errorMessage = "前置准备失败: " + (step.getError() == null ? "未知原因" : step.getError());
+                        break;
+                    }
                 }
             }
 
@@ -906,9 +936,16 @@ public class ExecutionService {
         } else {
             // v7.0(E3): 基础设施故障（浏览器启动失败/导航异常/无步骤）不再记 passed
             if (errorMessage != null && failed == 0) failed++;
-            status = determineStatus(passed, failed, skipped);
-            summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped)
-                    + (errorMessage != null ? "（" + errorMessage + "）" : "");
+            // v8.2: setup 阶段失败 → blocked（前置不满足 ≠ 用例本身失败）
+            if (errorMessage != null && errorMessage.startsWith("前置准备失败")) {
+                status = "blocked";
+                summary = String.format("通过 %d, 失败 %d, 跳过 %d（%s）",
+                        passed, failed, skipped, errorMessage);
+            } else {
+                status = determineStatus(passed, failed, skipped);
+                summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped)
+                        + (errorMessage != null ? "（" + errorMessage + "）" : "");
+            }
         }
 
         ExecutionRecord finalRecord = executionRecordRepository.findById(executionId).orElse(null);
@@ -1018,12 +1055,15 @@ public class ExecutionService {
         long failed = all.stream().filter(r -> "failed".equals(r.getStatus())).count();
         long running = all.stream().filter(r -> "running".equals(r.getStatus())).count();
         long skipped = all.stream().filter(r -> "skipped".equals(r.getStatus())).count();
+        // v8.2: blocked（前置准备失败）单独统计
+        long blocked = all.stream().filter(r -> "blocked".equals(r.getStatus())).count();
         Map<String, Long> stats = new LinkedHashMap<>();
         stats.put("total", (long) all.size());
         stats.put("passed", passed);
         stats.put("failed", failed);
         stats.put("running", running);
         stats.put("skipped", skipped);
+        stats.put("blocked", blocked);
 
         // 最近 20 次已结束执行的滚动通过率（旧→新）
         List<ExecutionRecord> completed = all.stream()

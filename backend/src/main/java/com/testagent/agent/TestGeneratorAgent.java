@@ -17,6 +17,7 @@ import com.testagent.entity.TestCase;
 import com.testagent.runtime.CancellationSignal;
 import com.testagent.service.LlmService;
 import com.testagent.service.PromptSkillLoader;
+import com.testagent.service.ScopeSlicingService;
 import com.testagent.service.SemanticService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -363,6 +364,7 @@ public class TestGeneratorAgent {
 
             # 任务
             根据【需求上下文（PRD 文档解析结果 + 上下文文档 + 补充需求）】为主，【代码上下文（状态机/接口/业务规则）】为辅，生成测试用例。
+            v8.2: 若提供【本期范围(scope)】，所有用例的断言目标必须落在范围内——历史元素只能出现在前置条件或准备步骤中。
 
             # 生成要求
             ## 以需求为纲
@@ -373,6 +375,18 @@ public class TestGeneratorAgent {
             ## ragContexts / ragFailures（v6.4 补充）
             - ragContexts：检索到的相关需求/上下文切片，作为 PRD 之外的补充约束
             - ragFailures：历史执行失败经验；生成时避免重复失败路径，必要时增加对应校验与断言
+
+            ## 本期范围（scope，v8.2，必须严格遵守）
+            - scope.targets：本期目标集合（endpoints + transitions）——每条用例的断言目标必须来自这里；
+              coverageRefs 只允许引用 scope.targets 与 coverageChecklist 中的项
+            - scope.historicalTransitions / stateMachines 中 role="历史上下文" 的转换：
+              禁止作为用例的断言目标或 coverageRefs 引用；只能用于：
+              ① 前置条件描述（如"订单处于已支付状态"）
+              ② structuredSteps 中 phase=setup 的准备步骤（把系统带到目标转换所需的前置状态）
+            - scope.setupHints：为每个目标转换推导的"初始态→源状态"最短路径骨架——
+              构造该目标的正向/异常用例时，按 hint.steps 物化 setup 步骤（填入真实操作与数据）
+            - 每条用例步骤必须带 "phase" 字段："setup"=历史流程准备（不产生断言）；"verify"=本期行为验证与断言
+              （断言类步骤 state_assert 必须为 verify；无明确区分时可整条省略 phase）
 
             ## 代码信息用于补充（不作为用例来源，只增强可执行性）
             - endpoints：用例 structuredSteps 的 target 用真实接口路径（如 POST /api/order/create）
@@ -387,6 +401,8 @@ public class TestGeneratorAgent {
 
             ## structuredSteps / testData / executionHints 要求（必须严格遵守）
             - structuredSteps 必须是非空数组，按真实操作顺序 3-10 步展开：进入页面→定位元素→输入/点击→断言
+            - v8.2: 涉及前置状态准备的用例，准备步骤标 "phase":"setup"，验证/断言步骤标 "phase":"verify"
+              （如：setup=创建订单并支付到已支付状态，verify=本期新发货逻辑的执行与断言）
             - 页面操作优先用 ui_action 类型步骤描述（点哪个按钮、输入什么），不要只写接口调用
             - v7.15(A): ui_action 的 target 必须是页面元素/区域的人话描述（如"登录按钮"），
               严禁出现 HTTP 方法+路径格式（如 "GET /wx/home/index"、"POST /api/order"）；
@@ -483,6 +499,26 @@ public class TestGeneratorAgent {
                 "executionHints": {"approach":"api_call","notes":"验证金额校验逻辑","prerequisites":["用户已登录"]},
                 "stateMachineRef": {"states":[],"transitions":[],"forbiddenTransitions":[{"from":"PENDING_PAYMENT","to":"NONE","reason":"金额非法不可创建"}]},
                 "coverageRefs": {"requirementIds":["req-1"],"transitionIds":[],"endpointIds":["POST /api/order/create"],"ruleIds":["rule-2"]}
+              },
+              {
+                "title": "订单发货-正常流程（setup+verify 分层示例）",
+                "module": "订单管理",
+                "type": "positive",
+                "priority": "P0",
+                "preconditions": ["用户已登录", "存在已支付订单（由 setup 步骤准备）"],
+                "steps": ["准备：创建并支付订单到已支付状态", "商家执行发货", "验证订单变为已发货"],
+                "expectedResults": ["发货操作成功", "订单状态显示'已发货'"],
+                "structuredSteps": [
+                  {"order":1,"phase":"setup","action":"创建订单","target":"POST /api/order/create","expected":"接口返回201和订单号","data":{"skuId":"SKU001","quantity":1},"type":"api_call"},
+                  {"order":2,"phase":"setup","action":"支付订单使状态到达已支付","target":"POST /api/order/pay","expected":"订单进入已支付状态","data":{"orderId":"${order}"},"type":"api_call"},
+                  {"order":3,"phase":"verify","action":"点击发货按钮","target":"发货按钮","expected":"操作提交成功","data":{},"type":"ui_action"},
+                  {"order":4,"phase":"verify","action":"断言发货成功","target":"订单列表页","expected":"该订单行显示'已发货'状态","data":{},"type":"state_assert"}
+                ],
+                "apiEndpoints": [{"method":"POST","path":"/api/order/ship","description":"发货"}],
+                "testData": {"orderId":"由 setup 步骤生成"},
+                "executionHints": {"approach":"ui","notes":"历史支付流程仅作准备，断言聚焦本期发货逻辑","prerequisites":["存在已支付订单"]},
+                "stateMachineRef": {"states":[],"transitions":[{"from":"PAID","to":"SHIPPED","trigger":"ship"}],"forbiddenTransitions":[]},
+                "coverageRefs": {"requirementIds":["req-2"],"transitionIds":["paid->shipped"],"endpointIds":["POST /api/order/ship"],"ruleIds":[]}
               }
             ]
             """;
@@ -542,11 +578,20 @@ public class TestGeneratorAgent {
                 + promptSkillLoader.load("test-generation-prd-footer", SYSTEM_PROMPT_PRD_FOOTER);
     }
 
-    // v5.12: 构建覆盖清单与缺口（需求/转换/接口/规则），供生成与评审使用
-    // v7.10(G7): 包级可见，供单测直接验证需求 ID 内容 hash 稳定性
     Map<String, Object> buildCoverageChecklist(PrdAnalysisResult prdResult,
                                                List<StateMachine> stateMachines,
                                                BackendResult backendResult) {
+        return buildCoverageChecklist(prdResult, stateMachines, backendResult, null);
+    }
+
+    // v5.12: 构建覆盖清单与缺口（需求/转换/接口/规则），供生成与评审使用
+    // v7.10(G7): 包级可见，供单测直接验证需求 ID 内容 hash 稳定性
+    // v8.2: slice 非空时 endpoints/transitions 清单收敛到本期范围——coverageRefs 对账天然受限
+    Map<String, Object> buildCoverageChecklist(PrdAnalysisResult prdResult,
+                                               List<StateMachine> stateMachines,
+                                               BackendResult backendResult,
+                                               ScopeSlicingService.ScopeSlice slice) {
+        boolean scopeActive = slice != null && !slice.isEmpty();
         List<Map<String, Object>> requirements = new ArrayList<>();
         // v7.10(G7): 需求 ID 内容 hash 稳定化——旧实现 "req-" + i++ 是解析顺序临时编号，
         // PRD 局部修改即全量漂移（追加生成时旧用例 coverageRefs.req-3 与新 checklist 的 req-3 可能指向不同需求）。
@@ -571,16 +616,16 @@ public class TestGeneratorAgent {
         // v7.10(G7): rag-req-N 序号编号同款改为内容 hash（rag- 前缀保留 source 区分）
         if (prdResult != null && prdResult.getRagContexts() != null) {
             int ragCount = 0;
-            for (String slice : prdResult.getRagContexts()) {
+            for (String ragSlice : prdResult.getRagContexts()) {
                 if (ragCount >= 20) break;
-                if (slice == null || slice.isBlank()) continue;
-                String title = extractRagTitle(slice);
+                if (ragSlice == null || ragSlice.isBlank()) continue;
+                String title = extractRagTitle(ragSlice);
                 if (title.length() < 4) continue;
                 if (maxSimilarityScore(title, requirements) >= 3) continue;
                 Map<String, Object> item = new LinkedHashMap<>();
-                item.put("id", "rag-" + contentHash(title, slice));
+                item.put("id", "rag-" + contentHash(title, ragSlice));
                 item.put("title", title);
-                item.put("description", slice.length() > 200 ? slice.substring(0, 200) + "..." : slice);
+                item.put("description", ragSlice.length() > 200 ? ragSlice.substring(0, 200) + "..." : ragSlice);
                 item.put("source", "rag");
                 if (seenReqIds.add(String.valueOf(item.get("id")))) {
                     requirements.add(item);
@@ -592,7 +637,18 @@ public class TestGeneratorAgent {
         List<Map<String, Object>> transitions = new ArrayList<>();
         if (stateMachines != null) {
             for (StateMachine sm : stateMachines) {
+                // v8.2: 范围外状态机的转换不进清单（不可作为 coverageRefs 目标）
+                Set<String> sprintKeys = scopeActive
+                        ? transitionKeys(slice.sprintTransitionsBySmId().get(sm.getId())) : null;
+                if (scopeActive && sprintKeys.isEmpty()) {
+                    continue;
+                }
                 for (Map<String, Object> t : JsonHelper.parseListMap(sm.getTransitions())) {
+                    String key = transitionKey(t);
+                    // v8.2: 仅本期目标转换进 checklist
+                    if (scopeActive && !sprintKeys.contains(key)) {
+                        continue;
+                    }
                     String from = String.valueOf(t.getOrDefault("from", ""));
                     String to = String.valueOf(t.getOrDefault("to", ""));
                     Map<String, Object> item = new LinkedHashMap<>();
@@ -610,6 +666,13 @@ public class TestGeneratorAgent {
         List<Map<String, Object>> endpoints = new ArrayList<>();
         if (backendResult != null && backendResult.getEndpoints() != null) {
             for (EndpointInfo ep : backendResult.getEndpoints()) {
+                String id = (ep.getMethod() == null ? "" : ep.getMethod().toUpperCase())
+                        + " " + ep.getPath();
+                // v8.2: 范围激活时仅目标接口进清单
+                if (scopeActive && !slice.targetEndpointIds()
+                        .contains(id.trim().replaceAll("\\s+", " "))) {
+                    continue;
+                }
                 // v7.14(G24): 覆盖清单只放对账标识字段——完整详情已在 context.endpoints 注入过一次，
                 // 旧实现 putAll(toContextMap()) 等于把全量接口详情重复灌进 prompt（实测 159KB 冗余，
                 // 432KB prompt 触发 300k 保险丝的直接元凶）。消费方核实：remainingGaps 与
@@ -745,7 +808,16 @@ public class TestGeneratorAgent {
                                    ProgressCallback progressCallback, GenerationParams params,
                                    GenerationReport report) {
         return runPrdPipeline(prdResult, stateMachines, backendResult, frontendResult,
-                progressCallback, null, null, params, report);
+                progressCallback, null, null, params, report, null);
+    }
+
+    // v8.2: 本期聚焦生成重载——slice 非空时目标集合收敛到已确认范围
+    public List<TestCase> generate(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                   BackendResult backendResult, FrontendResult frontendResult,
+                                   ProgressCallback progressCallback, GenerationParams params,
+                                   GenerationReport report, ScopeSlicingService.ScopeSlice slice) {
+        return runPrdPipeline(prdResult, stateMachines, backendResult, frontendResult,
+                progressCallback, null, null, params, report, slice);
     }
 
     // v3.2: 流式生成重载。与 generate 行为一致（PRD 驱动、去重、质量评分、编号），
@@ -767,7 +839,17 @@ public class TestGeneratorAgent {
                                              CancellationSignal cancelled, GenerationParams params,
                                              GenerationReport report) {
         return runPrdPipeline(prdResult, stateMachines, backendResult, frontendResult,
-                progressCallback, caseCb, cancelled, params, report);
+                progressCallback, caseCb, cancelled, params, report, null);
+    }
+
+    // v8.2: 本期聚焦流式重载
+    public List<TestCase> generateStreaming(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                             BackendResult backendResult, FrontendResult frontendResult,
+                                             ProgressCallback progressCallback, CaseCallback caseCb,
+                                             CancellationSignal cancelled, GenerationParams params,
+                                             GenerationReport report, ScopeSlicingService.ScopeSlice slice) {
+        return runPrdPipeline(prdResult, stateMachines, backendResult, frontendResult,
+                progressCallback, caseCb, cancelled, params, report, slice);
     }
 
     /**
@@ -777,10 +859,26 @@ public class TestGeneratorAgent {
      * → 质量评分 → 标题/指纹去重 → 批内语义去重(G14) → 编号。
      */
     private List<TestCase> runPrdPipeline(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
-                                          BackendResult backendResult, FrontendResult frontendResult,
-                                          ProgressCallback progressCallback, CaseCallback caseCb,
-                                          CancellationSignal cancelled, GenerationParams params,
-                                          GenerationReport report) {
+                                           BackendResult backendResult, FrontendResult frontendResult,
+                                           ProgressCallback progressCallback, CaseCallback caseCb,
+                                           CancellationSignal cancelled, GenerationParams params,
+                                           GenerationReport report) {
+        return runPrdPipeline(prdResult, stateMachines, backendResult, frontendResult,
+                progressCallback, caseCb, cancelled, params, report, null);
+    }
+
+    /**
+     * v7.1: 统一 PRD 生成管线（原 generate/generateStreaming 两份重复代码合并）。
+     * caseCb 为 null 即非流式路径；cancelled 为 null 即无取消信号。
+     * v8.2: 新增 slice 参数——非空时目标集合收敛到已确认本期范围。
+     * 管线顺序：LLM 多轮生成 → 聚焦类型过滤(G11) → 选择器补齐(G3) → 评审(G2/G5)
+     * → 质量评分 → 标题/指纹去重 → 批内语义去重(G14) → 编号。
+     */
+    private List<TestCase> runPrdPipeline(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                           BackendResult backendResult, FrontendResult frontendResult,
+                                           ProgressCallback progressCallback, CaseCallback caseCb,
+                                           CancellationSignal cancelled, GenerationParams params,
+                                           GenerationReport report, ScopeSlicingService.ScopeSlice slice) {
         GenerationReport r = report != null ? report : new GenerationReport();
         // v3.13: 包装回调，仅透传聚焦类型（SSE 推送与落库一致）
         // v7.15: 外层再套跨轮推送去重——同题草稿只推首见那次，后续补齐轮不再重复发 SSE
@@ -792,12 +890,14 @@ public class TestGeneratorAgent {
         }
         checkCancelled(cancelled);
         if (progressCallback != null) {
-            progressCallback.update("基于 PRD 生成用例...");
+            progressCallback.update(slice != null && !slice.isEmpty()
+                    ? "基于 PRD 生成用例（本期范围：" + slice.name() + "）..."
+                    : "基于 PRD 生成用例...");
         }
         List<TestCase> result;
         try {
             result = generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult,
-                    effectiveCb, cancelled, params, progressCallback, r);
+                    effectiveCb, cancelled, params, progressCallback, r, slice);
         } catch (GenerationCancelledException e) {
             throw e;  // v3.3: 取消异常向上传播，不触发 fallback
         } catch (Exception e) {
@@ -1041,7 +1141,20 @@ public class TestGeneratorAgent {
                                                  GenerationParams params,
                                                  ProgressCallback progressCallback,
                                                  GenerationReport report) throws Exception {
-        Map<String, Object> coverage = buildCoverageChecklist(prdResult, stateMachines, backendResult);
+        return generateByLlmWithPrd(prdResult, stateMachines, backendResult, frontendResult,
+                caseCb, cancelled, params, progressCallback, report, null);
+    }
+
+    // v8.2: slice 感知重载——checklist 与上下文按本期范围收敛
+    private List<TestCase> generateByLlmWithPrd(PrdAnalysisResult prdResult, List<StateMachine> stateMachines,
+                                                 BackendResult backendResult,
+                                                 FrontendResult frontendResult,
+                                                 CaseCallback caseCb, CancellationSignal cancelled,
+                                                 GenerationParams params,
+                                                 ProgressCallback progressCallback,
+                                                 GenerationReport report,
+                                                 ScopeSlicingService.ScopeSlice slice) throws Exception {
+        Map<String, Object> coverage = buildCoverageChecklist(prdResult, stateMachines, backendResult, slice);
         List<TestCase> all = new ArrayList<>();
         int maxRounds = "high".equals(params != null ? params.getCaseDensity() : null)
                 ? MAX_GENERATION_ROUNDS : 3;
@@ -1056,7 +1169,7 @@ public class TestGeneratorAgent {
                 progressCallback.update(round == 1 ? "基于 PRD 生成用例..." : "第 " + round + " 轮补齐覆盖缺口...");
             }
             List<TestCase> roundCases = generatePrdRound(prdResult, stateMachines, backendResult, frontendResult,
-                    caseCb, cancelled, params, coverage, gaps, round, report, all);
+                    caseCb, cancelled, params, coverage, gaps, round, report, all, slice);
             if (roundCases.isEmpty()) {
                 break;
             }
@@ -1087,7 +1200,7 @@ public class TestGeneratorAgent {
                                              CaseCallback caseCb, CancellationSignal cancelled,
                                              GenerationParams params, Map<String, Object> coverage,
                                              Map<String, Object> gaps, int round, GenerationReport report,
-                                             List<TestCase> previousCases) throws Exception {
+                                             List<TestCase> previousCases, ScopeSlicingService.ScopeSlice slice) throws Exception {
         Map<String, Object> context = new LinkedHashMap<>();
 
         // PRD 为主上下文
@@ -1118,20 +1231,43 @@ public class TestGeneratorAgent {
         }
 
         // 代码侧为辅（精简，避免 token 超限）
+        // v8.2: slice 非空时仅注入范围内状态机，转换按角色标注（本期目标/历史上下文）
+        boolean scopeActive = slice != null && !slice.isEmpty();
         List<Map<String, Object>> smList = new ArrayList<>();
         if (stateMachines != null) {
             for (StateMachine sm : stateMachines) {
+                if (scopeActive && !slice.sprintTransitionsBySmId().containsKey(sm.getId())) {
+                    continue;   // 范围外 SM 整体不进生成上下文
+                }
                 Map<String, Object> smMap = new LinkedHashMap<>();
                 smMap.put("name", sm.getName());
                 // v7.4(A20): 附带 source 标记——rule 表示规则兜底提取（仅状态枚举可信，transitions 为空），
                 // 生成侧按来源调整信任度，避免对空数据虚构转换
                 smMap.put("source", stateMachineSource(sm));
                 smMap.put("states", JsonHelper.parseListMap(sm.getStates()));
-                smMap.put("transitions", JsonHelper.parseListMap(sm.getTransitions()));
+                List<Map<String, Object>> transitions = JsonHelper.parseListMap(sm.getTransitions());
+                if (scopeActive) {
+                    Set<String> sprintKeys = transitionKeys(
+                            slice.sprintTransitionsBySmId().get(sm.getId()));
+                    List<Map<String, Object>> annotated = new ArrayList<>();
+                    for (Map<String, Object> t : transitions) {
+                        Map<String, Object> copy = new LinkedHashMap<>(t);
+                        copy.put("role", sprintKeys.contains(transitionKey(t))
+                                ? "本期目标" : "历史上下文");
+                        annotated.add(copy);
+                    }
+                    transitions = annotated;
+                }
+                smMap.put("transitions", transitions);
                 smList.add(smMap);
             }
         }
         context.put("stateMachines", smList);
+
+        // v8.2: 本期范围确定性注入——目标集合/历史上下文/setup 路径提示
+        if (scopeActive) {
+            context.put("scope", buildScopeContext(slice));
+        }
 
         // v7.7(G17): 后端上下文按需求关键词过滤——明显无关的接口/规则不进 prompt，降低 token 噪声；
         // 过滤后为空时兜底全量（宁多勿丢）；checklist 不动（coverage 语义与 prompt 注入分离）
@@ -1162,6 +1298,21 @@ public class TestGeneratorAgent {
         int relevantRuleCount = relevantRules.size();
         relevantEps = capEndpointsByRelevance(relevantEps, keywordText);
         relevantRules = capRulesByRelevance(relevantRules, keywordText);
+        // v8.2: 本期范围收敛——范围激活时接口详情只注入目标集合（checklist 已同步过滤）
+        if (scopeActive) {
+            Set<String> scopeIds = slice.targetEndpointIds();
+            List<EndpointInfo> scoped = new ArrayList<>();
+            for (EndpointInfo ep : relevantEps) {
+                String id = (ep.getMethod() == null ? "" : ep.getMethod().toUpperCase())
+                        + " " + (ep.getPath() == null ? "" : ep.getPath());
+                if (scopeIds.contains(id.trim().replaceAll("\\s+", " "))) {
+                    scoped.add(ep);
+                }
+            }
+            log.info("[Scope] endpoint context narrowed to scope: {}/{}",
+                    scoped.size(), relevantEps.size());
+            relevantEps = scoped;
+        }
         List<Map<String, Object>> epList = new ArrayList<>();
         for (EndpointInfo ep : relevantEps) {
             epList.add(ep.toContextMap());
@@ -2113,6 +2264,60 @@ public class TestGeneratorAgent {
         }
         List<String> sources = JsonHelper.parseListString(sm.getSources());
         return (sources.contains("rule_based") && !sources.contains("llm")) ? "rule" : "llm";
+    }
+
+    // ==================== v8.2: 本期范围上下文构建 ====================
+
+    /** scope 上下文注入体——目标集合/历史转换/setup 路径提示 */
+    private Map<String, Object> buildScopeContext(ScopeSlicingService.ScopeSlice slice) {
+        Map<String, Object> scope = new LinkedHashMap<>();
+        scope.put("name", slice.name());
+        scope.put("baselineRef", slice.baselineRef());
+
+        Map<String, Object> targets = new LinkedHashMap<>();
+        targets.put("endpoints", slice.targetEndpointsDetail());
+        List<Map<String, Object>> targetTransitions = new ArrayList<>();
+        for (Map.Entry<String, List<Map<String, Object>>> e
+                : slice.sprintTransitionsBySmId().entrySet()) {
+            for (Map<String, Object> t : e.getValue()) {
+                Map<String, Object> item = new LinkedHashMap<>(t);
+                item.put("stateMachineId", e.getKey());
+                targetTransitions.add(item);
+            }
+        }
+        targets.put("transitions", targetTransitions);
+        scope.put("targets", targets);
+
+        List<Map<String, Object>> historical = new ArrayList<>();
+        for (Map.Entry<String, List<Map<String, Object>>> e
+                : slice.historicalTransitionsBySmId().entrySet()) {
+            for (Map<String, Object> t : e.getValue()) {
+                Map<String, Object> item = new LinkedHashMap<>(t);
+                item.put("stateMachineId", e.getKey());
+                historical.add(item);
+            }
+        }
+        scope.put("historicalTransitions", historical);
+        scope.put("setupHints", slice.setupHints());
+        return scope;
+    }
+
+    static Set<String> transitionKeys(List<Map<String, Object>> transitions) {
+        Set<String> keys = new HashSet<>();
+        if (transitions != null) {
+            for (Map<String, Object> t : transitions) {
+                keys.add(transitionKey(t));
+            }
+        }
+        return keys;
+    }
+
+    static String transitionKey(Map<String, Object> t) {
+        if (t == null) {
+            return "";
+        }
+        return ScopeSlicingService.normalizeStateCode(String.valueOf(t.getOrDefault("from", "")))
+                + "->" + ScopeSlicingService.normalizeStateCode(String.valueOf(t.getOrDefault("to", "")));
     }
 
     private String extractJsonArray(String text) {

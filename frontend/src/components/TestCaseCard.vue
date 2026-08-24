@@ -321,6 +321,14 @@
               <span class="step-order">{{ step.order }}</span>
               <span class="step-action">{{ step.action }}</span>
               <el-tag
+                v-if="step.phase === 'setup'"
+                type="info"
+                size="small"
+                effect="plain"
+              >
+                准备
+              </el-tag>
+              <el-tag
                 v-if="step.type"
                 :type="getStepTypeTagType(step.type)"
                 size="small"
@@ -943,7 +951,7 @@ const getExecutionStatusLabel = (status) => {
     running: '执行中',
     passed: '通过',
     failed: '失败',
-    blocked: '阻塞'
+    blocked: '已阻断'
   }
   return map[status] || '未执行'
 }

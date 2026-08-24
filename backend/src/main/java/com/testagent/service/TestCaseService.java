@@ -102,6 +102,10 @@ public class TestCaseService {
     @Autowired
     private TestCasePersistenceService testCasePersistenceService;
 
+    // v8.2: 生成前置校验——代码驱动项目必须有已确认本期范围
+    @Autowired
+    private ScopeSlicingService scopeSlicingService;
+
     @Autowired
     private TestCaseRepository testCaseRepository;
 
@@ -194,6 +198,8 @@ public class TestCaseService {
             if (!hasPrd) {
                 throw new IllegalStateException("请先添加 PRD 文档");
             }
+            // v8.2: 代码驱动项目必须先确认本期范围
+            scopeSlicingService.requireConfirmedScopeIfCodeDriven(project);
 
             updateProjectStatus(projectId, "generating");
             taskQueueService.markRunning(TaskQueueService.GENERATION_QUEUE, projectId);
@@ -288,6 +294,8 @@ public class TestCaseService {
             if (!hasPrd) {
                 throw new IllegalStateException("请先添加 PRD 文档");
             }
+            // v8.2: 代码驱动项目必须先确认本期范围
+            scopeSlicingService.requireConfirmedScopeIfCodeDriven(project);
 
             updateProjectStatus(projectId, "generating");
             taskId = agentTaskService.createTask(AgentTaskService.TYPE_GENERATION,
@@ -435,6 +443,8 @@ public class TestCaseService {
             if (!hasPrd) {
                 throw new IllegalStateException("请先添加 PRD 文档");
             }
+            // v8.2: 代码驱动项目必须先确认本期范围
+            scopeSlicingService.requireConfirmedScopeIfCodeDriven(project);
 
             updateProjectStatus(projectId, "generating");
             taskQueueService.markRunning(TaskQueueService.GENERATION_QUEUE, projectId);
