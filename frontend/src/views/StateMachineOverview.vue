@@ -51,7 +51,7 @@
       >
         <template #title>
           尚未创建本期范围，覆盖统计不可用。
-          <router-link :to="`/projects/${projectId}/scope`">去创建本期范围</router-link>
+          <router-link :to="`/projects/${projectId}?scope=1`">前往项目 · 本期范围</router-link>
         </template>
       </el-alert>
 

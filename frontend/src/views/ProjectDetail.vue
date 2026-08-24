@@ -222,6 +222,13 @@
         <el-button type="primary" :loading="savingCookies" @click="saveCookies">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- v8.3: 本期范围抽屉 -->
+    <scope-drawer
+      v-model="scopeDrawerVisible"
+      :project-id="projectId"
+      @changed="loadScopeStatus"
+    />
   </div>
 </template>
 
@@ -236,6 +243,7 @@ import {
 } from '@element-plus/icons-vue'
 import { getProject, getExecutionCookies, updateExecutionCookies } from '@/api/project'
 import { getScopeList } from '@/api/scope'
+import ScopeDrawer from '@/components/ScopeDrawer.vue'
 import PrdPanel from '@/components/PrdPanel.vue'
 import { generateMindmap, downloadMindmapUrl } from '@/api/mindmap'
 import { fetchSseTicket } from '@/api/sse'
@@ -395,6 +403,7 @@ const canViewExecutions = computed(() => {
 
 // v8.x UX: 本期范围主流程化——加载定义列表，驱动按钮警示态与生成前引导
 const scopeDefs = ref([])
+const scopeDrawerVisible = ref(false)
 const hasConfirmedScope = computed(() => scopeDefs.value.some((d) => d.status === 'confirmed'))
 async function loadScopeStatus() {
   try {
@@ -538,9 +547,9 @@ function goExecutions() {
   router.push(`/projects/${projectId}/executions`)
 }
 
-// v8.1: 本期范围
-function goScope() {
-  router.push(`/projects/${projectId}/scope`)
+// v8.3: 本期范围——项目内抽屉（不再跳独立路由）
+function openScope() {
+  scopeDrawerVisible.value = true
 }
 
 // v3.16: 项目导出备份（ZIP）
@@ -612,6 +621,11 @@ onMounted(async () => {
     await projectStore.fetchProject(projectId)
     loadScopeStatus()
     resumeActiveStatus()
+    // v8.3: 跨页引导链接（覆盖率/状态机页）带 ?scope=1 时自动展开抽屉
+    if (route.query.scope === '1') {
+      scopeDrawerVisible.value = true
+      router.replace({ path: `/projects/${projectId}` })
+    }
   } finally {
     loading.value = false
   }

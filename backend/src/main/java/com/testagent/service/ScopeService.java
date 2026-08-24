@@ -101,6 +101,17 @@ public class ScopeService {
         if (baselineRef == null || baselineRef.isBlank()) {
             throw BusinessException.invalidParam("基线引用不能为空");
         }
+        // v8.3fix: 单例约束——一个项目同一时间只允许一个本期范围（草稿或已确认），
+        // 多个并存会让覆盖率分母与生成目标集产生歧义（此前 latestConfirmed 静默取最新）
+        List<ScopeDefinition> existingDefs =
+                definitionRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+        if (!existingDefs.isEmpty()) {
+            ScopeDefinition cur = existingDefs.get(0);
+            String stateLabel = ScopeDefinition.STATUS_CONFIRMED.equals(cur.getStatus())
+                    ? "已确认" : "草稿";
+            throw BusinessException.invalidState("该项目已存在本期范围「" + cur.getName()
+                    + "」（" + stateLabel + "）。刷新识别请用「重算」；开启新迭代请先删除旧范围");
+        }
         Project project = requireProject(projectId);
         if (project.getSourcePath() == null || project.getSourcePath().isBlank()) {
             throw BusinessException.invalidParam("项目未配置源码路径，无法自动识别");
