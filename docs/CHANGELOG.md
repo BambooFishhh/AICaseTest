@@ -31,6 +31,7 @@ v8.1/v8.2 已完成范围识别与生成收敛，但覆盖率仍以全项目为�
 | `components/CoverageMatrix.vue` | 修改 | 描述改"分母=已确认本期范围"；新增「范围」列（本期/历史 tag）；历史行覆盖单元格显示 '—' |
 | `views/StateMachineOverview.vue` | 修改 | 未建范围顶部引导 alert；覆盖徽标/卡片仅统计 inScope 转换 |
 | `views/Dashboard.vue` | 修改 | stateRate=null 的项目不进覆盖率柱状图（避免误导性 0 柱） |
+| `views/ProjectDetail.vue` | 修改 | **本期范围主流程化**——入口从「查看」区提升到主线操作卡（开始分析↔生成用例之间），代码驱动项目未确认范围时按钮 warning 态+「未确认」标记；点生成弹窗引导直达范围页（替代裸报错）；SSE 分析完成与轮询恢复两处终态钩子在未确认范围时发 ElNotification 下一步引导 |
 
 ### API 契约变化
 

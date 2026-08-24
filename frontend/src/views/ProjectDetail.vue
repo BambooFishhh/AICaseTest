@@ -104,6 +104,20 @@
                 <span v-if="!hasSourcePath" class="optional-tag">可选</span>
               </el-button>
               <el-button
+                :icon="CollectionTag"
+                :type="hasSourcePath && !hasConfirmedScope ? 'warning' : 'default'"
+                :title="hasConfirmedScope
+                  ? '查看/管理已确认的本期范围'
+                  : '尚未确认本期范围——生成前需先完成识别与人工确认'"
+                @click="goScope"
+              >
+                本期范围
+                <span
+                  v-if="hasSourcePath && !hasConfirmedScope"
+                  class="optional-tag"
+                >未确认</span>
+              </el-button>
+              <el-button
                 type="primary"
                 :icon="MagicStick"
                 :disabled="!canGenerate"
@@ -148,7 +162,6 @@
               </el-button>
               <el-button :icon="Share" :disabled="!canViewMindmap" @click="goMindmap">脑图预览</el-button>
               <el-button :icon="Clock" :disabled="!canViewExecutions" @click="goExecutions">执行历史</el-button>
-              <el-button :icon="CollectionTag" :disabled="!canViewAnalysis" @click="goScope">本期范围</el-button>
             </div>
           </div>
 
@@ -215,13 +228,14 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import {
   ArrowLeft, Aim, MagicStick, Share, Download,
   DataAnalysis, Document, Loading, Check, View, Operation, Clock,
   Connection, Setting, Delete, Plus, CollectionTag
 } from '@element-plus/icons-vue'
 import { getProject, getExecutionCookies, updateExecutionCookies } from '@/api/project'
+import { getScopeList } from '@/api/scope'
 import PrdPanel from '@/components/PrdPanel.vue'
 import { generateMindmap, downloadMindmapUrl } from '@/api/mindmap'
 import { fetchSseTicket } from '@/api/sse'
@@ -379,6 +393,32 @@ const canViewExecutions = computed(() => {
   return s !== 'created' && s !== 'analyzing'
 })
 
+// v8.x UX: 本期范围主流程化——加载定义列表，驱动按钮警示态与生成前引导
+const scopeDefs = ref([])
+const hasConfirmedScope = computed(() => scopeDefs.value.some((d) => d.status === 'confirmed'))
+async function loadScopeStatus() {
+  try {
+    const res = await getScopeList(projectId)
+    scopeDefs.value = res.data || []
+  } catch {
+    scopeDefs.value = []
+  }
+}
+
+/** v8.x: 分析成功后的下一步引导——未确认范围时通知（生成会被后端拦截） */
+function notifyNextStepScope() {
+  loadScopeStatus().then(() => {
+    if (hasSourcePath.value && !hasConfirmedScope.value) {
+      ElNotification({
+        title: '下一步：确认本期范围',
+        message: '代码驱动项目生成用例前，需先创建并确认本期迭代范围（主线操作 → 本期范围）',
+        type: 'info',
+        duration: 8000
+      })
+    }
+  })
+}
+
 async function refreshProject() {
   const res = await getProject(projectId)
   projectStore.currentProject = res.data
@@ -418,6 +458,7 @@ async function handleAnalyze() {
     pollingMessage.value = ''
     analysisSuccess.value = true
     refreshProject()
+    notifyNextStepScope()
   })
 
   analyzeEs.addEventListener('error', (e) => {
@@ -448,6 +489,17 @@ async function handleAnalyze() {
 }
 
 function handleGenerate() {
+  // v8.x: 代码驱动项目无已确认范围时，弹窗引导先完成范围识别与确认（后端同样强校验）
+  if (hasSourcePath.value && !hasConfirmedScope.value) {
+    ElMessageBox.confirm(
+      '检测到尚未创建/确认「本期范围」。代码驱动项目的用例只聚焦本期变更接口与转换，需先完成识别并人工确认。',
+      '需要本期范围',
+      { confirmButtonText: '前往配置', cancelButtonText: '取消', type: 'warning' }
+    )
+      .then(() => goScope())
+      .catch(() => {})
+    return
+  }
   router.push(`/projects/${projectId}/testcases?generate=1`)
 }
 
@@ -558,6 +610,7 @@ onMounted(async () => {
   loading.value = true
   try {
     await projectStore.fetchProject(projectId)
+    loadScopeStatus()
     resumeActiveStatus()
   } finally {
     loading.value = false
@@ -580,6 +633,7 @@ function resumeActiveStatus() {
       pollingMessage.value = ''
       analysisSuccess.value = true
       refreshProject()
+      notifyNextStepScope()
     } else if (next === 'completed') {
       ElMessage.success('用例生成完成')
       pollingMessage.value = ''
