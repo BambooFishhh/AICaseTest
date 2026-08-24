@@ -78,6 +78,13 @@ const routes = [
     meta: { title: '状态机覆盖图', breadcrumb: ['项目列表', '项目详情', '状态机覆盖图'] }
   },
   {
+    // v8.1: 本期范围确认
+    path: '/projects/:id/scope',
+    name: 'ScopeReview',
+    component: () => import('@/views/ScopeReview.vue'),
+    meta: { title: '本期范围', breadcrumb: ['项目列表', '项目详情', '本期范围'] }
+  },
+  {
     path: '/projects/:id/mindmap',
     name: 'MindMapPreview',
     component: () => import('@/views/MindMapPreview.vue'),

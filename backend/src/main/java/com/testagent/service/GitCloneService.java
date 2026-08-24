@@ -100,7 +100,9 @@ public class GitCloneService {
             throw new BusinessException(50001, "无法创建 Git 克隆目录: " + base, HttpStatus.INTERNAL_SERVER_ERROR);
         }
 
-        ProcessBuilder pb = new ProcessBuilder("git", "clone", "--depth", "1", "--", url, target.toString());
+        // v8.1: partial clone——保留全部远端分支引用以支持跨基线 diff，不取文件 blob 控制体积
+        ProcessBuilder pb = new ProcessBuilder("git", "clone", "--filter=blob:none",
+                "--no-single-branch", "--", url, target.toString());
         pb.redirectErrorStream(true);
         StringBuilder output = new StringBuilder();
         try {

@@ -180,7 +180,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v7.15（执行可信与双编号制）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v8.1（范围感知基础，Scope-Aware 第 1 期）**，生产线基线为 vP5（压测与容量）。
+
+- v8.1 要点：引入「本期范围(Scope)」领域概念，解决"无法区分本期需求代码与历史代码"的结构性缺失——**Git 基线 diff 自动识别**（`--name-status` 三点 diff 得变更文件集 → EndpointInfo.file 归一化后缀双向匹配出新增/变更接口；stateTransitions 证据 {field,from,to,file} 关联状态机标"受影响"）；**LLM 辅助补充映射**（PRD↔接口清单语义匹配补齐 diff 遗漏项，失败降级不阻断）；**人工确认锁定**（草稿可增删/重算，confirm 后只读）；配套 Git 克隆策略改造（--depth 1 → --filter=blob:none --no-single-branch partial clone，保留全分支引用支持跨基线 diff）、项目删除级联清理、数据健康计数、备份 ZIP 含 scope.json。本期不改生成/覆盖率行为完全向后兼容；v8.2 本期聚焦生成（状态机切片/BFS setup 路径推导/prompt 分层/phase 标记/blocked 语义）与 v8.3 覆盖率口径重构将基于此分母落地。
 
 - v7.15 要点：执行可信与双编号制——**流式重复草稿治理**（后端 wrapPushDedup 跨轮推送去重 + 前端 onCase 按标题 upsert 兜底，同题草稿只出现一张；期间发现生产镜像曾以含未提交改动的源码构建致 standard 档误跑 6 轮，已重建回 3/4 轮）；**用例双编号制**（全局 TC-id 不变防撞号，新增 project_seq 项目内展示序号 #1 起连续、悬浮见全局 id，V12 迁移回填存量，全量重生成归 1 重计，六条创建路径全覆盖）；**未覆盖接口清单**（新端点 /coverage/uncovered-endpoints 与接口覆盖率完全同口径，前端折叠面板列出无用例引用的接口，缺口可操作化）；**覆盖率口径标注**（统计卡 tooltip + 说明行 + 矩阵分母注明，两口径数值不具可比性不再误读）；**执行数据防御三件套**（A prompt 硬约束 ui_action target 严禁 HTTP 形态+uiSelector 类型白名单对齐执行器能力 / B 解析期 sanitizeUiSelectors 清洗非法类型 / C ExecutionAgent 对 `METHOD /path` 形态 target 的 ui_action 自动降级 skip 如实标注）；PrdPanel 保存联动刷新项目状态（保存 PRD 后生成按钮即时解禁）；用户可见文案版本标注泄漏清理。后端 405 测试全绿。
 
@@ -258,6 +260,7 @@ AICaseTest/
 | v7.13 | 输入截断上限扩容（分析器预算配置化放大/规则摘要合法化/Vue 页面优先排序/死配置清理） | ✅ 完成 |
 | v7.14 | 生成 Prompt 重复注入治理（checklist 摘要化/context 容量控制/embedding 404 修复） | ✅ 完成 |
 | v7.15 | 执行可信与双编号制（流式跨轮去重/双编号制/未覆盖接口清单/口径标注/执行数据防御三件套） | ✅ 完成 |
+| v8.1 | 范围感知基础（Git 基线 diff 识别本期范围/LLM 辅助映射/人工确认锁定/partial clone 改造） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

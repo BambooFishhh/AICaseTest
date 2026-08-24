@@ -148,6 +148,7 @@
               </el-button>
               <el-button :icon="Share" :disabled="!canViewMindmap" @click="goMindmap">脑图预览</el-button>
               <el-button :icon="Clock" :disabled="!canViewExecutions" @click="goExecutions">执行历史</el-button>
+              <el-button :icon="CollectionTag" :disabled="!canViewAnalysis" @click="goScope">本期范围</el-button>
             </div>
           </div>
 
@@ -218,7 +219,7 @@ import { ElMessage } from 'element-plus'
 import {
   ArrowLeft, Aim, MagicStick, Share, Download,
   DataAnalysis, Document, Loading, Check, View, Operation, Clock,
-  Connection, Setting, Delete, Plus
+  Connection, Setting, Delete, Plus, CollectionTag
 } from '@element-plus/icons-vue'
 import { getProject, getExecutionCookies, updateExecutionCookies } from '@/api/project'
 import PrdPanel from '@/components/PrdPanel.vue'
@@ -483,6 +484,11 @@ function goMindmap() {
 // v3.11: 执行历史
 function goExecutions() {
   router.push(`/projects/${projectId}/executions`)
+}
+
+// v8.1: 本期范围
+function goScope() {
+  router.push(`/projects/${projectId}/scope`)
 }
 
 // v3.16: 项目导出备份（ZIP）

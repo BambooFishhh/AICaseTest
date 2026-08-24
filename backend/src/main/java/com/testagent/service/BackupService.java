@@ -6,9 +6,12 @@ import com.testagent.dto.ProjectDTO;
 import com.testagent.dto.TestCaseDTO;
 import com.testagent.entity.ExecutionRecord;
 import com.testagent.entity.Project;
+import com.testagent.entity.ScopeDefinition;
 import com.testagent.entity.TestCase;
 import com.testagent.repository.ExecutionRecordRepository;
 import com.testagent.repository.ProjectRepository;
+import com.testagent.repository.ScopeDefinitionRepository;
+import com.testagent.repository.ScopeItemRepository;
 import com.testagent.repository.TestCaseRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -44,6 +47,13 @@ public class BackupService {
     @Autowired
     private ProjectAccessService projectAccessService;
 
+    // v8.1: 范围数据导出
+    @Autowired
+    private ScopeDefinitionRepository scopeDefinitionRepository;
+
+    @Autowired
+    private ScopeItemRepository scopeItemRepository;
+
     public byte[] buildProjectBackup(String projectId) throws IOException {
         projectAccessService.assertViewAccess(projectId);
         Project project = projectRepository.findById(projectId)
@@ -68,6 +78,21 @@ public class BackupService {
                     objectMapper.writeValueAsString(cases.stream().map(TestCaseDTO::from).toList()));
             putEntry(zos, "coverage.json", objectMapper.writeValueAsString(coverage));
             putEntry(zos, "executions.json", objectMapper.writeValueAsString(executions));
+            // v8.1: 范围定义与条目
+            List<Map<String, Object>> scopes = new java.util.ArrayList<>();
+            for (ScopeDefinition def : scopeDefinitionRepository.findByProjectIdOrderByCreatedAtDesc(projectId)) {
+                Map<String, Object> row = new java.util.LinkedHashMap<>();
+                row.put("id", def.getId());
+                row.put("name", def.getName());
+                row.put("baselineRef", def.getBaselineRef());
+                row.put("headRef", def.getHeadRef());
+                row.put("status", def.getStatus());
+                row.put("changedFiles", def.getChangedFiles());
+                row.put("items", scopeItemRepository
+                        .findByDefinitionIdOrderByItemTypeAscIdAsc(def.getId()));
+                scopes.add(row);
+            }
+            putEntry(zos, "scope.json", objectMapper.writeValueAsString(scopes));
         }
         return baos.toByteArray();
     }

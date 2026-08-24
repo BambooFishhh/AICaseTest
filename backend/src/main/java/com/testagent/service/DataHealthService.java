@@ -10,6 +10,8 @@ import com.testagent.repository.GroupMemberRepository;
 import com.testagent.repository.MindMapRepository;
 import com.testagent.repository.ProjectGroupRepository;
 import com.testagent.repository.ProjectRepository;
+import com.testagent.repository.ScopeDefinitionRepository;
+import com.testagent.repository.ScopeItemRepository;
 import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.SystemSettingRepository;
 import com.testagent.repository.TestCaseRepository;
@@ -56,6 +58,11 @@ public class DataHealthService {
     private GroupMemberRepository groupMemberRepository;
     @Autowired
     private SystemSettingRepository systemSettingRepository;
+    // v8.1: 范围表计数
+    @Autowired
+    private ScopeDefinitionRepository scopeDefinitionRepository;
+    @Autowired
+    private ScopeItemRepository scopeItemRepository;
     @Autowired
     private MilvusService milvusService;
 
@@ -88,6 +95,9 @@ public class DataHealthService {
         counts.put("project_groups", projectGroupRepository.count());
         counts.put("group_members", groupMemberRepository.count());
         counts.put("system_settings", systemSettingRepository.count());
+        // v8.1: 范围表
+        counts.put("scope_definition", scopeDefinitionRepository.count());
+        counts.put("scope_item", scopeItemRepository.count());
         return counts;
     }
 

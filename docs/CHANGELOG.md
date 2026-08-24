@@ -4,6 +4,51 @@
 
 ---
 
+## v8.1 — 范围感知基础（Scope-Aware 第 1 期）
+**日期**: 2026-08-24
+**基线**: v7.15
+**主题**: 引入「本期范围(Scope)」领域概念——Git 基线 diff 自动识别本期变更接口与受影响状态机 + LLM 辅助补充映射 + 人工确认锁定；为 v8.2（本期聚焦生成）与 v8.3（覆盖率口径重构）提供分母来源。本期不改生成/覆盖率行为，完全向后兼容
+
+### 背景
+
+系统此前无法区分"本期需求代码"与"历史代码"：生成与覆盖率均以全项目为口径，用例大量覆盖历史功能，稀释本期验收价值。核心设计理念：**本期需求定义"测什么"（精确集合），历史代码定义"怎么测才不破坏"（上下文）**。范围圈定应是精确集合运算（Git diff）而非语义检索问题。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `db/migration/mysql/V13__add_scope_tables.sql` | **新增** | scope_definition（name/baseline_ref/status/changed_files）+ scope_item（item_type/item_ref/change_kind/origin/note）；H2 dev 由 JPA ddl-auto 建表 |
+| `entity/ScopeDefinition.java`、`ScopeItem.java` | **新增** | 范围定义/条目实体（含类型/变更/来源常量） |
+| `repository/ScopeDefinitionRepository.java`、`ScopeItemRepository.java` | **新增** | JPA 仓储 |
+| `service/GitDiffService.java` | **新增** | 本地 Git 只读操作——isGitRepo/listRefs（本地分支+远端分支+tag+HEAD）/diffFiles（--name-status 三点 diff 失败回退两点；D 忽略、R100 取新路径；引用名防注入校验） |
+| `agent/ScopeMappingAgent.java` | **新增** | 需求↔接口 LLM 辅助映射（PRD≤8000 字符 + 接口≤120 条 → [{method,path,reason}]；解析失败/LLM 异常降级空表不阻断） |
+| `service/ScopeService.java` | **新增** | 识别流水线——diff 文件集→EndpointInfo.file 归一化后缀双向匹配出 ADDED/MODIFIED 接口→stateTransitions 证据 {field,from,to,file} 关联 SM 标 AFFECTED→LLM 补充去重合并；recompute 保留 MANUAL 重建其余；confirm 要求非空且仅 draft 可写 |
+| `controller/ScopeController.java` | **新增** | /api/projects/{projectId}/scope 全套 CRUD + git-refs/items/recompute/confirm |
+| `service/GitCloneService.java` | 修改 | clone 参数 `--depth 1` → `--filter=blob:none --no-single-branch`（partial clone：保留全分支引用支持跨基线 diff，体积可控） |
+| `service/ProjectService.java` | 修改 | deleteProject 级联清理 scope 两表 |
+| `service/DataHealthService.java` | 修改 | tableCounts 增加 scope_definition/scope_item |
+| `service/BackupService.java` | 修改 | 导出 ZIP 增加 scope.json（定义+各自 items） |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `api/scope.js` | **新增** | Scope API 封装 |
+| `views/ScopeReview.vue` | **新增** | 定义列表（展开行显示条目表格）+ 新建对话框（基线按 heads/remotes/tags 分组下拉、allow-create 兜底）+ 手动添加条目对话框 + confirm/recompute/delete 操作；confirmed 只读 |
+| `router/index.js` | 修改 | 注册 `/projects/:id/scope` |
+| `views/ProjectDetail.vue` | 修改 | 「查看」卡片新增"本期范围"入口 |
+
+### API 契约变化
+
+全部新增端点：GET/POST `/api/projects/{projectId}/scope`、GET `.../git-refs`、GET/POST `.../{definitionId}/items`、DELETE `.../{definitionId}/items/{itemId}`、POST `.../{definitionId}/recompute`、POST `.../{definitionId}/confirm`、DELETE `.../{definitionId}`
+
+### 验证结果
+
+- `mvn compile` BUILD SUCCESS
+- `npm run build` 通过
+
+---
+
 ## v7.15 — 执行可信与双编号制
 **日期**: 2026-08-23
 **基线**: v7.14

@@ -21,6 +21,8 @@ import com.testagent.repository.GroupMemberRepository;
 import com.testagent.repository.MindMapRepository;
 import com.testagent.repository.ProjectGroupRepository;
 import com.testagent.repository.ProjectRepository;
+import com.testagent.repository.ScopeDefinitionRepository;
+import com.testagent.repository.ScopeItemRepository;
 import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.TestCaseAiReviewRepository;
 import com.testagent.repository.TestCaseRepository;
@@ -108,6 +110,13 @@ public class ProjectService {
 
     @Autowired
     private TaskTelemetryRepository telemetryRepository;
+
+    // v8.1: 范围数据随项目级联清理
+    @Autowired
+    private ScopeDefinitionRepository scopeDefinitionRepository;
+
+    @Autowired
+    private ScopeItemRepository scopeItemRepository;
 
     // v1.10: PRD 解析 Agent
     @Autowired
@@ -219,6 +228,10 @@ public class ProjectService {
         aiReviewRepository.deleteByProjectId(id);
         // v5.14: 任务埋点随项目级联清理
         telemetryRepository.deleteByProjectId(id);
+        // v8.1: 范围定义与条目随项目级联清理
+        scopeDefinitionRepository.findByProjectIdOrderByCreatedAtDesc(id)
+                .forEach(def -> scopeItemRepository.deleteByDefinitionId(def.getId()));
+        scopeDefinitionRepository.deleteByProjectId(id);
         mindMapRepository.findAllByProjectId(id).forEach(mindMapRepository::delete);
         // v5.6: 清理 Milvus 三集合
         semanticService.clearProject(id);

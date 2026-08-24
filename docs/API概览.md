@@ -41,6 +41,13 @@
 | GET | `/api/projects/{id}/testcases` | 用例列表（分页+筛选+覆盖率，v3.12 支持 executionStatus 筛选） |
 | GET | `/api/projects/{id}/coverage/matrix` | 覆盖率矩阵（每转换覆盖详情） |
 | GET | `/api/projects/{id}/coverage/uncovered-endpoints` | 未覆盖接口清单（与接口覆盖率同口径差集，v7.15） |
+| GET/POST | `/api/projects/{id}/scope` | 本期范围：定义列表 / 创建草稿并识别（v8.1） |
+| GET | `/api/projects/{id}/scope/git-refs` | 基线候选：本地分支/远端分支/tag/HEAD（v8.1） |
+| GET/POST | `/api/projects/{id}/scope/{definitionId}/items` | 范围条目列表 / 手动添加（v8.1） |
+| DELETE | `/api/projects/{id}/scope/{definitionId}/items/{itemId}` | 移除范围条目（v8.1） |
+| POST | `/api/projects/{id}/scope/{definitionId}/recompute` | 重算识别（MANUAL 条目保留，v8.1） |
+| POST | `/api/projects/{id}/scope/{definitionId}/confirm` | 确认锁定（≥1 条目，v8.1） |
+| DELETE | `/api/projects/{id}/scope/{definitionId}` | 删除范围定义及条目（v8.1） |
 | GET | `/api/projects/{id}/testcases/{tcId}` | 用例详情 |
 | PUT | `/api/projects/{id}/testcases/{tcId}` | 更新用例（v5.12 支持可选 reviewStatus） |
 | DELETE | `/api/projects/{id}/testcases/{tcId}` | 删除用例 |
