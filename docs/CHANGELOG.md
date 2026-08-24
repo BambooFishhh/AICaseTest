@@ -4,6 +4,46 @@
 
 ---
 
+## v8.3 — 覆盖率口径重构（Scope-Aware 第 3 期收官）
+**日期**: 2026-08-24
+**基线**: v8.2
+**主题**: 覆盖率单一"本期范围"口径——全量口径彻底移除（用户决策）；分母收敛为已确认范围内的目标接口与本期目标转换；历史转换仅展示不参与统计；无已确认范围时返回引导态而非误导性数字；影响面（AFFECTED）清单透出
+
+### 背景
+
+v8.1/v8.2 已完成范围识别与生成收敛，但覆盖率仍以全项目为分母——历史功能撑起百分比，稀释本期验收信号。本期按既定决策将覆盖度量全面切换到本期口径。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/CoverageService.java` | 重构 | getCoverageMatrix/uncoveredEndpoints 切片化——无 confirmed 范围返回 `{scoped:false}` 引导态；SM 循环仅遍历范围内状态机，每条转换附 `inScope` 标记，planned/executed 双栏仅对本期转换统计；接口分母=slice.targetEndpointIds；新增 `affectedItems`（AFFECTED 条目清单）与 `scope` 元信息；transition 归一化键复用 ScopeSlicingService.sprintTransitionKeys 与切片分类同源防口径漂移 |
+| `service/ScopeSlicingService.java` | 修改 | 新增公共静态 sprintTransitionKeys（转换集合→归一化键集） |
+| `service/TestCaseService.java` | 修改 | calculateCoverage/buildCoverageForReview 同口径收敛：calculateCoverage 输出 scoped 字段、状态转换 refs 经 normalizeTransitionRefs 归一后匹配切片键；buildCoverageForReview 转换/接口清单仅含本期项（AI 评审的覆盖建议随之只针对本期） |
+| `controller/StatsController.java` | 修改 | projectCoverage 未 scoped 项目 stateRate=null 不计入加权平均 |
+| 测试 | 修改 | CoverageServicePlannedExecutedTest/CoverageServicePreparseTest 注入切片 mock（全部转换视为本期目标）；StatsControllerOverviewTest coverage mock 补 scoped=true |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `views/TestCaseList.vue` | 修改 | 统计卡 scoped=false 显示 '—' + 口径 tooltip 更新为"本期范围"；矩阵区替换为引导 alert（链接本期范围页） |
+| `components/CoverageMatrix.vue` | 修改 | 描述改"分母=已确认本期范围"；新增「范围」列（本期/历史 tag）；历史行覆盖单元格显示 '—' |
+| `views/StateMachineOverview.vue` | 修改 | 未建范围顶部引导 alert；覆盖徽标/卡片仅统计 inScope 转换 |
+| `views/Dashboard.vue` | 修改 | stateRate=null 的项目不进覆盖率柱状图（避免误导性 0 柱） |
+
+### API 契约变化
+
+- `/coverage/matrix`、`/coverage/uncovered-endpoints`、用例列表内联 coverage 均新增顶层 `scoped`(bool)；scoped=false 时不再输出全量数字（破坏性变更，前端已同步）
+- matrix 每个 transition 新增 `inScope`(bool)；响应新增 `scope` 元信息与 `affectedItems`
+
+### 验证结果
+
+- 后端全量 `mvn test`：405 tests, 0 failures, 0 errors
+- 前端 `npm run build` 通过
+
+---
+
 ## v8.2 — 本期聚焦生成（Scope-Aware 第 2 期）
 **日期**: 2026-08-24
 **基线**: v8.1

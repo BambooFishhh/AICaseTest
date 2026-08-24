@@ -315,6 +315,19 @@ public class ScopeSlicingService {
         return s.toLowerCase();
     }
 
+    /** v8.3: 转换集合 → 归一化 "from->to" 键集（切片分类与覆盖矩阵共用的唯一口径） */
+    public static Set<String> sprintTransitionKeys(List<Map<String, Object>> transitions) {
+        Set<String> keys = new HashSet<>();
+        if (transitions != null) {
+            for (Map<String, Object> t : transitions) {
+                String from = normalizeStateCode(t.get("from") == null ? "" : String.valueOf(t.get("from")).trim());
+                String to = normalizeStateCode(t.get("to") == null ? "" : String.valueOf(t.get("to")).trim());
+                keys.add(from + "->" + to);
+            }
+        }
+        return keys;
+    }
+
     static String normalizeEndpointId(String ref) {
         if (ref == null) {
             return "";

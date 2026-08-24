@@ -39,6 +39,7 @@ class CoverageServicePreparseTest {
         sm.setName("订单状态机");
         sm.setTransitions("[{\"from\":\"A\",\"to\":\"B\"},{\"from\":\"B\",\"to\":\"C\"}]");
         when(smRepo.findByProjectId("p1")).thenReturn(List.of(sm));
+        attachScope(service, com.testagent.dto.JsonHelper.parseListMap(sm.getTransitions()));
 
         // c1: coverageRefs 计划覆盖 A->B（未执行也算——计划口径，语义保持）
         TestCase c1 = new TestCase();
@@ -98,6 +99,7 @@ class CoverageServicePreparseTest {
         sm.setName("空状态机");
         sm.setTransitions("[{\"from\":\"X\",\"to\":\"Y\"}]");
         when(smRepo.findByProjectId("p1")).thenReturn(List.of(sm));
+        attachScope(service, com.testagent.dto.JsonHelper.parseListMap(sm.getTransitions()));
         when(tcRepo.findByProjectId("p1")).thenReturn(List.of());
 
         Map<String, Object> result = service.getCoverageMatrix("p1");
@@ -106,5 +108,18 @@ class CoverageServicePreparseTest {
         assertEquals(0, ((Number) summary.get("coveredTransitions")).intValue());
         assertFalse(((List<?>) ((List<Map<String, Object>>) result.get("stateMachines"))
                 .get(0).get("transitions")).isEmpty());
+    }
+
+    /** v8.3: 注入切片 mock——给定转换全部视为本期目标（sm-1） */
+    private void attachScope(CoverageService service, List<Map<String, Object>> sprintTransitions) {
+        ScopeSlicingService slicing = mock(ScopeSlicingService.class);
+        ScopeSlicingService.ScopeSlice slice = new ScopeSlicingService.ScopeSlice(
+                "def-1", "S35", "v1.0",
+                java.util.Set.of(), List.of(),
+                Map.of("sm-1", sprintTransitions), Map.of(), List.of());
+        when(slicing.loadForGeneration("p1")).thenReturn(slice);
+        ReflectionTestUtils.setField(service, "scopeSlicingService", slicing);
+        ReflectionTestUtils.setField(service, "scopeItemRepository",
+                mock(com.testagent.repository.ScopeItemRepository.class));
     }
 }

@@ -1,13 +1,11 @@
 package com.testagent.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.testagent.analyzer.result.BackendResult;
-import com.testagent.analyzer.result.EndpointInfo;
-import com.testagent.dto.JsonHelper;
-import com.testagent.entity.CodeAnalysis;
+import com.testagent.entity.ScopeItem;
 import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
 import com.testagent.repository.CodeAnalysisRepository;
+import com.testagent.repository.ScopeItemRepository;
 import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.TestCaseRepository;
 import org.slf4j.Logger;
@@ -37,13 +35,26 @@ public class CoverageService {
     @Autowired
     private CodeAnalysisRepository codeAnalysisRepository;
 
-    @SuppressWarnings("unchecked")
+    // v8.3: 覆盖率单一口径=已确认本期范围（全量口径彻底移除）
+    @Autowired
+    private ScopeSlicingService scopeSlicingService;
+
+    @Autowired
+    private ScopeItemRepository scopeItemRepository;
+
+    /**
+     * v8.3: 覆盖矩阵——单一"本期范围"口径。
+     * 分母：范围内状态机的本期目标转换 + 范围内目标接口；历史转换仅展示（inScope=false）不参与统计。
+     * 无已确认范围时返回引导态（scoped=false），不再输出全量数字。
+     */
     public Map<String, Object> getCoverageMatrix(String projectId) {
-        List<StateMachine> stateMachines = stateMachineRepository.findByProjectId(projectId);
+        ScopeSlicingService.ScopeSlice slice = scopeSlicingService.loadForGeneration(projectId);
+        if (slice.isEmpty()) {
+            return unscopedResult();
+        }
         List<TestCase> testCases = testCaseRepository.findByProjectId(projectId);
 
-        // v7.2(R8): 每条用例只解析一次 JSON——旧实现在 transition×testCase 双重内循环里
-        // 反复反序列化同一条 executionHints/stateMachineRef（50 SM×20 tran×500 case ≈ 50 万次 parse）
+        // v7.2(R8): 每条用例只解析一次 JSON
         Map<String, Set<String>> refTransitionsByCase = new LinkedHashMap<>();
         Map<String, Set<String>> smRefTransitionsByCase = new LinkedHashMap<>();
         for (TestCase tc : testCases) {
@@ -55,42 +66,44 @@ public class CoverageService {
 
         List<Map<String, Object>> smList = new ArrayList<>();
         int totalTransitions = 0;
-        int coveredTransitions = 0;            // 旧口径：refs 计划 ∪ 已执行 smRef 兜底（向后兼容）
+        int coveredTransitions = 0;
         int plannedCoveredTransitions = 0;
         int executedCoveredTransitions = 0;
 
-        for (StateMachine sm : stateMachines) {
+        List<StateMachine> machines = stateMachineRepository.findByProjectId(projectId);
+        for (StateMachine sm : machines) {
+            List<Map<String, Object>> sprintTransitions = slice.sprintTransitionsBySmId().get(sm.getId());
+            if (sprintTransitions == null) {
+                continue;   // v8.3: 范围外状态机整体不进矩阵
+            }
+            Set<String> sprintKeys = ScopeSlicingService.sprintTransitionKeys(sprintTransitions);
+
             Map<String, Object> smMap = new LinkedHashMap<>();
             smMap.put("id", sm.getId());
             smMap.put("name", sm.getName());
 
-            // 解析状态机的 transitions JSON 数组
-            List<Map<String, Object>> transitions = new ArrayList<>();
-            try {
-                String transJson = sm.getTransitions();
-                if (transJson != null && !transJson.isBlank()) {
-                    transitions = objectMapper.readValue(transJson, List.class);
-                }
-            } catch (Exception e) {
-                log.warn("Failed to parse transitions for SM {}", sm.getId(), e);
-            }
-
-            // v7.8(R7): 双栏口径——
-            // 计划覆盖（planned）：任一用例 coverageRefs.transitionIds 引用（不要求执行）；
-            // 执行覆盖（executed）：isExecuted 用例的 refs 引用，或其 stateMachineRef 引用；
-            // 旧单栏 covered 保持"refs 计划 ∪ 已执行 smRef 兜底"口径不变（向后兼容），
-            // 双栏才是诚实视图——用户不再把"计划覆盖 80%"当"验证过 80%"。
+            List<Map<String, Object>> transitions = parseTransitions(sm);
             for (Map<String, Object> tran : transitions) {
-                String from = tran.get("from") != null ? tran.get("from").toString() : "";
-                String to = tran.get("to") != null ? tran.get("to").toString() : "";
-                String transitionKey = from + "->" + to;
+                String rawKey = rawTransitionKey(tran);
+                boolean inScope = sprintKeys.contains(
+                        ScopeSlicingService.normalizeStateCode(str(tran.get("from"))) + "->"
+                                + ScopeSlicingService.normalizeStateCode(str(tran.get("to"))));
+                tran.put("inScope", inScope);
+
+                if (!inScope) {
+                    // 历史上下文转换：只展示，不进分子分母
+                    tran.put("covered", false);
+                    tran.put("testCaseIds", new ArrayList<>());
+                    continue;
+                }
 
                 List<String> plannedIds = new ArrayList<>();
                 List<String> executedIds = new ArrayList<>();
                 List<String> legacyCoveringIds = new ArrayList<>();
                 for (TestCase tc : testCases) {
-                    boolean planned = refTransitionsByCase.get(tc.getId()).contains(transitionKey);
-                    boolean smRefFallback = smRefTransitionsByCase.getOrDefault(tc.getId(), Set.of()).contains(transitionKey);
+                    boolean planned = refTransitionsByCase.get(tc.getId()).contains(rawKey);
+                    boolean smRefFallback =
+                            smRefTransitionsByCase.getOrDefault(tc.getId(), Set.of()).contains(rawKey);
                     boolean executed = (planned && isExecuted(tc)) || smRefFallback;
                     if (planned) {
                         plannedIds.add(tc.getId());
@@ -121,7 +134,6 @@ public class CoverageService {
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("totalTransitions", totalTransitions);
-        // coveredTransitions/rate 保持旧口径（向后兼容），planned/executed 为 v7.8(R7) 双栏
         summary.put("coveredTransitions", coveredTransitions);
         summary.put("rate", totalTransitions == 0 ? 0.0 : (double) coveredTransitions / totalTransitions);
         summary.put("plannedCoveredTransitions", plannedCoveredTransitions);
@@ -129,10 +141,142 @@ public class CoverageService {
         summary.put("plannedRate", totalTransitions == 0 ? 0.0 : (double) plannedCoveredTransitions / totalTransitions);
         summary.put("executedRate", totalTransitions == 0 ? 0.0 : (double) executedCoveredTransitions / totalTransitions);
 
+        // 接口覆盖：分母=本期目标接口（详情来自切片，含 description 兜底逻辑在切片侧已完成筛选）
+        Set<String> totalEndpoints = new HashSet<>();
+        for (Map<String, Object> ep : slice.targetEndpointsDetail()) {
+            totalEndpoints.add(normalizeEndpointKey(ep.get("method") + " " + ep.get("path")));
+        }
+        Set<String> coveredEndpoints = new HashSet<>();
+        for (TestCase tc : testCases) {
+            coveredEndpoints.addAll(parseCoverageRefEndpoints(tc));
+            if (!isExecuted(tc)) {
+                continue;
+            }
+            for (Map<String, Object> ep : com.testagent.dto.JsonHelper.parseListMap(tc.getApiEndpoints())) {
+                String method = String.valueOf(ep.getOrDefault("method", ""));
+                String path = String.valueOf(ep.getOrDefault("path", ""));
+                coveredEndpoints.add(normalizeEndpointKey(method + " " + path));
+            }
+        }
+        int apiCovered = 0;
+        for (String id : totalEndpoints) {
+            if (coveredEndpoints.contains(id)) {
+                apiCovered++;
+            }
+        }
+        Map<String, Object> apiCov = new LinkedHashMap<>();
+        apiCov.put("totalEndpoints", totalEndpoints.size());
+        apiCov.put("coveredEndpoints", apiCovered);
+        apiCov.put("uncoveredEndpoints", totalEndpoints.size() - apiCovered);
+        apiCov.put("rate", totalEndpoints.isEmpty() ? 0.0 : (double) apiCovered / totalEndpoints.size());
+
         Map<String, Object> result = new LinkedHashMap<>();
+        result.put("scoped", true);
+        Map<String, Object> scopeMeta = new LinkedHashMap<>();
+        scopeMeta.put("definitionId", slice.definitionId());
+        scopeMeta.put("name", slice.name());
+        scopeMeta.put("baselineRef", slice.baselineRef());
+        result.put("scope", scopeMeta);
         result.put("stateMachines", smList);
         result.put("summary", summary);
+        result.put("apiEndpoint", apiCov);
+        result.put("affectedItems", affectedItems(slice.definitionId()));
         return result;
+    }
+
+    /**
+     * v7.15(3b)/v8.3: 未覆盖接口清单——分母收敛为本期目标接口。
+     */
+    public Map<String, Object> uncoveredEndpoints(String projectId) {
+        ScopeSlicingService.ScopeSlice slice = scopeSlicingService.loadForGeneration(projectId);
+        if (slice.isEmpty()) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("scoped", false);
+            r.put("message", "请先创建并确认本期范围");
+            return r;
+        }
+
+        List<Map<String, Object>> total = new ArrayList<>(slice.targetEndpointsDetail());
+
+        Set<String> covered = new HashSet<>();
+        List<TestCase> cases = testCaseRepository.findByProjectId(projectId);
+        for (TestCase tc : cases) {
+            covered.addAll(parseCoverageRefEndpoints(tc));
+            if (!isExecuted(tc)) {
+                continue;
+            }
+            for (Map<String, Object> ep : com.testagent.dto.JsonHelper.parseListMap(tc.getApiEndpoints())) {
+                String method = String.valueOf(ep.getOrDefault("method", ""));
+                String path = String.valueOf(ep.getOrDefault("path", ""));
+                covered.add(normalizeEndpointKey(method + " " + path));
+            }
+        }
+
+        List<Map<String, Object>> uncovered = new ArrayList<>();
+        int matched = 0;
+        for (Map<String, Object> ep : total) {
+            String key = normalizeEndpointKey(ep.get("method") + " " + ep.get("path"));
+            if (covered.contains(key)) {
+                matched++;
+            } else {
+                uncovered.add(ep);
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("scoped", true);
+        result.put("total", total.size());
+        result.put("covered", matched);
+        result.put("uncoveredCount", uncovered.size());
+        result.put("uncovered", uncovered);
+        return result;
+    }
+
+    // ==================== 内部工具 ====================
+
+    private Map<String, Object> unscopedResult() {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("scoped", false);
+        r.put("message", "请先创建并确认本期范围（项目详情 → 本期范围）");
+        return r;
+    }
+
+    private List<Map<String, Object>> affectedItems(String definitionId) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (ScopeItem item : scopeItemRepository.findByDefinitionIdOrderByItemTypeAscIdAsc(definitionId)) {
+            if (!ScopeItem.KIND_AFFECTED.equals(item.getChangeKind())) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("itemType", item.getItemType());
+            row.put("itemRef", item.getItemRef());
+            row.put("origin", item.getOrigin());
+            row.put("note", item.getNote());
+            out.add(row);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> parseTransitions(StateMachine sm) {
+        try {
+            String json = sm.getTransitions();
+            if (json != null && !json.isBlank()) {
+                return objectMapper.readValue(json, List.class);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse transitions for SM {}", sm.getId(), e);
+        }
+        return new ArrayList<>();
+    }
+
+    private String rawTransitionKey(Map<String, Object> tran) {
+        String from = tran.get("from") != null ? tran.get("from").toString() : "";
+        String to = tran.get("to") != null ? tran.get("to").toString() : "";
+        return from + "->" + to;
+    }
+
+    private String str(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
     }
 
     // v5.11: 读取 executionHints.coverageRefs.transitionIds 作为“计划覆盖”
@@ -165,78 +309,6 @@ public class CoverageService {
         return "passed".equals(status) || "failed".equals(status);
     }
 
-    /**
-     * v7.15(3b): 未覆盖接口清单——代码分析出的全部接口中，没有任何用例
-     * （计划引用 coverageRefs.endpointIds 或已执行用例的实际调用 apiEndpoints）
-     * 覆盖到的部分，让缺口从"看不见"变成"可操作"。
-     *
-     * 口径与用例列表页接口覆盖率完全一致（normalize 后精确命中），保证
-     * covered 数与 stats 卡片显示的接口覆盖 covered 相同。
-     */
-    public Map<String, Object> uncoveredEndpoints(String projectId) {
-        // 1. 分母：最新一次代码分析的接口全集
-        List<Map<String, Object>> total = new ArrayList<>();
-        try {
-            CodeAnalysis analysis = codeAnalysisRepository
-                    .findFirstByProjectIdOrderByCreatedAtDesc(projectId).orElse(null);
-            if (analysis != null && analysis.getBackendResult() != null && !analysis.getBackendResult().isBlank()
-                    && !analysis.getBackendResult().equals("{}")) {
-                BackendResult backendResult = objectMapper.readValue(analysis.getBackendResult(), BackendResult.class);
-                if (backendResult.getEndpoints() != null) {
-                    for (EndpointInfo ep : backendResult.getEndpoints()) {
-                        // v7.15.2: description 为空时回退 function（类.方法名）——
-                        // LLM 增强只覆盖了部分接口的 description，纯规则提取的接口没有
-                        String desc = ep.getDescription() == null ? "" : ep.getDescription().trim();
-                        if (desc.isEmpty()) {
-                            desc = ep.getFunction() == null ? "" : ep.getFunction().trim();
-                        }
-                        Map<String, Object> item = new LinkedHashMap<>();
-                        item.put("method", ep.getMethod() == null ? "" : ep.getMethod());
-                        item.put("path", ep.getPath() == null ? "" : ep.getPath());
-                        item.put("description", desc);
-                        total.add(item);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.warn("Failed to parse backend result for uncovered endpoints: {}", e.getMessage());
-        }
-
-        // 2. 已覆盖集合：全部用例的计划引用 ∪ 已执行用例的实际调用（与接口覆盖率同口径）
-        Set<String> covered = new HashSet<>();
-        List<TestCase> cases = testCaseRepository.findByProjectId(projectId);
-        for (TestCase tc : cases) {
-            covered.addAll(parseCoverageRefEndpoints(tc));
-            if (!isExecuted(tc)) {
-                continue;
-            }
-            for (Map<String, Object> ep : JsonHelper.parseListMap(tc.getApiEndpoints())) {
-                String method = String.valueOf(ep.getOrDefault("method", ""));
-                String path = String.valueOf(ep.getOrDefault("path", ""));
-                covered.add(normalizeEndpointKey(method + " " + path));
-            }
-        }
-
-        // 3. 差集输出
-        List<Map<String, Object>> uncovered = new ArrayList<>();
-        int matched = 0;
-        for (Map<String, Object> ep : total) {
-            String key = normalizeEndpointKey(ep.get("method") + " " + ep.get("path"));
-            if (covered.contains(key)) {
-                matched++;
-            } else {
-                uncovered.add(ep);
-            }
-        }
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("total", total.size());
-        result.put("covered", matched);
-        result.put("uncoveredCount", uncovered.size());
-        result.put("uncovered", uncovered);
-        return result;
-    }
-
     private Set<String> parseCoverageRefEndpoints(TestCase tc) {
         Set<String> result = new HashSet<>();
         if (tc.getExecutionHints() == null || tc.getExecutionHints().isBlank()) {
@@ -265,7 +337,7 @@ public class CoverageService {
         if (id == null) {
             return "";
         }
-        id = id.trim();
+        id = id.trim().replaceAll("\\s+", " ");
         int space = id.indexOf(' ');
         if (space > 0) {
             return id.substring(0, space).toUpperCase() + id.substring(space);

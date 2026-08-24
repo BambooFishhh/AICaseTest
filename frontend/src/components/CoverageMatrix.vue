@@ -5,7 +5,7 @@
         <div class="matrix-head">
           <div class="matrix-head-text">
             <h2 class="matrix-title">覆盖率矩阵</h2>
-            <p class="matrix-desc">状态机转换路径的计划覆盖与执行验证（分母为状态机全部转换）</p>
+            <p class="matrix-desc">计划覆盖与执行验证（v8.3 分母 = 已确认本期范围：目标接口 + 本期转换；历史转换仅展示不参与统计）</p>
           </div>
           <div v-if="matrix" class="matrix-summary">
             <div class="summary-row">
@@ -58,9 +58,17 @@
           </template>
         </el-table-column>
         <el-table-column prop="trigger" label="Trigger" min-width="130" show-overflow-tooltip />
+        <el-table-column label="范围" width="80" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.inScope === false" type="info" size="small" effect="plain">历史</el-tag>
+            <el-tag v-else type="primary" size="small" effect="plain">本期</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="计划覆盖" width="95" align="center">
           <template #default="{ row }">
+            <span v-if="row.inScope === false" class="text-muted">—</span>
             <span
+              v-else
               class="coverage-pill"
               :class="plannedOf(row) ? 'is-planned' : 'is-uncovered'"
             >
@@ -71,7 +79,9 @@
         </el-table-column>
         <el-table-column label="执行验证" width="95" align="center">
           <template #default="{ row }">
+            <span v-if="row.inScope === false" class="text-muted">—</span>
             <span
+              v-else
               class="coverage-pill"
               :class="executedOf(row) ? 'is-covered' : (plannedOf(row) ? 'is-planned' : 'is-uncovered')"
             >

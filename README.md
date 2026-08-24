@@ -180,11 +180,13 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v8.2（本期聚焦生成，Scope-Aware 第 2 期）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v8.3（覆盖率口径重构，Scope-Aware 三期收官）**，生产线基线为 vP5（压测与容量）。
 
-- v8.2 要点：生成目标只聚焦本期范围——**状态机切片**（ScopeSlicingService 将范围内 SM 的转换按证据文件 ∈ changed_files 二分为 sprint 目标/historical 上下文，checklist 与 coverageRefs 对账天然收敛到本期集合）；**BFS 确定性推导 setup 路径**（初始态→目标转换源状态最短路径输出 trigger 骨架，LLM 只填数据不找路径——"本期发货功能依赖历史支付流程把订单推到已支付状态"这类场景有了确定性准备步骤）；**phase 步骤标记**（structuredSteps 新增 setup/verify 字段 + prompt 分层注入 scope.targets/historicalTransitions/setupHints + few-shot 分层示例）；**执行 blocked 语义**（setup 失败 → 整条记已阻断而非失败，跳过后续验证步骤，报告单独统计且不入失败经验库）；**生成前置校验升级（破坏性变更）**——代码驱动项目必须先创建并确认本期范围才能生成，纯 PRD 项目不受影响；非 Git 仓库可建空草稿手动标注。后端 405 测试全绿。
+- v8.3 要点：覆盖度量全面切换"本期范围"单一口径，全量口径彻底移除（用户决策）——**分母收敛**（状态转换=范围内各 SM 的本期目标转换；接口=范围内目标接口），历史转换仅展示（inScope=false）不参与统计且归一化键与切片分类同源防漂移；**引导态替代误导数字**（无已确认范围时 matrix/uncovered-endpoints 返回 scoped=false，前端统计卡 '—' + 引导链接，Dashboard 未建范围项目不进图表）；**影响面清单透出**（affectedItems=AFFECTED 条目，作为回归关注点参考）；AI 评审的覆盖清单同步收敛到本期项。后端 405 测试全绿。
 
-- v8.1 要点：引入「本期范围(Scope)」领域概念，解决"无法区分本期需求代码与历史代码"的结构性缺失——**Git 基线 diff 自动识别**（`--name-status` 三点 diff 得变更文件集 → EndpointInfo.file 归一化后缀双向匹配出新增/变更接口；stateTransitions 证据 {field,from,to,file} 关联状态机标"受影响"）；**LLM 辅助补充映射**（PRD↔接口清单语义匹配补齐 diff 遗漏项，失败降级不阻断）；**人工确认锁定**（草稿可增删/重算，confirm 后只读）；配套 Git 克隆策略改造（--depth 1 → --filter=blob:none --no-single-branch partial clone，保留全分支引用支持跨基线 diff）、项目删除级联清理、数据健康计数、备份 ZIP 含 scope.json。本期不改生成/覆盖率行为完全向后兼容；v8.3 覆盖率口径重构将基于此分母落地。
+- v8.2 要点：生成目标只聚焦本期范围——**状态机切片**（ScopeSlicingService 将范围内 SM 的转换按证据文件 ∈ changed_files 二分为 sprint 目标/historical 上下文，checklist 与 coverageRefs 对账天然收敛到本期集合）；**BFS 确定性推导 setup 路径**（初始态→目标转换源状态最短路径输出 trigger 骨架，LLM 只填数据不找路径）；**phase 步骤标记**（structuredSteps 新增 setup/verify 字段 + prompt 分层注入 + few-shot 分层示例）；**执行 blocked 语义**（setup 失败 → 整条记已阻断而非失败，跳过后续验证步骤，报告单独统计且不入失败经验库）；**生成前置校验升级（破坏性变更）**——代码驱动项目必须先创建并确认本期范围才能生成，纯 PRD 项目不受影响；非 Git 仓库可建空草稿手动标注。后端 405 测试全绿。
+
+- v8.1 要点：引入「本期范围(Scope)」领域概念，解决"无法区分本期需求代码与历史代码"的结构性缺失——**Git 基线 diff 自动识别**（`--name-status` 三点 diff 得变更文件集 → EndpointInfo.file 归一化后缀双向匹配出新增/变更接口；stateTransitions 证据 {field,from,to,file} 关联状态机标"受影响"）；**LLM 辅助补充映射**（PRD↔接口清单语义匹配补齐 diff 遗漏项，失败降级不阻断）；**人工确认锁定**（草稿可增删/重算，confirm 后只读）；配套 Git 克隆策略改造（--depth 1 → --filter=blob:none --no-single-branch partial clone）、项目删除级联清理、数据健康计数、备份 ZIP 含 scope.json。
 
 - v7.15 要点：执行可信与双编号制——**流式重复草稿治理**（后端 wrapPushDedup 跨轮推送去重 + 前端 onCase 按标题 upsert 兜底，同题草稿只出现一张；期间发现生产镜像曾以含未提交改动的源码构建致 standard 档误跑 6 轮，已重建回 3/4 轮）；**用例双编号制**（全局 TC-id 不变防撞号，新增 project_seq 项目内展示序号 #1 起连续、悬浮见全局 id，V12 迁移回填存量，全量重生成归 1 重计，六条创建路径全覆盖）；**未覆盖接口清单**（新端点 /coverage/uncovered-endpoints 与接口覆盖率完全同口径，前端折叠面板列出无用例引用的接口，缺口可操作化）；**覆盖率口径标注**（统计卡 tooltip + 说明行 + 矩阵分母注明，两口径数值不具可比性不再误读）；**执行数据防御三件套**（A prompt 硬约束 ui_action target 严禁 HTTP 形态+uiSelector 类型白名单对齐执行器能力 / B 解析期 sanitizeUiSelectors 清洗非法类型 / C ExecutionAgent 对 `METHOD /path` 形态 target 的 ui_action 自动降级 skip 如实标注）；PrdPanel 保存联动刷新项目状态（保存 PRD 后生成按钮即时解禁）；用户可见文案版本标注泄漏清理。后端 405 测试全绿。
 
@@ -264,6 +266,7 @@ AICaseTest/
 | v7.15 | 执行可信与双编号制（流式跨轮去重/双编号制/未覆盖接口清单/口径标注/执行数据防御三件套） | ✅ 完成 |
 | v8.1 | 范围感知基础（Git 基线 diff 识别本期范围/LLM 辅助映射/人工确认锁定/partial clone 改造） | ✅ 完成 |
 | v8.2 | 本期聚焦生成（状态机切片/BFS setup 推导/prompt 分层/phase 标记/blocked 语义/生成前置校验升级） | ✅ 完成 |
+| v8.3 | 覆盖率口径重构（单一本期口径/全量口径移除/引导态/影响面清单/AI 评审覆盖同步收敛） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

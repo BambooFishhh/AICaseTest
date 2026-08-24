@@ -831,12 +831,26 @@ public class TestCaseService {
     }
 
     private Map<String, Object> buildCoverageForReview(String projectId) {
+        // v8.3: 评审覆盖清单收敛到本期范围——转换只含本期目标，接口只含目标集合
+        ScopeSlicingService.ScopeSlice slice = scopeSlicingService.loadForGeneration(projectId);
         List<Map<String, Object>> transitions = new ArrayList<>();
         for (StateMachine sm : stateMachineRepository.findByProjectId(projectId)) {
+            List<Map<String, Object>> sprint = slice.isEmpty()
+                    ? null : slice.sprintTransitionsBySmId().get(sm.getId());
+            if (!slice.isEmpty() && (sprint == null || sprint.isEmpty())) {
+                continue;
+            }
+            Set<String> sprintKeys = slice.isEmpty()
+                    ? null : ScopeSlicingService.sprintTransitionKeys(sprint);
             for (Map<String, Object> t : JsonHelper.parseListMap(sm.getTransitions())) {
-                Map<String, Object> item = new LinkedHashMap<>();
+                String key = ScopeSlicingService.normalizeStateCode(String.valueOf(t.getOrDefault("from", "")))
+                        + "->" + ScopeSlicingService.normalizeStateCode(String.valueOf(t.getOrDefault("to", "")));
+                if (sprintKeys != null && !sprintKeys.contains(key)) {
+                    continue;
+                }
                 String from = String.valueOf(t.getOrDefault("from", ""));
                 String to = String.valueOf(t.getOrDefault("to", ""));
+                Map<String, Object> item = new LinkedHashMap<>();
                 item.put("id", from + "->" + to);
                 item.put("from", from);
                 item.put("to", to);
@@ -847,7 +861,20 @@ public class TestCaseService {
             }
         }
 
+        Set<String> scopeEndpointIds = slice.isEmpty()
+                ? null : new HashSet<>(slice.targetEndpointIds());
         List<Map<String, Object>> endpoints = new ArrayList<>();
+        if (!slice.isEmpty()) {
+            for (Map<String, Object> ep : slice.targetEndpointsDetail()) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("id", normalizeEndpointIdForCoverage(ep.get("method") + " " + ep.get("path")));
+                item.putAll(ep);
+                endpoints.add(item);
+            }
+            log.info("[Scope] review coverage checklist narrowed: endpoints {}, transitions {}",
+                    endpoints.size(), transitions.size());
+        }
+
         List<Map<String, Object>> rules = new ArrayList<>();
         Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId);
         if (analysisOpt.isPresent()) {
@@ -855,14 +882,7 @@ public class TestCaseService {
             if (json != null && !json.isBlank() && !json.equals("{}")) {
                 try {
                     BackendResult backendResult = objectMapper.readValue(json, BackendResult.class);
-                    if (backendResult.getEndpoints() != null) {
-                        for (EndpointInfo ep : backendResult.getEndpoints()) {
-                            Map<String, Object> item = new LinkedHashMap<>();
-                            item.put("id", (ep.getMethod() == null ? "" : ep.getMethod().toUpperCase()) + " " + ep.getPath());
-                            item.putAll(ep.toContextMap());
-                            endpoints.add(item);
-                        }
-                    }
+                    // v8.3: endpoints 已由 scope 切片提供，此处仅提取业务规则
                     if (backendResult.getBusinessRules() != null) {
                         int i = 1;
                         for (BusinessRule br : backendResult.getBusinessRules()) {
@@ -1428,22 +1448,22 @@ public class TestCaseService {
     private Map<String, Object> calculateCoverage(String projectId, List<TestCase> allTestCases) {
         Map<String, Object> coverage = new LinkedHashMap<>();
 
-        // 状态转换覆盖率
-        List<StateMachine> stateMachines = stateMachineRepository.findByProjectId(projectId);
+        // v8.3: 单一口径=已确认本期范围；无范围返回引导态（rates=0 + scoped=false）
+        ScopeSlicingService.ScopeSlice slice = scopeSlicingService.loadForGeneration(projectId);
+        coverage.put("scoped", !slice.isEmpty());
+
+        // 状态转换覆盖率：分母 = 范围内各 SM 的本期目标转换（归一化键与切片分类同源）
         Set<String> totalTransitions = new HashSet<>();
-        for (StateMachine sm : stateMachines) {
-            List<Map<String, Object>> transitions = JsonHelper.parseListMap(sm.getTransitions());
-            for (Map<String, Object> t : transitions) {
-                String from = String.valueOf(t.getOrDefault("from", ""));
-                String to = String.valueOf(t.getOrDefault("to", ""));
-                totalTransitions.add(from + "->" + to);
+        if (!slice.isEmpty()) {
+            for (List<Map<String, Object>> sprint : slice.sprintTransitionsBySmId().values()) {
+                totalTransitions.addAll(ScopeSlicingService.sprintTransitionKeys(sprint));
             }
         }
 
         Set<String> coveredTransitions = new HashSet<>();
         for (TestCase tc : allTestCases) {
             // v5.12: 计划覆盖（coverageRefs）先计入，未执行也视为已规划覆盖
-            coveredTransitions.addAll(parseCoverageRefTransitions(tc));
+            coveredTransitions.addAll(normalizeTransitionRefs(parseCoverageRefTransitions(tc)));
             if (!isExecuted(tc)) {
                 continue;
             }
@@ -1453,9 +1473,9 @@ public class TestCaseService {
                 for (Object item : (List<?>) transitionsObj) {
                     if (item instanceof Map) {
                         Map<?, ?> t = (Map<?, ?>) item;
-                        String from = String.valueOf(t.get("from"));
-                        String to = String.valueOf(t.get("to"));
-                        coveredTransitions.add(from + "->" + to);
+                        String key = ScopeSlicingService.normalizeStateCode(String.valueOf(t.get("from")))
+                                + "->" + ScopeSlicingService.normalizeStateCode(String.valueOf(t.get("to")));
+                        coveredTransitions.add(key);
                     }
                 }
             }
@@ -1474,23 +1494,11 @@ public class TestCaseService {
         stateCov.put("rate", stateTotal == 0 ? 0.0 : (double) stateCovered / stateTotal);
         coverage.put("stateTransition", stateCov);
 
-        // 接口覆盖率
+        // 接口覆盖率：分母 = 本期目标接口
         Set<String> totalEndpoints = new HashSet<>();
-        Optional<CodeAnalysis> analysisOpt = codeAnalysisRepository.findFirstByProjectIdOrderByCreatedAtDesc(projectId);
-        if (analysisOpt.isPresent()) {
-            String backendResultJson = analysisOpt.get().getBackendResult();
-            if (backendResultJson != null && !backendResultJson.isBlank()
-                    && !backendResultJson.equals("{}")) {
-                try {
-                    BackendResult backendResult = objectMapper.readValue(backendResultJson, BackendResult.class);
-                    if (backendResult.getEndpoints() != null) {
-                        for (EndpointInfo ep : backendResult.getEndpoints()) {
-                            totalEndpoints.add(normalizeEndpointIdForCoverage(ep.getMethod() + " " + ep.getPath()));
-                        }
-                    }
-                } catch (Exception e) {
-                    log.warn("Failed to parse backend result for coverage", e);
-                }
+        if (!slice.isEmpty()) {
+            for (String id : slice.targetEndpointIds()) {
+                totalEndpoints.add(normalizeEndpointIdForCoverage(id));
             }
         }
 
@@ -1554,6 +1562,21 @@ public class TestCaseService {
             }
         }
         return result;
+    }
+
+    /** v8.3: 原始 "from->to" 引用归一化（与切片键同源），使 refs 能命中本期分母 */
+    private Set<String> normalizeTransitionRefs(Set<String> refs) {
+        Set<String> out = new HashSet<>();
+        for (String ref : refs) {
+            String[] parts = ref.split("->", 2);
+            if (parts.length == 2) {
+                out.add(ScopeSlicingService.normalizeStateCode(parts[0]) + "->"
+                        + ScopeSlicingService.normalizeStateCode(parts[1]));
+            } else {
+                out.add(ref);
+            }
+        }
+        return out;
     }
 
     private Set<String> parseCoverageRefEndpoints(TestCase tc) {

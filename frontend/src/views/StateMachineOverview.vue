@@ -41,6 +41,20 @@
         </el-select>
       </section>
 
+      <!-- v8.3: 未建范围引导 -->
+      <el-alert
+        v-if="loaded && coverageMatrix && coverageMatrix.scoped === false"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 16px"
+      >
+        <template #title>
+          尚未创建本期范围，覆盖统计不可用。
+          <router-link :to="`/projects/${projectId}/scope`">去创建本期范围</router-link>
+        </template>
+      </el-alert>
+
       <!-- 覆盖图 -->
       <section v-if="selectedSm" class="graph-section">
         <div class="graph-head">
@@ -123,6 +137,8 @@ const loading = ref(false)
 const stateMachines = ref([])
 const selectedSmId = ref('')
 const coverageMatrix = ref(null)
+// v8.3: 数据是否已加载过一次（用于区分"未加载"与"加载后无范围"）
+const loaded = ref(false)
 
 // 当前选中的状态机
 const selectedSm = computed(() =>
@@ -171,12 +187,12 @@ const coverageData = computed(() => {
   }
 })
 
-// 当前覆盖率统计
+// 当前覆盖率统计（v8.3: 仅统计本期目标转换，历史转换 inScope=false 不参与）
 const currentCoverage = computed(() => {
   if (!coverageData.value) return null
   const sm = coverageData.value.stateMachines[0]
   if (!sm) return null
-  const transitions = sm.transitions || []
+  const transitions = (sm.transitions || []).filter((t) => t.inScope !== false)
   const covered = transitions.filter((t) => t.covered).length
   const total = transitions.length
   return {
@@ -210,6 +226,7 @@ async function loadData() {
     ])
     stateMachines.value = smRes.data || []
     coverageMatrix.value = covRes.data
+    loaded.value = true
     if (stateMachines.value.length > 0) {
       selectedSmId.value = stateMachines.value[0].id
     }

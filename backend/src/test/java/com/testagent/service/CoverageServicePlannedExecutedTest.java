@@ -1,7 +1,9 @@
 package com.testagent.service;
 
+import com.testagent.dto.JsonHelper;
 import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
+import com.testagent.repository.ScopeItemRepository;
 import com.testagent.repository.StateMachineRepository;
 import com.testagent.repository.TestCaseRepository;
 import org.junit.jupiter.api.Test;
@@ -20,6 +22,7 @@ import static org.mockito.Mockito.when;
  * v7.8(R7): 计划/执行双栏覆盖率单测——旧实现主路径读 coverageRefs 不要求执行、
  * 兜底路径要求 isExecuted，两路标准不一致且只输出一栏 rate，
  * 用户把"计划覆盖 80%"当"验证过 80%"。
+ * v8.3: 口径收敛到本期范围——切片 mock 将全部转换视为本期目标（sm-1）。
  */
 class CoverageServicePlannedExecutedTest {
 
@@ -100,6 +103,7 @@ class CoverageServicePlannedExecutedTest {
         sm.setName("订单");
         sm.setTransitions("[{\"from\":\"A\",\"to\":\"B\"}]");
         when(smRepo.findByProjectId("p1")).thenReturn(List.of(sm));
+        attachScope(service, JsonHelper.parseListMap(sm.getTransitions()));
 
         TestCase c1 = new TestCase();
         c1.setId("c1");
@@ -129,6 +133,7 @@ class CoverageServicePlannedExecutedTest {
         sm.setTransitions("[{\"from\":\"A\",\"to\":\"B\"},{\"from\":\"B\",\"to\":\"C\"},"
                 + "{\"from\":\"C\",\"to\":\"D\"},{\"from\":\"D\",\"to\":\"A\"},{\"from\":\"X\",\"to\":\"Y\"}]");
         when(smRepo.findByProjectId("p1")).thenReturn(List.of(sm));
+        attachScope(service, JsonHelper.parseListMap(sm.getTransitions()));
 
         // c1: 计划覆盖 A->B（未执行）
         TestCase c1 = new TestCase();
@@ -161,6 +166,19 @@ class CoverageServicePlannedExecutedTest {
 
         when(tcRepo.findByProjectId("p1")).thenReturn(List.of(c1, c2, c3, c4));
         return service;
+    }
+
+    /** v8.3: 注入切片 mock——给定转换全部视为本期目标（sm-1） */
+    private void attachScope(CoverageService service, List<Map<String, Object>> sprintTransitions) {
+        ScopeSlicingService slicing = mock(ScopeSlicingService.class);
+        ScopeSlicingService.ScopeSlice slice = new ScopeSlicingService.ScopeSlice(
+                "def-1", "S35", "v1.0",
+                java.util.Set.of(), List.of(),
+                Map.of("sm-1", sprintTransitions), Map.of(), List.of());
+        when(slicing.loadForGeneration("p1")).thenReturn(slice);
+        ReflectionTestUtils.setField(service, "scopeSlicingService", slicing);
+        ReflectionTestUtils.setField(service, "scopeItemRepository",
+                mock(ScopeItemRepository.class));
     }
 
     @SuppressWarnings("unchecked")

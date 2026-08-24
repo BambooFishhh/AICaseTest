@@ -188,7 +188,10 @@ function renderCharts() {
 
   if (covChartRef.value) {
     if (!covChart) covChart = echarts.init(covChartRef.value)
-    const items = stats.projectCoverage
+    // v8.3: 未建本期范围的项目（stateRate=null）不进图表，避免误导性 0 柱
+    const items = stats.projectCoverage.filter(
+      (p) => p.stateRate !== null && p.stateRate !== undefined
+    )
     covChart.setOption({
       tooltip: { trigger: 'axis' },
       grid: { left: 40, right: 20, top: 20, bottom: 60 },

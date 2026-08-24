@@ -69,14 +69,15 @@ public class StatsController {
             } catch (Exception ignored) {
                 // 无覆盖率数据
             }
-            double stateRate = 0;
-            if (cov != null) {
+            // v8.3: 单一本期口径——未确认范围的项目 rate=null（前端显示"—"），不计入加权平均
+            Double stateRate = null;
+            if (cov != null && Boolean.TRUE.equals(cov.get("scoped"))) {
                 Map<String, Object> summary = (Map<String, Object>) cov.get("summary");
                 if (summary != null) {
                     Object rateObj = summary.get("rate");
                     if (rateObj instanceof Number) stateRate = ((Number) rateObj).doubleValue();
                     Object totalObj = summary.get("totalTransitions");
-                    if (totalObj instanceof Number) {
+                    if (stateRate != null && totalObj instanceof Number) {
                         long totalTransitions = ((Number) totalObj).longValue();
                         if (totalTransitions > 0) {
                             weightedRateSum += stateRate * totalTransitions;
@@ -88,7 +89,7 @@ public class StatsController {
             Map<String, Object> pc = new LinkedHashMap<>();
             pc.put("id", p.getId());
             pc.put("name", p.getName());
-            pc.put("stateRate", Math.round(stateRate * 100));
+            pc.put("stateRate", stateRate == null ? null : Math.round(stateRate * 100));
             projectCoverage.add(pc);
         }
 

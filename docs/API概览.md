@@ -39,8 +39,8 @@
 | GET | `/api/projects/{id}/generation-params` | 获取生成参数（v3.4，v3.12 含 defaultTargetUrl） |
 | PUT | `/api/projects/{id}/generation-params` | 更新生成参数（v3.4，v3.12 含 defaultTargetUrl） |
 | GET | `/api/projects/{id}/testcases` | 用例列表（分页+筛选+覆盖率，v3.12 支持 executionStatus 筛选） |
-| GET | `/api/projects/{id}/coverage/matrix` | 覆盖率矩阵（每转换覆盖详情） |
-| GET | `/api/projects/{id}/coverage/uncovered-endpoints` | 未覆盖接口清单（与接口覆盖率同口径差集，v7.15） |
+| GET | `/api/projects/{id}/coverage/matrix` | 覆盖率矩阵（v8.3 单一"本期范围"口径：分母=范围内目标接口与本期转换；scoped=false 返回引导态；每转换附 inScope 标记） |
+| GET | `/api/projects/{id}/coverage/uncovered-endpoints` | 未覆盖接口清单（分母=本期范围目标接口，v8.3；scoped=false 返回引导态） |
 | GET/POST | `/api/projects/{id}/scope` | 本期范围：定义列表 / 创建草稿并识别（v8.1） |
 | GET | `/api/projects/{id}/scope/git-refs` | 基线候选：本地分支/远端分支/tag/HEAD（v8.1） |
 | GET/POST | `/api/projects/{id}/scope/{definitionId}/items` | 范围条目列表 / 手动添加（v8.1） |

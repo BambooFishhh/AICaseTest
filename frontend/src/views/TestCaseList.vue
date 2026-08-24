@@ -87,9 +87,9 @@
       <div class="stat-card stat-coverage stat-coverage-state">
         <div class="stat-icon"><el-icon :size="18"><DataAnalysis /></el-icon></div>
         <div class="stat-body">
-          <div class="stat-value">{{ coverage ? `${Math.round(coverage.stateTransition.rate * 100)}%` : '—' }}</div>
+          <div class="stat-value">{{ coverageScoped && coverage ? `${Math.round(coverage.stateTransition.rate * 100)}%` : '—' }}</div>
           <div class="stat-label">
-            <el-tooltip content="口径：状态机转换。分母为状态机提取的全部转换；计划引用与已执行用例均计入" placement="top">
+            <el-tooltip content="口径：本期范围。分母为已确认范围内状态机的本期目标转换；计划引用与已执行用例均计入" placement="top">
               <span>状态机覆盖</span>
             </el-tooltip>
           </div>
@@ -98,9 +98,9 @@
       <div class="stat-card stat-coverage stat-coverage-api">
         <div class="stat-icon"><el-icon :size="18"><DataAnalysis /></el-icon></div>
         <div class="stat-body">
-          <div class="stat-value">{{ coverage ? `${Math.round(coverage.apiEndpoint.rate * 100)}%` : '—' }}</div>
+          <div class="stat-value">{{ coverageScoped && coverage ? `${Math.round(coverage.apiEndpoint.rate * 100)}%` : '—' }}</div>
           <div class="stat-label">
-            <el-tooltip content="口径：API 接口。分母为代码分析出的全部接口（与状态机覆盖不同口径）；未执行用例仅计划引用计入，执行后按实际调用接口计入" placement="top">
+            <el-tooltip content="口径：本期范围。分母为已确认范围内的目标接口；未执行用例仅计划引用计入，执行后按实际调用接口计入" placement="top">
               <span>接口覆盖</span>
             </el-tooltip>
           </div>
@@ -584,8 +584,20 @@
       </el-collapse-item>
     </el-collapse>
 
+    <el-alert
+      v-if="coverageMatrix && coverageMatrix.scoped === false"
+      type="warning"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 16px"
+    >
+      <template #title>
+        尚未创建本期范围，覆盖率不可用。
+        <router-link :to="`/projects/${projectId}/scope`">去创建本期范围</router-link>
+      </template>
+    </el-alert>
     <CoverageMatrix
-      v-if="coverageMatrix"
+      v-if="coverageMatrix && coverageMatrix.scoped !== false"
       :matrix="coverageMatrix"
       :default-expanded="false"
       @filter-by-ids="handleFilterByIds"
@@ -1029,6 +1041,8 @@ const streamingAlertTitle = computed(() => {
 const testCases = ref([])
 const allTestCases = ref([])
 const coverage = ref(null)
+// v8.3: 覆盖率单一"本期范围"口径——未确认范围时统计卡显示占位
+const coverageScoped = computed(() => (coverage.value ? coverage.value.scoped !== false : false))
 const aiReviewExpanded = ref([])
 let aiReviewAutoExpanded = false
 const reviewingId = ref('')

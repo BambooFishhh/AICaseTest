@@ -105,6 +105,8 @@ class StatsControllerOverviewTest {
         summary.put("coveredTransitions", covered);
         summary.put("rate", total == 0 ? 0.0 : (double) covered / total);
         Map<String, Object> result = new LinkedHashMap<>();
+        // v8.3: 覆盖矩阵带 scoped 标记（单一本期口径）
+        result.put("scoped", true);
         result.put("summary", summary);
         return result;
     }
