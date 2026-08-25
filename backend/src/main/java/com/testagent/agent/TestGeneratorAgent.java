@@ -986,7 +986,9 @@ public class TestGeneratorAgent {
     }
 
     // v7.15: 跨轮推送去重——补齐轮针对同一覆盖缺口常再生成同题用例，
-    // 流式草稿按标题（忽略大小写与首尾空白）只推首次，消除前端重复卡片。
+    // 流式草稿按标题只推首次，消除前端重复卡片。
+    // v8.3fix: 去重键从 trim+lowercase 升级为剥离全部空白字符（含 NBSP/零宽/全角空格）——
+    // LLM 输出标题常带不可见空白变体，旧键放行导致流式同题堆卡（落库侧强指纹去重不受影响）。
     // 仅收敛 SSE 展示；轮次收集与落库侧 deduplicate() 语义不变。
     static CaseCallback wrapPushDedup(CaseCallback caseCb) {
         if (caseCb == null) {
@@ -994,13 +996,18 @@ public class TestGeneratorAgent {
         }
         Set<String> seenTitles = new HashSet<>();
         return tc -> {
-            String key = tc == null || tc.getTitle() == null
-                    ? "" : tc.getTitle().trim().toLowerCase();
+            String key = dedupTitleKey(tc);
             if (!seenTitles.add(key)) {
                 return;
             }
             caseCb.onCase(tc);
         };
+    }
+
+    /** 标题去重键：剥离全部空白字符（ASCII/NBSP/零宽/全角）+ 小写 */
+    static String dedupTitleKey(TestCase tc) {
+        String title = tc == null || tc.getTitle() == null ? "" : tc.getTitle();
+        return title.replaceAll("[\\s\\u00A0\\u200B-\\u200D\\u3000\\uFEFF]+", "").toLowerCase();
     }
 
     /**

@@ -48,6 +48,7 @@ v8.1/v8.2 已完成范围识别与生成收敛，但覆盖率仍以全项目为�
 - **Docker 生产部署实测**（v8.3 收尾补充）：镜像重建后 Flyway V13 在 MySQL 迁移成功；litemall 夹具全链路冒烟通过——git-refs 容器内真实执行、范围草稿识别出 70 条 AUTO_DIFF 接口 + 4 个受影响状态机、生成前置拦截精确命中、确认后覆盖矩阵 scoped=true 且分母=范围集合（接口 31/85 与条目数精确吻合）
 - **修复**：GitDiffService 输出截断 bug——`tryRunGit` 的 4000 字符通用上限被 diff 复用后，变更集超过 ~60 个文件即被静默砍尾（实测 v1.7.0...HEAD 完整输出 31,983 字符/591 文件/120 java 只留到 doc/ 目录，AUTO_DIFF 全丢）。diff 调用改传 2MB 上限并新增文件数/java 数/原始长度 INFO 日志
 - **修复②**：端点 id 归一化大小写错位——`ScopeSlicingService.normalizeEndpointId` 整串 toUpperCase（含 path），与全部消费方"METHOD 大写+path 原样"口径永不相等，导致 **scope 模式接口覆盖恒 0% 且生成注入的 context.endpoints/checklist.endpoints 为空**。改为仅 METHOD 大写；TestCaseService.calculateCoverage 分母同步改用 targetEndpointsDetail 与 CoverageService 同源（实测两路径接口覆盖 31/85=36.5% 完全一致）
+- **修复③**：流式同题草稿堆卡——去重键仅 trim+lowercase，放行 LLM 标题的**不可见空白变体**（中间空格/NBSP \u00A0/零宽 \u200B-\u200D/全角 \u3000），后端 wrapPushDedup 与前端 upsert 双双失效致流式重复卡片（落库侧强指纹去重正常，最终库 26 行 26 唯一标题）。新增 `dedupTitleKey`（剥离全部空白字符+小写）并同步前端 streamedTitleKey，两层口径统一；新增 2 条单测（407 全绿）
 
 ---
 

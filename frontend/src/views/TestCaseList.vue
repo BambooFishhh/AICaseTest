@@ -2117,10 +2117,15 @@ async function handleVersionRollback() {
 
 // v7.15: 流式草稿按标题 upsert——后端已做跨轮推送去重，这里兜底防同题堆卡：
 // 同题草稿存在则移除旧条目，新草稿置顶
+// v8.3fix: 去重键剥离全部空白字符（含 NBSP/零宽/全角空格，\s 覆盖 \u00A0/\u3000，
+// 显式补 \u200B-\u200D 零宽），与后端 dedupTitleKey 同语义——LLM 标题的不可见空白
+// 变体不再绕过两处去重导致流式堆卡
+function streamedTitleKey(tc) {
+  return String(tc?.title ?? '').replace(/[\s\u00A0\u200B-\u200D\u3000\uFEFF]+/g, '').toLowerCase()
+}
 function upsertStreamedCase(tc) {
-  const key = String(tc?.title ?? '').trim().toLowerCase()
-  const idx = streamedCases.value.findIndex(
-    (d) => String(d?.title ?? '').trim().toLowerCase() === key)
+  const key = streamedTitleKey(tc)
+  const idx = streamedCases.value.findIndex((d) => streamedTitleKey(d) === key)
   if (idx >= 0) streamedCases.value.splice(idx, 1)
   streamedCases.value.unshift(tc)
 }
