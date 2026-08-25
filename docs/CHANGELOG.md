@@ -4,6 +4,47 @@
 
 ---
 
+## v8.4 — 256k 上下文扩容与代码审查修复（容量参数化 + 可靠性/安防加固）
+**日期**: 2026-08-26
+**基线**: v8.3
+**主题**: 全面适配 256k context 模型——生成链路全部截断预算参数化并放宽；本地代码审查修复落地——线程池饱和快速失败、流式重试端到端一致、解析逐条容错、向量层转义/字节截断/删除重试、SSRF 与目录越权收敛、prompt 注入防护。本期仅后端改动，无前端变更
+
+### 背景
+
+v8.3 收官后做本地全量代码审查，产出 13 项修复清单（见 `docs/长期迭代计划书.md` 基线说明）；同时切换 256k 模型后，历史硬编码截断阈值成为覆盖率与用例密度新瓶颈。本期合并处理。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `agent/PrdAgent.java` | 修改 | PRD 解析入口截断预算参数化：单文档 12000→40000、总量 24000→96000（`app.prd.*`），头尾各半保留策略不变——此处截太狠直接丢需求条目 |
+| `agent/TestGeneratorAgent.java` | 修改 | **预算参数化**：endpoints 详情 80→160、rules 100→150、RAG 切片 1200×6→2000×8、失败经验 800×3→1200×5、文档原文 3000×3→12000×5、checklist.endpoints cap 150→250、gaps 六类 id cap 统一 150、生成上限 60→120（全部 `app.generation.*` 可回调）；**流式可靠性**：StreamingTestCaseParser.reset() + CaseCallback.onRetryReset() 钩子，LLM 重试前清空解析缓冲并通知消费端，防半截+全量重复推送；parseTestCases 逐条容错（单条畸形跳过告警不丢整批，整段非 JSON 数组才上抛重试）；extractJsonArray 遍历全部代码围栏取第一个可解析块（模型分段输出说明+JSON 时旧逻辑取错块）；type/priority 白名单归一 normalizeCaseType/normalizePriority（中文别名映射 positive/negative/boundary/data、P0~P3），防脏值入库污染统计筛选；**prompt 注入防护**：系统提示追加输入安全约定 + 用户上下文 `<context>` 定界隔离 |
+| `service/LlmService.java` | 修改 | maxTokens 16384→32768（减少单轮高密度顶满输出致流式 JSON 截断）、maxPromptChars 300000→500000；**流级看门狗** `llm.stream-total-timeout-ms`（默认 900s）——网关心跳保活时底层 read-timeout 不触发，超时主动中断按可重试分类；chatStreaming 新增 retryResetHook 重载，已推送内容后失败重试先通知调用方清态；boundPrompt 超限裁剪改保头 3/4 + 保尾 1/4（旧纯头部截断丢尾部任务指令与 gaps 清单），触发即 ERROR（保险丝语义） |
+| `config/AsyncConfig.java` | 修改 | 分析/生成池改快速拒绝 handler（log.error + 抛 RejectedExecutionException）——旧统一 CallerRunsPolicy 让分钟级 AI 任务回落 HTTP 线程阻塞全部普通接口；执行/语义短任务池保留 CallerRuns |
+| `controller/ProjectController.java` | 修改 | 三个 SSE 流式接口 catch RejectedExecutionException → 推送 `error` 事件"服务器繁忙，任务队列已满"+ complete，替代静默挂死 |
+| `service/ProjectService.java` | 修改 | startAnalysis/startGenerate catch 拒绝异常 → 项目状态回滚（analyzing/generating → 原状态）+ 503"服务器繁忙"，不卡状态机 |
+| `agent/TestCaseReviewRunner.java` | 修改 | AI 评审提交被拒绝时 markReviewFailed("评审任务队列已满")，用例不再卡 reviewing |
+| `service/TestCaseService.java` | 修改 | 两个流式入口 CaseCallback 实现 onRetryReset → SSE 推送 `retryReset` 事件，前端清空已渲染草稿后接收重推，消除界面重复卡片 |
+| `service/MilvusService.java` | 修改 | **写入前字节截断** truncateToBytes：按 schema VarChar 上限（UTF-8 字节，多字节字符边界安全）预截断 id/project/title/module/text 并告警——中文超限插入失败仅 warn 曾致向量静默丢失（该条无法检索/去重）；**expr 转义** escapeExpr（反斜杠+双引号）：buildSearchExpr/deleteByProject/deleteByIds/deleteByModule 全收敛，module 含引号曾致 expr 语法错误检索静默空召回；**删除统一入口** deleteWithRetry：2 次短重试 + 终败升级 ERROR（残留向量=幽灵用例/误判重复，可接告警对账） |
+| `service/SemanticService.java` | 修改 | 去重 embedding 全批并行预计算（4 线程 + CompletableFuture.allOf）替代逐条串行 HTTP——60 条用例省数十秒；单条失败降级空向量由结构判重兜底 |
+| `controller/FilesystemController.java` | 修改 | **安防**：目录浏览收敛到 `app.filesystem.browse-roots` 白名单（默认 projects + git 克隆目录），根节点不再暴露系统盘符；子路径 toAbsolutePath().normalize() 后必须落在白名单内（旧 contains("..") 检查在 normalize 后实际无效） |
+| `controller/McpBridgeController.java` | 修改 | **安防**：analyzeBackend/analyzeFrontend sourcePath 白名单校验（仅项目目录/git 克隆目录内），越界抛 40300；bridge token 改 MessageDigest.isEqual 常量时间比较防时序侧信道，空/弱 token 直接拒绝 |
+| `service/GitCloneService.java` | 修改 | **安防 SSRF**：克隆前解析 http(s)/git 协议主机全部 A 记录，任一落在回环/私网/链路本地即拒绝；域名不可解析报 invalidParam；ssh/git@ 无法本地预解析不拦截仅日志告知（企业堡垒机场景）；已知残留 DNS rebinding 风险记录在案 |
+| Controller ×17 | 修改 | 全部移除散落 @CrossOrigin，CORS 单轨化走 WebConfig.addCorsMappings（app.cors.allowed-origins）+ SecurityConfig cors |
+| `application.yml` | 修改 | 新增配置族：`app.prd.*`、`app.generation.*`（11 键）、`llm.max-tokens`/`llm.stream-total-timeout-ms`、`app.filesystem.browse-roots`，全部 `${ENV:default}` 可环境变量回调 |
+| 测试 ×3 | 修改 | PrdAgentTruncateTest/TestGeneratorAgentContextCapTest/TestGeneratorAgentContextFeedTest 改 ReflectionTestUtils 显式钉住旧阈值，验证截断机制本身不随生产默认值漂移 |
+
+### API 契约变化
+
+- **无破坏性变更**；SSE 新增两类事件：`error`（队列繁忙）、`retryReset`（流式重试清草稿）
+- 新增配置键见 application.yml；128k 模型环境可将 `app.prd.*`/`app.generation.*` 回退旧值
+
+### 验证结果
+
+- 后端全量 `mvn test`（容器 maven:3.9-eclipse-temurin-17）：407 tests, 0 failures, 0 errors
+
+---
+
 ## v8.3 — 覆盖率口径重构（Scope-Aware 第 3 期收官）
 **日期**: 2026-08-24
 **基线**: v8.2

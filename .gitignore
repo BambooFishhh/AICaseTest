@@ -3,6 +3,7 @@
 
 # Maven 本地仓库缓存
 .m2-repo/
+.mvn-repo/
 
 # 构建产物
 backend/target/
