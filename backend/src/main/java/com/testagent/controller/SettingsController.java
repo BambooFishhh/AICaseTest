@@ -6,7 +6,6 @@ import com.testagent.dto.SettingsDTO;
 import com.testagent.dto.UpdateSettingsRequest;
 import com.testagent.service.SettingsService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -18,7 +17,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/settings")
-@CrossOrigin
 public class SettingsController {
 
     @Autowired

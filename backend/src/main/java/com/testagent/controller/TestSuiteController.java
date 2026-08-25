@@ -13,7 +13,6 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/projects/{projectId}/test-suites")
-@CrossOrigin
 public class TestSuiteController {
 
     @Autowired

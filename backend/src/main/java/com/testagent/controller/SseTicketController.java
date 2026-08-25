@@ -4,7 +4,6 @@ import com.testagent.common.ApiResponse;
 import com.testagent.security.SecurityUtils;
 import com.testagent.security.SseTicketService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -18,7 +17,6 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/sse")
-@CrossOrigin
 public class SseTicketController {
 
     @Autowired

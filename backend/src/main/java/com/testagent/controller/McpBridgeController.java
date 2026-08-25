@@ -24,6 +24,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +62,13 @@ public class McpBridgeController {
 
     @Value("${app.mcp.bridge-token:aicasetest-mcp-local}")
     private String bridgeToken;
+
+    // v8.4fix: 分析接口只允许扫描项目目录与 Git 克隆目录，杜绝任意本地目录读取
+    @Value("${app.projects-dir:projects}")
+    private String projectsDir;
+
+    @Value("${app.git.clone-dir:data/git-repos}")
+    private String gitCloneDir;
 
     @PostMapping("/semantic-search")
     public ApiResponse<List<String>> semanticSearch(@RequestBody Map<String, Object> body,
@@ -108,10 +118,7 @@ public class McpBridgeController {
     public ApiResponse<BackendResult> analyzeBackend(@RequestBody Map<String, Object> body,
                                                       HttpServletRequest request) {
         assertBridgeToken(request);
-        String sourcePath = text(body, "sourcePath");
-        if (sourcePath.isEmpty()) {
-            throw BusinessException.invalidParam("sourcePath 不能为空");
-        }
+        String sourcePath = assertAllowedSourcePath(text(body, "sourcePath"));
         return ApiResponse.success(springAnalyzer.analyze(sourcePath));
     }
 
@@ -119,16 +126,34 @@ public class McpBridgeController {
     public ApiResponse<FrontendResult> analyzeFrontend(@RequestBody Map<String, Object> body,
                                                         HttpServletRequest request) {
         assertBridgeToken(request);
-        String sourcePath = text(body, "sourcePath");
-        if (sourcePath.isEmpty()) {
+        String sourcePath = assertAllowedSourcePath(text(body, "sourcePath"));
+        return ApiResponse.success(vueAnalyzer.analyze(sourcePath));
+    }
+
+    // v8.4fix: 规范化后必须落在项目目录/克隆目录白名单内，拒绝任意路径（含 ..、绝对路径越权）
+    private String assertAllowedSourcePath(String sourcePath) {
+        if (sourcePath == null || sourcePath.isEmpty()) {
             throw BusinessException.invalidParam("sourcePath 不能为空");
         }
-        return ApiResponse.success(vueAnalyzer.analyze(sourcePath));
+        Path target = Paths.get(sourcePath).toAbsolutePath().normalize();
+        for (String root : new String[]{projectsDir, gitCloneDir}) {
+            Path rootPath = Paths.get(root).toAbsolutePath().normalize();
+            if (target.startsWith(rootPath)) {
+                return target.toString();
+            }
+        }
+        throw new BusinessException(40300, "sourcePath 不在允许扫描的目录范围内", HttpStatus.FORBIDDEN);
     }
 
     private void assertBridgeToken(HttpServletRequest request) {
         String token = request.getHeader("X-MCP-Token");
-        if (bridgeToken == null || bridgeToken.isBlank() || !bridgeToken.equals(token)) {
+        String supplied = token == null ? "" : token;
+        // v8.4fix: 常量时间比较，避免时序侧信道；默认空/弱 token 直接拒绝（生产由 ProductionGuard 拦截）
+        boolean valid = bridgeToken != null && !bridgeToken.isBlank()
+                && MessageDigest.isEqual(
+                        bridgeToken.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        supplied.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        if (!valid) {
             throw new BusinessException(40100, "MCP bridge 未授权", HttpStatus.UNAUTHORIZED);
         }
     }

@@ -4,7 +4,6 @@ import com.testagent.common.ApiResponse;
 import com.testagent.service.ProjectAccessService;
 import com.testagent.service.ScopeService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -20,7 +19,6 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/projects/{projectId}/scope")
-@CrossOrigin
 public class ScopeController {
 
     @Autowired
