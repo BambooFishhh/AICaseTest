@@ -44,6 +44,8 @@ public class GitCloneService {
         if (!isValidGitUrl(normalized)) {
             throw BusinessException.invalidParam("Git 地址格式不正确，仅支持 http/https/ssh/git 地址");
         }
+        // v8.4fix: 克隆前解析主机拒绝内网地址，防止借 clone 功能探测内网（SSRF）
+        assertNotInternalHost(normalized);
         if (projectId == null || projectId.isBlank()) {
             throw BusinessException.invalidParam("项目标识不能为空");
         }
@@ -86,6 +88,44 @@ public class GitCloneService {
             return false;
         }
         return GIT_URL_PATTERN.matcher(normalized).matches();
+    }
+
+    // v8.4fix: SSRF 防护——http(s)/git 协议 URL 解析全部 A 记录，任一落在回环/私网/链路本地段即拒绝。
+    // 注：存在 DNS rebinding 残留风险（校验与 git 实际连接两次解析可能不同），
+    // 彻底方案需 git 层代理或 hosts 绑定，此处先消除直接内网地址场景；
+    // ssh/git@ 地址无法本地预解析（通常为企业配置的堡垒机/仓库主机），不拦截仅告警。
+    private void assertNotInternalHost(String url) {
+        String host = extractHttpHost(url);
+        if (host == null || host.isBlank()) {
+            if (url.startsWith("ssh://") || url.startsWith("git@")) {
+                log.info("SSH Git 地址跳过内网校验（无法预解析）: {}", url);
+            }
+            return;
+        }
+        java.net.InetAddress[] addresses;
+        try {
+            addresses = java.net.InetAddress.getAllByName(host);
+        } catch (java.net.UnknownHostException e) {
+            throw BusinessException.invalidParam("Git 地址域名无法解析: " + host);
+        }
+        for (java.net.InetAddress addr : addresses) {
+            if (addr.isLoopbackAddress() || addr.isSiteLocalAddress()
+                    || addr.isLinkLocalAddress() || addr.isAnyLocalAddress()) {
+                log.warn("拒绝指向内网的 Git 克隆地址: host={}, addr={}", host, addr.getHostAddress());
+                throw BusinessException.invalidParam("Git 地址指向内网，禁止克隆: " + host);
+            }
+        }
+    }
+
+    private String extractHttpHost(String url) {
+        if (!url.startsWith("http://") && !url.startsWith("https://") && !url.startsWith("git://")) {
+            return null;
+        }
+        try {
+            return java.net.URI.create(url).getHost();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     Path cloneToTarget(String url, Path target) {
