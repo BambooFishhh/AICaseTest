@@ -328,11 +328,22 @@ public class ScopeSlicingService {
         return keys;
     }
 
+    /**
+     * v8.3fix: 端点 id 归一化——仅 METHOD 大写，path 保持原样。
+     * 旧实现整串 toUpperCase 使 "GET /WX/ORDER/LIST" 与其余比较方
+     * （normalizeEndpointIdForCoverage 等："GET /wx/order/list"）永不相等，
+     * 导致 scope 模式接口覆盖恒 0%、context.endpoints 注入为空。
+     */
     static String normalizeEndpointId(String ref) {
         if (ref == null) {
             return "";
         }
-        return ref.trim().replaceAll("\\s+", " ").toUpperCase();
+        String s = ref.trim().replaceAll("\\s+", " ");
+        int space = s.indexOf(' ');
+        if (space > 0) {
+            return s.substring(0, space).toUpperCase() + s.substring(space);
+        }
+        return s;
     }
 
     static boolean pathMatch(String a, String b) {

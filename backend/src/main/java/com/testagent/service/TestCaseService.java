@@ -1495,10 +1495,13 @@ public class TestCaseService {
         coverage.put("stateTransition", stateCov);
 
         // 接口覆盖率：分母 = 本期目标接口
+        // v8.3fix: 与 CoverageService 同源——用 targetEndpointsDetail 原样 method+path 归一，
+        // 不再消费整串大写的 targetEndpointIds（大小写错位曾致接口覆盖恒 0%）
         Set<String> totalEndpoints = new HashSet<>();
         if (!slice.isEmpty()) {
-            for (String id : slice.targetEndpointIds()) {
-                totalEndpoints.add(normalizeEndpointIdForCoverage(id));
+            for (Map<String, Object> ep : slice.targetEndpointsDetail()) {
+                totalEndpoints.add(normalizeEndpointIdForCoverage(
+                        ep.get("method") + " " + ep.get("path")));
             }
         }
 
