@@ -312,9 +312,18 @@ public class TestCaseService {
             // v7.1(G2): 实际计数推送草稿数——比 report.generated-focusDropped 更可信，
             // 两者差值即流式/全量解析错位量（G8 观测钩子）
             java.util.concurrent.atomic.AtomicInteger pushedCount = new java.util.concurrent.atomic.AtomicInteger();
-            TestGeneratorAgent.CaseCallback caseCb = tc -> {
-                pushedCount.incrementAndGet();
-                sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
+            TestGeneratorAgent.CaseCallback caseCb = new TestGeneratorAgent.CaseCallback() {
+                @Override
+                public void onCase(TestCase tc) {
+                    pushedCount.incrementAndGet();
+                    sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
+                }
+
+                // v8.4fix: 流式重试时通知前端清空已渲染草稿，避免重试重推造成界面重复用例
+                @Override
+                public void onRetryReset() {
+                    sendSseEvent(emitter, clientGone, "retryReset", Map.of());
+                }
             };
 
             telemetryService.setTaskContext(taskId, agentTaskService.getAttempt(taskId));
@@ -457,8 +466,18 @@ public class TestCaseService {
                 sendSseEvent(emitter, clientGone, "progress", Map.of("message", msg));
                 projectRepository.updateProgress(projectId, msg);
             };
-            TestGeneratorAgent.CaseCallback caseCb = tc ->
+            TestGeneratorAgent.CaseCallback caseCb = new TestGeneratorAgent.CaseCallback() {
+                @Override
+                public void onCase(TestCase tc) {
                     sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
+                }
+
+                // v8.4fix: 流式重试时通知前端清空已渲染草稿，避免重试重推造成界面重复用例
+                @Override
+                public void onRetryReset() {
+                    sendSseEvent(emitter, clientGone, "retryReset", Map.of());
+                }
+            };
 
             telemetryService.setTaskContext(taskId, agentTaskService.getAttempt(taskId));
             List<TestCase> generated;

@@ -14,6 +14,7 @@ import org.jsoup.Connection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
@@ -45,8 +46,13 @@ public class PrdAgent {
     private LlmResultCacheService llmResultCacheService;
 
     // v1.10: PRD 文本最大长度（防止 LLM token 超限）
-    private static final int MAX_PRD_LENGTH = 12000;
-    private static final int MAX_TOTAL_DOC_LENGTH = 24000;
+    // v8.4: 参数化并适配 256k 上下文模型——单文档 12000→40000、总量 24000→96000；
+    // 此处截断发生在需求结构化解析入口，截太狠会直接丢需求（覆盖率根因）。
+    // 字段初始化默认值兜底：单测直接 new 不走容器时 @Value 不注入。
+    @Value("${app.prd.doc-max-chars:40000}")
+    private int maxPrdLength = 40000;
+    @Value("${app.prd.total-max-chars:96000}")
+    private int maxTotalDocLength = 96000;
     private static final int MAX_FETCH_BYTES = 2_000_000;
     private static final int FETCH_TIMEOUT_MS = 10_000;
     private static final int MAX_REDIRECTS = 3;
@@ -135,10 +141,10 @@ public class PrdAgent {
         if (supplementary != null && !supplementary.isBlank()) {
             sb.append("## 【补充需求】\n").append(truncateDoc(supplementary)).append("\n\n");
         }
-        if (sb.length() > MAX_TOTAL_DOC_LENGTH) {
+        if (sb.length() > maxTotalDocLength) {
             // v7.7(L4a): 总量超限头尾各半保留——纯头部截断会系统性丢弃后部内容
             String full = sb.toString();
-            int half = MAX_TOTAL_DOC_LENGTH / 2;
+            int half = maxTotalDocLength / 2;
             return full.substring(0, half)
                     + "\n...(中略)...\n" + full.substring(full.length() - half)
                     + "\n...(需求资料头尾各保留 " + half + " 字符)";
@@ -148,14 +154,14 @@ public class PrdAgent {
 
     private String truncateDoc(String content) {
         String trimmed = content == null ? "" : content.trim();
-        if (trimmed.length() <= MAX_PRD_LENGTH) {
+        if (trimmed.length() <= maxPrdLength) {
             return trimmed;
         }
         // v7.7(L4a): 头尾各保留一半——验收标准/边界条件/异常流通常在文档后部，
         // 此前尾部硬截断恰把它们丢掉
-        int half = MAX_PRD_LENGTH / 2;
+        int half = maxPrdLength / 2;
         return trimmed.substring(0, half)
-                + "\n...(中略 " + (trimmed.length() - MAX_PRD_LENGTH) + " 字符)...\n"
+                + "\n...(中略 " + (trimmed.length() - maxPrdLength) + " 字符)...\n"
                 + trimmed.substring(trimmed.length() - half);
     }
 

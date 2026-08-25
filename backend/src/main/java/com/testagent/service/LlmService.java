@@ -63,17 +63,23 @@ public class LlmService {
     private boolean generationThinking;
 
     // v6.1 (B 方案): 统一 prompt 上限，防止超大上下文触发 Idle timeout
-    // v7.13: 默认 60000 → 300000（随分析器输入预算放大；此处为保险丝，正常不触发）
-    @Value("${llm.max-prompt-chars:300000}")
-    private int maxPromptChars;
+    // v7.13: 默认 60000 → 300000；v8.4: → 500000 适配 256k context 模型（此处为保险丝，正常不触发）
+    @Value("${llm.max-prompt-chars:500000}")
+    private int maxPromptChars = 500000;
 
     // v6.5: LLM 重试次数（分类 + 抖动，4xx 不重试）
     @Value("${llm.retry.max-attempts:3}")
     private int maxRetries = 3;
 
-    // v7.3(L8): 输出上限配置化（原硬编码 16384）
-    @Value("${llm.max-tokens:16384}")
-    private int maxTokens = 16384;
+    // v7.3(L8): 输出上限配置化（原硬编码 16384）；v8.4: 默认 16384 → 32768，
+    // 减少单轮高密度用例顶满输出上限导致的流式 JSON 截断（适配 256k context 模型）
+    @Value("${llm.max-tokens:32768}")
+    private int maxTokens = 32768;
+
+    // v8.4fix: 流级总超时看门狗——底层 read-timeout 在网关持续下发心跳时不会触发，
+    // 无看门狗时挂死的流会永久占用 generation 线程与 SSE 连接
+    @Value("${llm.stream-total-timeout-ms:900000}")
+    private long streamTotalTimeoutMs = 900000;
 
     @Autowired
     private ChatClient.Builder chatClientBuilder;
@@ -224,7 +230,20 @@ public class LlmService {
                                 Consumer<String> chunkConsumer,
                                 java.util.function.BooleanSupplier cancelSignal) {
         return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer,
-                cancelSignal, generationThinking).getText();
+                cancelSignal, generationThinking, null).getText();
+    }
+
+    /**
+     * v8.4fix: 带重试重置钩子的流式调用。流中途失败重试前，若已向消费者推送过内容，
+     * 先回调 retryResetHook（调用方清空已累积的解析缓冲/通知前端），避免半截+全量重复推送。
+     */
+    public String chatStreaming(String systemPrompt, String userPrompt,
+                                double temperature,
+                                Consumer<String> chunkConsumer,
+                                java.util.function.BooleanSupplier cancelSignal,
+                                Runnable retryResetHook) {
+        return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer,
+                cancelSignal, generationThinking, retryResetHook).getText();
     }
 
     /**
@@ -234,7 +253,7 @@ public class LlmService {
                                                 double temperature,
                                                 Consumer<String> chunkConsumer) {
         return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer,
-                null, generationThinking);
+                null, generationThinking, null);
     }
 
     private LlmCallResult chatStreamingWithUsage(String systemPrompt, String userPrompt,
@@ -242,6 +261,16 @@ public class LlmService {
                                                  Consumer<String> chunkConsumer,
                                                  java.util.function.BooleanSupplier cancelSignal,
                                                  boolean enableThinking) {
+        return chatStreamingWithUsage(systemPrompt, userPrompt, temperature, chunkConsumer,
+                cancelSignal, enableThinking, null);
+    }
+
+    private LlmCallResult chatStreamingWithUsage(String systemPrompt, String userPrompt,
+                                                 double temperature,
+                                                 Consumer<String> chunkConsumer,
+                                                 java.util.function.BooleanSupplier cancelSignal,
+                                                 boolean enableThinking,
+                                                 Runnable retryResetHook) {
         userPrompt = boundPrompt(userPrompt);
         log.info("[LLM] chatStreaming() 开始, prompt长度={}, thinking={}",
                 userPrompt == null ? 0 : userPrompt.length(), enableThinking);
@@ -250,8 +279,12 @@ public class LlmService {
         }
         Exception lastException = null;
         for (int attempt = 0; attempt < maxRetries; attempt++) {
+            // v8.4fix: 标记本次尝试是否已向消费者推送过内容（重试前需重置）
+            java.util.concurrent.atomic.AtomicBoolean delivered = new java.util.concurrent.atomic.AtomicBoolean(false);
             try {
                 long start = System.currentTimeMillis();
+                // v8.4fix: 流级总超时看门狗（底层心跳保活时 read-timeout 不触发）
+                long deadline = start + streamTotalTimeoutMs;
                 AtomicLong firstTokenAt = new AtomicLong(0);
                 StringBuilder full = new StringBuilder();
                 AtomicReference<Usage> usageRef = new AtomicReference<>();
@@ -275,6 +308,7 @@ public class LlmService {
                     if (delta != null && !delta.isEmpty()) {
                         firstTokenAt.compareAndSet(0, System.currentTimeMillis());
                         full.append(delta);
+                        delivered.set(true);
                         if (chunkConsumer != null) {
                             chunkConsumer.accept(delta);
                         }
@@ -298,6 +332,11 @@ public class LlmService {
                         if (cancelSignal != null && cancelSignal.getAsBoolean()) {
                             disposable.dispose();
                             throw new GenerationCancelledException("用户取消生成");
+                        }
+                        // v8.4fix: 超过流级总时长主动中断，异常消息含 timeout 字样会被重试策略识别为可重试
+                        if (System.currentTimeMillis() > deadline) {
+                            disposable.dispose();
+                            throw new RuntimeException("LLM stream total timeout after " + streamTotalTimeoutMs + "ms");
                         }
                     }
                 } finally {
@@ -344,6 +383,16 @@ public class LlmService {
                 }
             }
             if (attempt < maxRetries - 1) {
+                // v8.4fix: 重试前若已推送过部分内容，通知调用方重置（清空解析缓冲/前端草稿），
+                // 避免重试后全量重推造成重复用例/重复 SSE 输出
+                if (delivered.get() && retryResetHook != null) {
+                    try {
+                        retryResetHook.run();
+                        log.warn("[LLM] 流式重试前已通知调用方重置已推送内容 (attempt {})", attempt + 1);
+                    } catch (Exception hookEx) {
+                        log.warn("[LLM] retryResetHook 执行失败: {}", hookEx.getMessage());
+                    }
+                }
                 try {
                     long delay = retryDelayMs(attempt);
                     log.info("[LLM] 等待 {}ms 后重试...", delay);
@@ -533,9 +582,18 @@ public class LlmService {
         if (userPrompt == null || userPrompt.length() <= maxPromptChars) {
             return userPrompt;
         }
-        log.warn("[LLM] prompt 超限 {} → 截断到 {}", userPrompt.length(), maxPromptChars);
-        String head = userPrompt.substring(0, maxPromptChars);
-        return head + "\n\n[system] 上下文已按 llm.max-prompt-chars 上限裁剪，请只使用剩余内容作答。";
+        // v8.4fix: 保头尾裁中段——任务指令/补齐 gaps 清单通常在 prompt 尾部，
+        // 旧的纯头部截断会丢掉最关键的内容导致生成跑偏；尾部保留 1/4 预算（封顶 40k）
+        int tailChars = Math.min(maxPromptChars / 4, 40000);
+        int headChars = maxPromptChars - tailChars;
+        log.error("[LLM] prompt 超限 {} → 保头 {} + 保尾 {} 裁中段（保险丝触发，上游预算可能失效）",
+                userPrompt.length(), headChars, tailChars);
+        String head = userPrompt.substring(0, headChars);
+        String tail = userPrompt.substring(userPrompt.length() - tailChars);
+        return head
+                + "\n\n[system] 中段上下文已按 llm.max-prompt-chars 上限截断（原始长度 "
+                + userPrompt.length() + "），仅保留头尾，请基于现有内容作答。\n\n"
+                + tail;
     }
 
     // v6.5: 延迟 = 基数 * [0.8, 1.2) 抖动，避免多个任务同时重试再次撞限流

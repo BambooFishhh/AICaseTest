@@ -47,7 +47,9 @@ class PrdAgentTruncateTest {
     @Test
     void truncateDocLongContentKeepsHeadAndTail() {
         PrdAgent agent = buildAgent(mock(LlmService.class));
-        // 头部 6000 字 + 中部 5000 字 + 尾部 6000 字（超过 MAX_PRD_LENGTH=12000）
+        // v8.4: 生产默认已放宽到 40000，此处显式钉住 12000 验证头尾保留机制本身
+        ReflectionTestUtils.setField(agent, "maxPrdLength", 12000);
+        // 头部 6000 字 + 中部 5000 字 + 尾部 6000 字（超过 maxPrdLength=12000）
         String head = "头".repeat(6000);
         String middle = "中".repeat(5000);
         String tail = "尾".repeat(6000);

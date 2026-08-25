@@ -3,6 +3,7 @@ package com.testagent.agent;
 import com.testagent.analyzer.result.BusinessRule;
 import com.testagent.analyzer.result.EndpointInfo;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,6 +20,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TestGeneratorAgentContextCapTest {
 
     private final TestGeneratorAgent agent = new TestGeneratorAgent();
+
+    // v8.4: 生产默认已放宽到 160/150，本类验证截断机制本身，显式钉住小值避免断言随默认值漂移
+    {
+        ReflectionTestUtils.setField(agent, "endpointsContextMax", 80);
+        ReflectionTestUtils.setField(agent, "rulesContextMax", 100);
+    }
 
     private EndpointInfo ep(String path, String description) {
         return EndpointInfo.builder()

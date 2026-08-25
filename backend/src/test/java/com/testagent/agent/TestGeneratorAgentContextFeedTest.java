@@ -119,6 +119,8 @@ class TestGeneratorAgentContextFeedTest {
     @Test
     @SuppressWarnings("unchecked")
     void checklistEndpointsOver150TruncatedWithNote() {
+        // v8.4: 生产默认已放宽到 250，此处显式钉住 150 验证截断说明条目机制本身
+        ReflectionTestUtils.setField(agent, "checklistEndpointsCap", 150);
         List<Object> endpoints = new ArrayList<>();
         for (int i = 0; i < 160; i++) {
             endpoints.add(Map.of("id", "ep-" + i, "path", "/api/e" + i));

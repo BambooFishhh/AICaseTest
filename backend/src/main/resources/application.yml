@@ -85,13 +85,18 @@ llm:
     failure-threshold: ${LLM_CIRCUIT_FAILURE_THRESHOLD:5}
     open-seconds: ${LLM_CIRCUIT_OPEN_SECONDS:30}
   # v6.1 (B 方案): 统一 prompt 上限，避免 277KB 超大 prompt 触发 Idle timeout/超时
-  # v7.13: 60000 → 300000——总闸 = 2k 指令 + 80k 规则摘要 + 120k Spring 源码 + 余量。
-  # 代码类内容 300k chars ≈ 90-120k tokens，128k context 模型贴边可用；
-  # boundPrompt 头部截断保留为保险丝（触发即 ERROR，说明上游预算失效）
-  max-prompt-chars: ${LLM_MAX_PROMPT_CHARS:300000}
+  # v7.13: 60000 → 300000（128k context 模型）；v8.4: → 500000 适配 256k context 模型
+  #（500k chars ≈ 170-220k tokens，预留 ≥32k 输出；触发即 ERROR，说明上游预算失效）
+  max-prompt-chars: ${LLM_MAX_PROMPT_CHARS:500000}
+  # v7.3(L8): 输出上限；v8.4: 16384 → 32768——单轮高密度用例（20+ 条）易顶满输出上限
+  # 导致流式 JSON 截断（虽有 L8 局部补全抢救，但字段可能不完整）
+  max-tokens: ${LLM_MAX_TOKENS:32768}
   # v6.5: LLM 重试次数（分类 + 抖动，4xx 不重试）
   retry:
     max-attempts: ${LLM_RETRY_MAX_ATTEMPTS:3}
+  # v8.4fix: 流式调用流级总超时看门狗（毫秒）——底层心跳保活时 read-timeout 不触发，
+  # 超过该时长主动中断并按超时可重试分类处理，防止挂死流永久占用线程与 SSE 连接
+  stream-total-timeout-ms: ${LLM_STREAM_TOTAL_TIMEOUT_MS:900000}
   # v7.13: 移除死配置 llm.max-context-chars——v6.1 登记后从未被任何 @Value 读取，
   # 生成侧实际截断由 TestGeneratorAgent.truncateStrings/truncateDocs 承担（G17 相关性过滤管理）
   # v6.1: Spring AI HTTP 客户端超时（自定义 ClientHttpRequestFactory，覆盖 Jetty 默认 30s idle）
@@ -113,6 +118,32 @@ app:
     vue-source-total-chars: ${APP_ANALYZER_VUE_SOURCE_TOTAL_CHARS:96000}
     vue-template-chars: ${APP_ANALYZER_VUE_TEMPLATE_CHARS:3000}
     vue-script-chars: ${APP_ANALYZER_VUE_SCRIPT_CHARS:3000}
+  # v8.4: PRD 需求解析入口截断预算（适配 256k context 模型）——旧硬编码 12000/24000，
+  # 此处截断直接丢需求条目（覆盖率根因之一）；单文档 40k、总量 96k 仍保留头尾各半策略。
+  # 模型上下文小时可回调（128k 模型建议 12000/24000）
+  prd:
+    doc-max-chars: ${APP_PRD_DOC_MAX_CHARS:40000}
+    total-max-chars: ${APP_PRD_TOTAL_MAX_CHARS:96000}
+  # v8.4: 生成侧 prompt 上下文预算（适配 256k context 模型，全部可环境变量回调）
+  generation:
+    # 接口/规则完整详情容量（相关性过滤后的 top-N）
+    endpoints-context-max: ${APP_GEN_ENDPOINTS_CONTEXT_MAX:160}
+    rules-context-max: ${APP_GEN_RULES_CONTEXT_MAX:150}
+    # RAG 检索切片与失败经验注入（单条字符数 × 条数）
+    rag-context-chars: ${APP_GEN_RAG_CONTEXT_CHARS:2000}
+    rag-context-count: ${APP_GEN_RAG_CONTEXT_COUNT:8}
+    rag-failure-chars: ${APP_GEN_RAG_FAILURE_CHARS:1200}
+    rag-failure-count: ${APP_GEN_RAG_FAILURE_COUNT:5}
+    # PRD/上下文文档原文注入（单文档字符数 × 文档数）
+    doc-content-chars: ${APP_GEN_DOC_CONTENT_CHARS:12000}
+    doc-count: ${APP_GEN_DOC_COUNT:5}
+    # coverageChecklist.endpoints 注入上限（摘要条目，单条成本低）
+    checklist-endpoints-cap: ${APP_GEN_CHECKLIST_ENDPOINTS_CAP:250}
+    # coverageGaps 各维度 id 列表统一上限（纯 id，成本极低）
+    gaps-cap-limit: ${APP_GEN_GAPS_CAP_LIMIT:150}
+    # v8.4: 单项目生成用例总量上限 60 → 120（60 只够中小项目）；
+    # 实际总量还受补齐轮次（3~4 轮）约束，两者先到者生效
+    max-generated-cases: ${APP_GEN_MAX_GENERATED_CASES:120}
   # Git URL 项目克隆目录与超时
   git:
     clone-dir: ${GIT_CLONE_DIR:data/git-repos}
@@ -137,6 +168,9 @@ app:
   # vP1: 上传文件大小二次校验（字节，与 multipart 配置保持一致）
   upload:
     max-size: ${MAX_UPLOAD_SIZE_BYTES:20971520}
+  # v8.4fix: 目录选择器可浏览根目录白名单（逗号分隔），禁止枚举服务器全盘目录
+  filesystem:
+    browse-roots: ${APP_FS_BROWSE_ROOTS:${app.projects-dir:projects},${app.git.clone-dir:data/git-repos}}
   # vP1: 生产安全强制开关（prod 默认 true，本地开发默认 false）
   security:
     enforce: ${APP_ENFORCE_SECURITY:false}
