@@ -109,7 +109,7 @@
                 :title="hasConfirmedScope
                   ? '查看/管理已确认的本期范围'
                   : '尚未确认本期范围——生成前需先完成识别与人工确认'"
-                @click="goScope"
+                @click="openScope"
               >
                 本期范围
                 <span
@@ -505,7 +505,7 @@ function handleGenerate() {
       '需要本期范围',
       { confirmButtonText: '前往配置', cancelButtonText: '取消', type: 'warning' }
     )
-      .then(() => goScope())
+      .then(() => openScope())
       .catch(() => {})
     return
   }
