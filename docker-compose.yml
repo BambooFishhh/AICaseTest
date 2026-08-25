@@ -302,7 +302,8 @@ services:
       - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      # v8.5: Grafana 管理密码必填（消灭 compose 层 admin/admin 弱默认），未设置时 compose 直接报错
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD 必须设置}
       - GF_USERS_ALLOW_SIGN_UP=false
       - MYSQL_DATABASE=${MYSQL_DATABASE:-aicasetest}
       - MYSQL_USERNAME=${MYSQL_USERNAME:-aicasetest}

@@ -2,6 +2,7 @@ package com.testagent.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.testagent.common.BusinessException;
+import com.testagent.common.SafeDnsResolver;
 import com.testagent.dto.PrdAnalysisResult;
 import com.testagent.service.LlmResultCacheService;
 import com.testagent.service.LlmService;
@@ -20,7 +21,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
-import java.net.InetAddress;
 import java.net.URI;
 import java.net.URL;
 import java.util.LinkedHashMap;
@@ -44,6 +44,14 @@ public class PrdAgent {
     // 消除 temp 0.2 的 requirements 漂移（追加生成与首次生成模块口径不一致）+ 省调用
     @Autowired
     private LlmResultCacheService llmResultCacheService;
+
+    // v8.5: URL 抓取 DNS 安全校验统一走 SafeDnsResolver（字段初始化兜底，直 new 的单测不受影响）
+    private SafeDnsResolver safeDnsResolver = new SafeDnsResolver();
+
+    @Autowired(required = false)
+    void setSafeDnsResolver(SafeDnsResolver safeDnsResolver) {
+        this.safeDnsResolver = safeDnsResolver;
+    }
 
     // v1.10: PRD 文本最大长度（防止 LLM token 超限）
     // v8.4: 参数化并适配 256k 上下文模型——单文档 12000→40000、总量 24000→96000；
@@ -342,12 +350,8 @@ public class PrdAgent {
         if (uri.getHost() == null || uri.getHost().isBlank()) {
             throw new IllegalArgumentException("URL 缺少主机");
         }
-        for (InetAddress addr : InetAddress.getAllByName(uri.getHost())) {
-            if (addr.isAnyLocalAddress() || addr.isLoopbackAddress()
-                    || addr.isLinkLocalAddress() || addr.isSiteLocalAddress()) {
-                throw new IllegalArgumentException("禁止访问内网/私网地址: " + uri.getHost());
-            }
-        }
+        // v8.5: 双解析一致性 + 全 A 记录内网判定，收敛 rebinding TOCTOU 窗口（重定向每一跳均复用本校验）
+        safeDnsResolver.assertStablePublicHost(uri.getHost(), "URL");
         return uri.toString();
     }
 

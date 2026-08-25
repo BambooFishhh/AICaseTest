@@ -2153,6 +2153,11 @@ async function handleRegenerate() {
       streamProgress.value = msg
     },
     onCase: upsertStreamedCase,
+    onRetryReset: () => {
+      // v8.5: 后端 LLM 重试前清空已渲染草稿，重推不再与旧草稿叠加
+      streamedCases.value = []
+      streamProgress.value = '模型输出异常，正在重试...'
+    },
     onComplete: async (data) => {
       // v7.1(G2): complete 携带 total/pushed/dropped——流式推送的是草稿，
       // 落库前经评审/去重会丢弃部分，差异原因对用户可见，不再静默
@@ -2295,6 +2300,11 @@ async function startAppendStream(type) {
       streamProgress.value = msg
     },
     onCase: upsertStreamedCase,
+    onRetryReset: () => {
+      // v8.5: 同全量生成——重试前清空草稿缓冲
+      streamedCases.value = []
+      streamProgress.value = '模型输出异常，正在重试...'
+    },
     onComplete: async (data) => {
       const appended = data?.appended ?? 0
       const dropped = data?.dropped ?? 0

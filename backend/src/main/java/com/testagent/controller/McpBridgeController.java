@@ -16,6 +16,8 @@ import com.testagent.entity.StateMachine;
 import com.testagent.entity.TestCase;
 import com.testagent.service.SemanticService;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -38,6 +40,8 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/mcp")
 public class McpBridgeController {
+
+    private static final Logger log = LoggerFactory.getLogger(McpBridgeController.class);
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -62,6 +66,10 @@ public class McpBridgeController {
 
     @Value("${app.mcp.bridge-token:aicasetest-mcp-local}")
     private String bridgeToken;
+
+    // v8.5: /api/mcp/** 来源白名单——默认仅回环，反代部署可经 APP_MCP_ALLOWED_REMOTE_ADDRS 注入额外 IP
+    @Value("${app.mcp.allowed-remote-addrs:}")
+    private List<String> allowedRemoteAddrs = new ArrayList<>();
 
     // v8.4fix: 分析接口只允许扫描项目目录与 Git 克隆目录，杜绝任意本地目录读取
     @Value("${app.projects-dir:projects}")
@@ -146,6 +154,8 @@ public class McpBridgeController {
     }
 
     private void assertBridgeToken(HttpServletRequest request) {
+        // v8.5: 来源校验先于 token——非回环即使携带正确 token 也返回 403，token 降为第二因子
+        assertLoopbackSource(request);
         String token = request.getHeader("X-MCP-Token");
         String supplied = token == null ? "" : token;
         // v8.4fix: 常量时间比较，避免时序侧信道；默认空/弱 token 直接拒绝（生产由 ProductionGuard 拦截）
@@ -156,6 +166,21 @@ public class McpBridgeController {
         if (!valid) {
             throw new BusinessException(40100, "MCP bridge 未授权", HttpStatus.UNAUTHORIZED);
         }
+    }
+
+    // v8.5: 仅接受回环来源（127.*、::1），杜绝外部主机直连桥接接口；反代场景用白名单显式放行
+    private void assertLoopbackSource(HttpServletRequest request) {
+        String ip = request.getRemoteAddr();
+        if (ip != null && (isLoopbackIp(ip) || allowedRemoteAddrs.contains(ip))) {
+            return;
+        }
+        log.warn("拒绝非回环来源的 MCP 桥接请求: remoteAddr={}", ip);
+        throw new BusinessException(40300, "MCP bridge 仅允许本机回环访问", HttpStatus.FORBIDDEN);
+    }
+
+    private boolean isLoopbackIp(String ip) {
+        return ip.equals("127.0.0.1") || ip.startsWith("127.")
+                || ip.equals("::1") || ip.equals("0:0:0:0:0:0:0:1");
     }
 
     private String text(Map<String, Object> body, String key) {

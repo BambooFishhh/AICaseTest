@@ -26,6 +26,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "app.mcp.enabled=false",
         "app.milvus.enabled=false",
         "app.redis.enabled=false",
+        // v8.5: SecurityKeyGuard 全 profile 必填，测试上下文显式补键
+        "app.jwt.secret=integration-test-jwt-secret-0123456789abcdef",
+        "app.admin.password=integration-test-admin-pw",
+        "app.milvus.password=integration-test-milvus-pw",
+        "app.mcp.bridge-token=integration-test-mcp-token",
         "spring.flyway.enabled=true",
         "spring.flyway.locations=classpath:db/migration/mysql",
         "spring.flyway.baseline-on-migrate=true",

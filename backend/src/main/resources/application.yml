@@ -183,7 +183,8 @@ app:
     host: ${MILVUS_HOST:localhost}
     port: ${MILVUS_PORT:19530}
     username: ${MILVUS_USERNAME:root}
-    password: ${MILVUS_PASSWORD:aicasetest-milvus}
+    # v8.5: 密钥必填（SecurityKeyGuard 全 profile 校验），缺失即启动失败
+    password: ${MILVUS_PASSWORD}
     dimension: ${MILVUS_DIMENSION:1024}
     duplicate-threshold: ${MILVUS_DUPLICATE_THRESHOLD:0.92}
   # v6.4: RAG 切片与多路检索
@@ -198,7 +199,10 @@ app:
   mcp:
     enabled: ${APP_MCP_ENABLED:true}
     bridge-url: ${MCP_BRIDGE_URL:http://127.0.0.1:8000}
-    bridge-token: ${MCP_BRIDGE_TOKEN:aicasetest-mcp-local}
+    # v8.5: 桥接 token 必填（SecurityKeyGuard 全 profile 校验），缺失即启动失败
+    bridge-token: ${MCP_BRIDGE_TOKEN}
+    # v8.5: /api/mcp/** 来源白名单——默认仅回环，反代部署可注入额外 IP（逗号分隔）
+    allowed-remote-addrs: ${APP_MCP_ALLOWED_REMOTE_ADDRS:}
     # v6.6: MCP 工具请求超时（秒），超时抛 TOOL_TIMEOUT 并支持幂等工具重试
     request-timeout-seconds: ${APP_MCP_REQUEST_TIMEOUT_SECONDS:60}
   # v5.8: 数据保留策略（0=关闭）
@@ -209,10 +213,12 @@ app:
     allowed-origins: ${APP_CORS_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:8080}
   # v4.0: JWT 与默认管理员配置
   jwt:
-    secret: ${APP_JWT_SECRET:aicasetest-dev-secret-change-me-please-0123456789}
+    # v8.5: 必填（SecurityKeyGuard 全 profile 校验），缺失即启动失败；prod 强度检查见 ProductionGuard
+    secret: ${APP_JWT_SECRET}
     expiration-hours: ${APP_JWT_EXPIRATION_HOURS:12}
   admin:
-    password: ${APP_ADMIN_PASSWORD:admin123}
+    # v8.5: 必填（SecurityKeyGuard 全 profile 校验），缺失即启动失败
+    password: ${APP_ADMIN_PASSWORD}
   # v7.9(E10): 复制执行权限收敛——false 保持 VIEW 即可（v4.3 现状）；true 要求 OPERATE
   execution:
     copy-execute-require-operate: ${APP_COPY_EXECUTE_REQUIRE_OPERATE:false}

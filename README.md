@@ -79,12 +79,15 @@ LLM_BASE_URL=https://api.example.com/v1
 LLM_MODEL=your-model-name
 ```
 
+> ⚠️ **v8.5 起安全密钥必填**：`APP_JWT_SECRET` / `APP_ADMIN_PASSWORD` / `MILVUS_PASSWORD` / `MCP_BRIDGE_TOKEN` 缺失任一项后端启动失败（错误信息指明缺失变量名）；Docker 全栈另需 `GRAFANA_ADMIN_PASSWORD`（未设置时 `docker compose config` 直接报错）。部署前可用 `docker compose config --quiet` 自查。
+
 可选环境变量：
 
 - `MYSQL_URL` / `MYSQL_USERNAME` / `MYSQL_PASSWORD`
 - `REDIS_HOST` / `REDIS_PORT`
 - `MILVUS_HOST` / `MILVUS_PORT` / `MILVUS_DIMENSION`
 - `APP_REDIS_ENABLED` / `APP_MILVUS_ENABLED`
+- `APP_MCP_ALLOWED_REMOTE_ADDRS`（v8.5：/api/mcp/** 额外来源白名单，逗号分隔 IP，默认仅回环）
 - `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP` / `RAG_RRF_K` / `RAG_CONTEXT_TOPK` / `RAG_FAILURE_TOPK` / `RAG_MAX_QUERIES`（v6.4 RAG 切片与多路检索）
 - `LLM_RETRY_MAX_ATTEMPTS`（LLM 重试次数，v6.5；4xx 不重试） / `APP_HA_TASK_LEASE_SECONDS`（任务租约秒数，v6.5）
 - `APP_MCP_REQUEST_TIMEOUT_SECONDS`（MCP 工具超时秒数，v6.6） / `APP_HA_TASK_TTL_MINUTES`（任务 TTL 分钟数，v6.6）
@@ -180,9 +183,11 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v8.3（覆盖率口径重构，Scope-Aware 三期收官）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v8.5（安全闭环，计划书阶段 1 收官）**，生产线基线为 vP5（压测与容量）。
 
-- v8.3 要点：覆盖度量全面切换"本期范围"单一口径，全量口径彻底移除（用户决策）——**分母收敛**（状态转换=范围内各 SM 的本期目标转换；接口=范围内目标接口），历史转换仅展示（inScope=false）不参与统计且归一化键与切片分类同源防漂移；**引导态替代误导数字**（无已确认范围时 matrix/uncovered-endpoints 返回 scoped=false，前端统计卡 '—' + 引导链接，Dashboard 未建范围项目不进图表）；**影响面清单透出**（affectedItems=AFFECTED 条目，作为回归关注点参考）；AI 评审的覆盖清单同步收敛到本期项。后端 405 测试全绿。
+- v8.5 要点：《长期迭代计划书》阶段 1 全量落地——**弱默认密钥清零**（SecurityKeyGuard 全 profile 校验 APP_JWT_SECRET/APP_ADMIN_PASSWORD/MILVUS_PASSWORD/MCP_BRIDGE_TOKEN 四键必填，缺失启动失败并指明变量名；prod 强度检查仍归 ProductionGuard）；**MCP 桥接回环限制**（/api/mcp/** 非回环来源 40300，token 降为第二因子，反代可配 APP_MCP_ALLOWED_REMOTE_ADDRS 白名单）；**DNS rebinding 收敛**（SafeDnsResolver 双解析一致性 + 全 A 记录内网判定，Git 克隆与 URL 抓取统一接入）；**Grafana compose 密码必填**；前端消费 retryReset 消除流式重试草稿叠加；安防集成测试 +7 例固化。后端 421 测试全绿。
+
+- v8.4 要点：全面适配 256k context 模型——生成链路全部截断预算参数化并放宽；本地代码审查修复落地——线程池饱和快速失败、流式重试端到端一致、解析逐条容错、向量层转义/字节截断/删除重试、SSRF 与目录越权收敛、prompt 注入防护。本期仅后端改动，无前端变更。后端 407 测试全绿。
 
 - v8.2 要点：生成目标只聚焦本期范围——**状态机切片**（ScopeSlicingService 将范围内 SM 的转换按证据文件 ∈ changed_files 二分为 sprint 目标/historical 上下文，checklist 与 coverageRefs 对账天然收敛到本期集合）；**BFS 确定性推导 setup 路径**（初始态→目标转换源状态最短路径输出 trigger 骨架，LLM 只填数据不找路径）；**phase 步骤标记**（structuredSteps 新增 setup/verify 字段 + prompt 分层注入 + few-shot 分层示例）；**执行 blocked 语义**（setup 失败 → 整条记已阻断而非失败，跳过后续验证步骤，报告单独统计且不入失败经验库）；**生成前置校验升级（破坏性变更）**——代码驱动项目必须先创建并确认本期范围才能生成，纯 PRD 项目不受影响；非 Git 仓库可建空草稿手动标注。后端 405 测试全绿。
 
@@ -267,6 +272,7 @@ AICaseTest/
 | v8.1 | 范围感知基础（Git 基线 diff 识别本期范围/LLM 辅助映射/人工确认锁定/partial clone 改造） | ✅ 完成 |
 | v8.2 | 本期聚焦生成（状态机切片/BFS setup 推导/prompt 分层/phase 标记/blocked 语义/生成前置校验升级） | ✅ 完成 |
 | v8.3 | 覆盖率口径重构（单一本期口径/全量口径移除/引导态/影响面清单/AI 评审覆盖同步收敛） | ✅ 完成 |
+| v8.5 | 安全闭环（弱默认密钥清零/MCP 回环限制/DNS rebinding 收敛/Grafana 必填/retryReset 前端消费） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

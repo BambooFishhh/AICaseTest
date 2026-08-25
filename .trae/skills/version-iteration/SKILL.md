@@ -1,6 +1,6 @@
 ---
 name: "version-iteration"
-description: "Executes a full version iteration cycle for AICaseTest project: PRD + tech review docs + implementation + verification + GitHub push. Invoke when user asks to start/plan/implement a new version iteration or says '迭代' or '新版本'."
+description: "Executes a full version iteration cycle for AICaseTest project: PRD + tech review docs + implementation + verification + redeploy + GitHub push. Invoke when user asks to start/plan/implement a new version iteration or says '迭代' or '新版本'."
 ---
 
 # Version Iteration Workflow
@@ -71,21 +71,40 @@ Each version iteration MUST follow these steps in order:
     - Verification results
 13. **Update README** — Add new version section with bullet points + update roadmap table status to ✅ + update API overview if new endpoints
 
-### Phase 5: Git Commit & Push (提交推送)
+### Phase 5: Redeploy (重新部署)
 
-14. **Stage all changes**:
+> 迭代完成后必须重新部署本地栈，让新代码在运行环境中生效，再做提交推送。
+
+14. **Rebuild images**（仅重建有改动的服务；纯前端版本可只 build frontend）:
+    ```powershell
+    cd e:\java_project\AICaseTest; docker compose build backend frontend 2>&1 | Select-Object -Last 10
+    ```
+15. **Recreate containers**:
+    ```powershell
+    docker compose up -d backend frontend
+    ```
+16. **Verify deployment** — 确认容器 healthy/Up、无启动报错：
+    ```powershell
+    docker compose ps
+    docker compose logs --tail 30 backend
+    ```
+    若启动失败，修复后重建直至 healthy。
+
+### Phase 6: Git Commit & Push (提交推送)
+
+17. **Stage all changes**:
     ```powershell
     cd e:\java_project\AICaseTest; git add -A
     ```
-15. **Verify staged files** (check no .env or sensitive files):
+18. **Verify staged files** (check no .env or sensitive files):
     ```powershell
     git status --short | Select-Object -First 15
     ```
-16. **Commit** with format:
+19. **Commit** with format:
     ```powershell
     git commit -m "v{version}: {theme} - {key changes summary}"
     ```
-17. **Push to GitHub**:
+20. **Push to GitHub**:
     ```powershell
     git push origin main
     ```

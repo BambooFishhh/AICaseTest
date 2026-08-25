@@ -11,7 +11,8 @@ export function triggerGenerate(projectId, params) {
 // v6.6: 先以 Bearer 换短期 ticket，再用 ?ticket= 建立连接（避免长期 JWT 进 URL）。
 // v7.12(E16): 新增可选 onDisconnect 回调——error 事件区分"后端下发错误（e.data 有值）"
 // 与"连接层断开（e.data 为空，网络瞬断/代理超时，后端任务仍在跑）"，后者不再误报失败。
-export async function streamGenerate(projectId, { onProgress, onCase, onComplete, onCancelled, onError, onDisconnect } = {}) {
+// v8.5: 新增 onRetryReset——后端 LLM 重试前推送 retryReset，前端清空已渲染草稿防重推叠加。
+export async function streamGenerate(projectId, { onProgress, onCase, onRetryReset, onComplete, onCancelled, onError, onDisconnect } = {}) {
   const { data } = await fetchSseTicket()
   const url = `/api/projects/${projectId}/testcases/generate-stream?ticket=${encodeURIComponent(data.ticket)}`
   const es = new EventSource(url)
@@ -22,6 +23,8 @@ export async function streamGenerate(projectId, { onProgress, onCase, onComplete
   es.addEventListener('case', (e) => {
     try { onCase?.(JSON.parse(e.data).testCase) } catch {}
   })
+  // v8.5: 纯信号量事件（无数据体），触发即清态
+  es.addEventListener('retryReset', () => { onRetryReset?.() })
   es.addEventListener('complete', (e) => {
     // v7.1(G2): complete 携带 total/pushed/dropped（各阶段丢弃明细），推送≠落库不再静默
     try { onComplete?.(JSON.parse(e.data)) } catch {}
@@ -52,10 +55,11 @@ export async function streamGenerate(projectId, { onProgress, onCase, onComplete
 // complete 事件携带 total/appended/dropped/existingBefore 字段。
 // type 为空时全类型追加；非空时仅追加该类型（positive/negative/boundary/data）。
 // v7.12(E16): 新增可选 onDisconnect 回调——断连（e.data 为空）不再误报失败，降级轮询。
+// v8.5: 新增 onRetryReset——同 streamGenerate，重试前清空草稿。
 export async function streamGenerateAppend(
   projectId,
   type,
-  { onProgress, onCase, onComplete, onCancelled, onError, onDisconnect } = {}
+  { onProgress, onCase, onRetryReset, onComplete, onCancelled, onError, onDisconnect } = {}
 ) {
   const params = new URLSearchParams()
   if (type) params.set('type', type)
@@ -71,6 +75,7 @@ export async function streamGenerateAppend(
   es.addEventListener('case', (e) => {
     try { onCase?.(JSON.parse(e.data).testCase) } catch {}
   })
+  es.addEventListener('retryReset', () => { onRetryReset?.() })
   es.addEventListener('complete', (e) => {
     // v3.5: complete 携带 total/appended/dropped/existingBefore
     try { onComplete?.(JSON.parse(e.data)) } catch {}

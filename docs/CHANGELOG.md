@@ -4,6 +4,65 @@
 
 ---
 
+## v8.5 — 安全闭环（弱默认密钥清零 + MCP 回环限制 + DNS rebinding 收敛）
+**日期**: 2026-08-26
+**基线**: v8.4
+**主题**: 《长期迭代计划书》阶段 1 全量落地——消灭 G1 凭据治理差距：关键钥全 profile 必填、Grafana compose 弱默认清零、MCP 桥接接口回环限制、Git 克隆/URL 抓取双解析一致性收敛 rebinding 窗口；前端消费 retryReset 消除重试草稿叠加；安防能力集成测试固化。含少量前端变更
+
+### 背景
+
+计划书评估生产就绪度 6/10，首要短板 G1：弱默认密钥仅靠 prod profile 的 ProductionGuard 兜底，非 prod 部署公网即失守；v8.4 审查记录的 DNS rebinding TOCTOU 残留与 MCP 单因子 token 一并收敛。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `config/SecurityKeyGuard.java` | **新增** | **8.1**：全 profile 启动校验——APP_JWT_SECRET / APP_ADMIN_PASSWORD / MILVUS_PASSWORD / MCP_BRIDGE_TOKEN 任一缺失抛异常并逐项指明环境变量名；用 InitializingBean（刷新期）而非 EnvironmentPostProcessor，避免与 spring-dotenv 属性源注册顺序无契约导致的误判；早于 ProductionGuard 执行，两层门禁不合并（此处只查必填，强度检查仍归 prod） |
+| `common/SafeDnsResolver.java` | **新增** | **8.4**：公共 DNS 安全解析器——全 A 记录内网判定 + 双解析结果集一致性比对；可注入 lookup 函数供单测模拟"首轮公网次轮私网"序列，探测间隔测试置 0；取舍说明：git 进程/Jsoup 建连时 OS 仍会再解析一次无法 JVM 内钉死 IP，TOCTOU 窗口从分钟级收窄到秒级轮换恰好落入两次探测之间，轻量方案经计划书授权 |
+| `application.yml` | 修改 | **8.1**：四键占位符去掉默认值（`${APP_JWT_SECRET}` 等）；**8.3** 新增 `app.mcp.allowed-remote-addrs`（默认空 = 仅回环，反代逃生口） |
+| `controller/McpBridgeController.java` | 修改 | **8.3**：assertBridgeToken 前插入 assertLoopbackSource——非 `127.*`/`::1` 来源返回 40300（来源校验先于 token，正确 token 也拦）；白名单命中放行；token 正式降为第二因子 |
+| `service/GitCloneService.java` | 修改 | **8.4**：内联 getAllByName 循环替换为 safeDnsResolver.assertStablePublicHost（双解析+内网判定）；ssh/git@ 跳过策略不变；v8.4 注释中的 rebinding 残留风险标记收敛关闭 |
+| `agent/PrdAgent.java` | 修改 | **8.4**：validatePublicUrl 同步接入 SafeDnsResolver，URL 抓取（含重定向每一跳）统一双解析校验；方案偏差：计划书假设 OkHttp 可绑 Dns 接口，实际 Jsoup 无该能力，改用计划书为 git 预授权的同款轻量方案 |
+| `docker-compose.yml` | 修改 | **8.2**：GF_SECURITY_ADMIN_PASSWORD 改 `${GRAFANA_ADMIN_PASSWORD:?必须设置}`，未设置时 compose config/up 直接报错，admin/admin 弱默认消灭 |
+| `.env.example` | 修改 | **8.1** 补 MCP_BRIDGE_TOKEN 示例 + 四键必填注释；**8.3** 补 APP_MCP_ALLOWED_REMOTE_ADDRS 注释示例 |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `api/testcase.js` | 修改 | **8.5**：streamGenerate/streamGenerateAppend 新增 onRetryReset 可选回调并接线 retryReset SSE 事件（纯信号量不解析数据体）；旧调用不传回调零影响 |
+| `views/TestCaseList.vue` | 修改 | **8.5**：生成/追加生成两处传入 onRetryReset——清空 streamedCases 草稿缓冲 + 进度文案切换"模型输出异常，正在重试..."，LLM 重推不再与旧草稿叠加 |
+
+### 测试变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `config/SecurityKeyGuardTest` | **新增** | 5 例：全键通过 / 缺 JWT 指明变量名 / 空白 MILVUS_PASSWORD / 缺 MCP token / 一次列出全部缺失项 |
+| `common/SafeDnsResolverTest` | **新增** | 5 例：首轮内网拒绝 / 次轮私网拒绝（经典 rebinding）/ 双公网漂移拒绝 / 稳定公网放行 / 域名不可解析 invalidParam |
+| `controller/McpBridgeControllerTest` | 扩充 | +4 例：错 token 40100 / 非回环+对 token 40300 / 白名单 IP 放行 / IPv6 回环放行 |
+| `SecurityApiIntegrationTest` | 扩充 | **8.6**：+7 例——MCP 无 token 401 / 错 token 401 / 非回环+对 token 40300 / 回环+对 token 通过 / Filesystem 白名单外绝对路径拒绝且响应无绝对路径泄漏 / 相对路径 .. 逃逸拒绝 / MCP analyze-backend sourcePath 逃逸 40300；properties 显式补四键满足 SecurityKeyGuard |
+| `LlmStreamingIntegrationTest` / `MySqlFlywayIntegrationTest` | 修改 | 同步补四键测试属性（上下文启动前提） |
+| `frontend/src/api/testcase.test.js` | **新增** | **8.5**：3 例——case→case→retryReset→case 序列断言 onRetryReset 时序 / append 流接线 / 不传回调向后兼容 |
+
+### API 契约变化
+
+- `/api/mcp/**`：非回环来源新增 403（code 40300）。本机 tools-mcp-server 不受影响；反代部署需配置 `APP_MCP_ALLOWED_REMOTE_ADDRS`。
+- 其余接口零变化。
+
+### 部署配置变化（破坏性）
+
+- **四个环境变量从可选变必填**：`APP_JWT_SECRET` / `APP_ADMIN_PASSWORD` / `MILVUS_PASSWORD` / `MCP_BRIDGE_TOKEN` 缺失后端启动失败。本地开发在根目录 `.env` 配齐（参照 `.env.example`）。
+- **GRAFANA_ADMIN_PASSWORD 必填**：未设置时 `docker compose config` 报错。
+- 生产部署前自查：`docker compose config --quiet` 通过 = 密钥齐备。
+
+### 验证结果
+
+- 后端全量 `mvn test`（容器 maven:3.9-eclipse-temurin-17）：421 tests, 0 failures, 0 errors（407 基线 + 14 新增）
+- 前端 `npm run test`：10 passed（7 存量 + 3 新增）；`npm run build` 通过
+- docker compose 重部署验证见下节
+
+---
+
 ## v8.4 — 256k 上下文扩容与代码审查修复（容量参数化 + 可靠性/安防加固）
 **日期**: 2026-08-26
 **基线**: v8.3

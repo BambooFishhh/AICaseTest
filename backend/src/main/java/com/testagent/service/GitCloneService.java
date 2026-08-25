@@ -1,8 +1,10 @@
 package com.testagent.service;
 
 import com.testagent.common.BusinessException;
+import com.testagent.common.SafeDnsResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -34,6 +36,14 @@ public class GitCloneService {
 
     @Value("${app.git.clone-timeout-seconds:600}")
     private long cloneTimeoutSeconds = 600;
+
+    // v8.5: DNS 安全解析统一走 SafeDnsResolver（字段初始化兜底，直 new 的单测不受影响）
+    private SafeDnsResolver safeDnsResolver = new SafeDnsResolver();
+
+    @Autowired(required = false)
+    void setSafeDnsResolver(SafeDnsResolver safeDnsResolver) {
+        this.safeDnsResolver = safeDnsResolver;
+    }
 
     public boolean isGitUrl(String sourceType, String sourcePath) {
         return "git_url".equals(sourceType) && isValidGitUrl(sourcePath);
@@ -90,9 +100,9 @@ public class GitCloneService {
         return GIT_URL_PATTERN.matcher(normalized).matches();
     }
 
-    // v8.4fix: SSRF 防护——http(s)/git 协议 URL 解析全部 A 记录，任一落在回环/私网/链路本地段即拒绝。
-    // 注：存在 DNS rebinding 残留风险（校验与 git 实际连接两次解析可能不同），
-    // 彻底方案需 git 层代理或 hosts 绑定，此处先消除直接内网地址场景；
+    // v8.5: SSRF 防护升级——双解析一致性 + 全 A 记录内网判定（SafeDnsResolver），
+    // 收敛 v8.4 注释中记录的 DNS rebinding 残留窗口（校验与 git 建连两次解析可能不同；
+    // git 进程内部连接仍由 OS 解析一次无法钉死 IP，轻量方案取舍见 SafeDnsResolver 类注释）。
     // ssh/git@ 地址无法本地预解析（通常为企业配置的堡垒机/仓库主机），不拦截仅告警。
     private void assertNotInternalHost(String url) {
         String host = extractHttpHost(url);
@@ -102,19 +112,7 @@ public class GitCloneService {
             }
             return;
         }
-        java.net.InetAddress[] addresses;
-        try {
-            addresses = java.net.InetAddress.getAllByName(host);
-        } catch (java.net.UnknownHostException e) {
-            throw BusinessException.invalidParam("Git 地址域名无法解析: " + host);
-        }
-        for (java.net.InetAddress addr : addresses) {
-            if (addr.isLoopbackAddress() || addr.isSiteLocalAddress()
-                    || addr.isLinkLocalAddress() || addr.isAnyLocalAddress()) {
-                log.warn("拒绝指向内网的 Git 克隆地址: host={}, addr={}", host, addr.getHostAddress());
-                throw BusinessException.invalidParam("Git 地址指向内网，禁止克隆: " + host);
-            }
-        }
+        safeDnsResolver.assertStablePublicHost(host, "Git 地址");
     }
 
     private String extractHttpHost(String url) {
