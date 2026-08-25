@@ -196,22 +196,36 @@ public class MilvusService {
         if (c == null || vector == null || vector.isEmpty()) {
             return;
         }
+        // v8.4fix: 按 schema VarChar 上限（UTF-8 字节）截断后再写入——Milvus 2.3+ 的
+        // max_length 按字节计，中文超限会插入失败；旧逻辑失败仅 warn，向量静默丢失
+        // （该用例无法被检索/去重）且无业务侧告警。截断时计数告警便于观测。
+        String safeId = truncateToBytes(id, 128);
+        String safeProject = truncateToBytes(projectId, 64);
+        String safeTitle = truncateToBytes(title, 512);
+        String safeModule = truncateToBytes(module, 128);
+        String safeText = truncateToBytes(text, 8192);
+        if ((title != null && !safeTitle.equals(title)) || (text != null && !safeText.equals(text))) {
+            log.warn("Milvus insert 字段截断 (collection={}, id={}, titleLen={}, textLen={})",
+                    collection, safeId, title == null ? 0 : title.length(), text == null ? 0 : text.length());
+        }
         try {
             InsertParam param = InsertParam.newBuilder()
                     .withCollectionName(collection)
                     .withFields(List.of(
-                            new InsertParam.Field("id", List.of(id)),
-                            new InsertParam.Field("project_id", List.of(projectId == null ? "" : projectId)),
-                            new InsertParam.Field("title", List.of(title == null ? "" : title)),
-                            new InsertParam.Field("module", List.of(module == null ? "" : module)),
-                            new InsertParam.Field("text", List.of(text == null ? "" : text)),
+                            new InsertParam.Field("id", List.of(safeId)),
+                            new InsertParam.Field("project_id", List.of(safeProject)),
+                            new InsertParam.Field("title", List.of(safeTitle)),
+                            new InsertParam.Field("module", List.of(safeModule)),
+                            new InsertParam.Field("text", List.of(safeText)),
                             new InsertParam.Field("embedding", List.of(vector))))
                     .build();
             c.insert(param);
         } catch (Exception e) {
-            log.warn("Milvus insert failed: {}", e.getMessage());
+            log.warn("Milvus insert failed (collection={}, id={}): {}", collection, safeId, e.getMessage());
         }
     }
+
+    // v8.4fix: 按 UTF-8 字节数截断并回退到合法字符边界，避免截出半个多字节字符
 
     public List<SearchHit> search(String collection, String projectId, List<Float> vector, int topK) {
         return search(collection, projectId, vector, topK, null);
@@ -259,10 +273,13 @@ public class MilvusService {
     private String buildSearchExpr(String projectId, List<String> modules) {
         StringBuilder sb = new StringBuilder();
         if (projectId != null && !projectId.isBlank()) {
-            sb.append("project_id == \"").append(projectId).append("\"");
+            sb.append("project_id == \"").append(escapeExpr(projectId)).append("\"");
         }
         if (modules != null && !modules.isEmpty()) {
-            List<String> quoted = modules.stream().map(m -> "\"" + m + "\"").toList();
+            // v8.4fix: module 来自分析器/LLM 产出，可能含双引号等特殊字符，拼接前必须转义，
+            // 否则 expr 语法错误导致整次检索失败（静默降级为空召回）
+            List<String> quoted = modules.stream()
+                    .map(m -> "\"" + escapeExpr(m) + "\"").toList();
             if (sb.length() > 0) {
                 sb.append(" and ");
             }
@@ -271,20 +288,14 @@ public class MilvusService {
         return sb.toString();
     }
 
+    // v8.4fix: Milvus 布尔表达式字符串转义（反斜杠 + 双引号）——防 expr 注入/语法错误，
+    // 所有 withExpr 拼接字符串字段必须经过此方法；deleteByIds 已有行内转义也统一收敛到这里
+
     public void deleteByProject(String collection, String projectId) {
-        MilvusServiceClient c = client();
-        if (c == null || projectId == null || projectId.isBlank()) {
+        if (projectId == null || projectId.isBlank()) {
             return;
         }
-        try {
-            DeleteParam param = DeleteParam.newBuilder()
-                    .withCollectionName(collection)
-                    .withExpr("project_id == \"" + projectId + "\"")
-                    .build();
-            c.delete(param);
-        } catch (Exception e) {
-            log.warn("Milvus delete failed: {}", e.getMessage());
-        }
+        deleteWithRetry(collection, "project_id == \"" + escapeExpr(projectId) + "\"");
     }
 
     // v5.6: 按 ID 列表删除（用于用例删除/编辑重建）
@@ -293,35 +304,69 @@ public class MilvusService {
         if (c == null || ids == null || ids.isEmpty() || projectId == null || projectId.isBlank()) {
             return;
         }
-        try {
-            String idExpr = ids.stream()
-                    .map(id -> "\"" + id.replace("\"", "\\\"") + "\"")
+        String idExpr = ids.stream()
+                    .map(id -> "\"" + escapeExpr(id) + "\"")
                     .collect(java.util.stream.Collectors.joining(",", "[", "]"));
-            DeleteParam param = DeleteParam.newBuilder()
-                    .withCollectionName(collection)
-                    .withExpr("project_id == \"" + projectId + "\" and id in " + idExpr)
-                    .build();
-            c.delete(param);
-        } catch (Exception e) {
-            log.warn("Milvus deleteByIds failed: {}", e.getMessage());
-        }
+        deleteWithRetry(collection,
+                "project_id == \"" + escapeExpr(projectId) + "\" and id in " + idExpr);
     }
 
     // v5.6: 按模块删除（PRD/分析上下文替换）
     public void deleteByModule(String collection, String projectId, String module) {
-        MilvusServiceClient c = client();
-        if (c == null || projectId == null || projectId.isBlank() || module == null || module.isBlank()) {
+        if (projectId == null || projectId.isBlank() || module == null || module.isBlank()) {
             return;
         }
-        try {
-            DeleteParam param = DeleteParam.newBuilder()
-                    .withCollectionName(collection)
-                    .withExpr("project_id == \"" + projectId + "\" and module == \"" + module + "\"")
-                    .build();
-            c.delete(param);
-        } catch (Exception e) {
-            log.warn("Milvus deleteByModule failed: {}", e.getMessage());
+        deleteWithRetry(collection,
+                "project_id == \"" + escapeExpr(projectId) + "\" and module == \"" + escapeExpr(module) + "\"");
+    }
+
+    // v8.4fix: 删除统一入口：短重试 + 失败升级为 ERROR 并带上下文。
+    // 删除失败仅 warn 无补偿会产生召回脏数据（幽灵用例/误判重复），
+    // 重试可消除瞬时故障；最终失败升级为 ERROR 便于告警接入与人工对账
+    private void deleteWithRetry(String collection, String expr) {
+        MilvusServiceClient c = client();
+        if (c == null) {
+            return;
         }
+        Exception last = null;
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                DeleteParam param = DeleteParam.newBuilder()
+                        .withCollectionName(collection)
+                        .withExpr(expr)
+                        .build();
+                c.delete(param);
+                return;
+            } catch (Exception e) {
+                last = e;
+                log.warn("Milvus delete 失败 (collection={}, attempt={}): {}", collection, attempt, e.getMessage());
+            }
+        }
+        log.error("Milvus delete 重试后仍失败，可能存在残留向量脏数据，需对账 (collection={}, expr={}): {}",
+                collection, expr, last == null ? "unknown" : last.getMessage());
+    }
+
+    // v8.4fix: 布尔表达式字符串转义（反斜杠/双引号）
+    private static String escapeExpr(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static String truncateToBytes(String value, int maxBytes) {
+        if (value == null) {
+            return "";
+        }
+        byte[] bytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (bytes.length <= maxBytes) {
+            return value;
+        }
+        int end = maxBytes;
+        while (end > 0 && (bytes[end] & 0xC0) == 0x80) {
+            end--;
+        }
+        return new String(bytes, 0, end, java.nio.charset.StandardCharsets.UTF_8);
     }
 
     // v5.8: 集合行数统计（失败返回 -1）

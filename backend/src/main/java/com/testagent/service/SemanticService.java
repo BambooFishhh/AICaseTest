@@ -281,10 +281,14 @@ public class SemanticService {
         if (cases == null || cases.size() < 2 || !isAvailable()) {
             return cases;
         }
+        // v8.4fix: 全批向量并行预计算（并发上限 4）替代逐条串行调用——
+        // 60 条用例由 N 次串行 HTTP 往返降到约 N/4，生成链路可省数十秒
+        List<List<Float>> vectors = embedAllParallel(cases);
         List<TestCase> kept = new ArrayList<>();
         List<List<Float>> keptVectors = new ArrayList<>();
-        for (TestCase tc : cases) {
-            List<Float> vec = embeddingService.embed(buildCaseText(tc));
+        for (int idx = 0; idx < cases.size(); idx++) {
+            TestCase tc = cases.get(idx);
+            List<Float> vec = vectors.get(idx);
             boolean dup = false;
             for (int i = 0; i < kept.size(); i++) {
                 TestCase existing = kept.get(i);
@@ -314,6 +318,37 @@ public class SemanticService {
             log.info("Batch semantic dedup dropped {} of {} cases", dropped, cases.size());
         }
         return kept;
+    }
+
+    // v8.4fix: 并行 embedding 预计算；单条失败降级为空向量（该条不参与语义判重，由结构判重兑底）
+    @SuppressWarnings("unchecked")
+    private List<List<Float>> embedAllParallel(List<TestCase> cases) {
+        List<Float>[] arr = new List[cases.size()];
+        java.util.Arrays.fill(arr, List.<Float>of());
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(
+                Math.min(4, cases.size()), r -> {
+                    Thread t = new Thread(r, "dedup-embed");
+                    t.setDaemon(true);
+                    return t;
+                });
+        try {
+            List<java.util.concurrent.CompletableFuture<Void>> futures = new ArrayList<>();
+            for (int i = 0; i < cases.size(); i++) {
+                final int idx = i;
+                futures.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    try {
+                        arr[idx] = embeddingService.embed(buildCaseText(cases.get(idx)));
+                    } catch (Exception e) {
+                        log.warn("dedup embedding 失败，第 {} 条降级为空向量: {}", idx, e.getMessage());
+                    }
+                }, pool));
+            }
+            java.util.concurrent.CompletableFuture.allOf(
+                    futures.toArray(new java.util.concurrent.CompletableFuture[0])).join();
+        } finally {
+            pool.shutdown();
+        }
+        return java.util.Arrays.asList(arr);
     }
 
     private int qualityScoreOf(TestCase tc) {
