@@ -32,6 +32,9 @@ v8.1/v8.2 已完成范围识别与生成收敛，但覆盖率仍以全项目为�
 | `views/StateMachineOverview.vue` | 修改 | 未建范围顶部引导 alert；覆盖徽标/卡片仅统计 inScope 转换 |
 | `views/Dashboard.vue` | 修改 | stateRate=null 的项目不进覆盖率柱状图（避免误导性 0 柱） |
 | `views/ProjectDetail.vue` | 修改 | **本期范围主流程化**——入口从「查看」区提升到主线操作卡（开始分析↔生成用例之间），代码驱动项目未确认范围时按钮 warning 态+「未确认」标记；点生成弹窗引导直达范围页（替代裸报错）；SSE 分析完成与轮询恢复两处终态钩子在未确认范围时发 ElNotification 下一步引导 |
+| `service/ScopeService.java` | 修改 | **范围单例约束**——一个项目同一时间仅允许一个本期范围（草稿或已确认），重复创建报 40901 并提示"刷新用重算/换期先删除"，消除多范围并存时分母取最新的静默歧义 |
+| `components/ScopeDrawer.vue` | **新增** | 本期范围改为**项目内全高抽屉（72%）**，删除独立路由 `/projects/:id/scope` 与 ScopeReview 页面：无范围时内联创建表单（三步向导条）替代长等待弹窗，提交即收起、进度横幅接管（识别耗时 1-2 分钟不再扣住用户）；统计徽章条（总数/接口/状态机/Git识别/LLM映射/手动）+ 类型筛选 + 关键字搜索 + 变更药丸/来源圆点视觉重做；确认/删除加二次确认 |
+| `views/TestCaseList.vue`、`views/StateMachineOverview.vue` | 修改 | 未建范围引导链接改 `?scope=1` 跳项目详情自动展开抽屉（ProjectDetail 监听该参数） |
 
 ### API 契约变化
 
