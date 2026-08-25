@@ -25,15 +25,21 @@ public class TestCaseReviewRunner {
 
     public Map<String, Object> startReview(String projectId, String testcaseId) {
         Map<String, Object> status = testCaseService.markReviewing(projectId, testcaseId);
-        generationExecutor.execute(() -> {
-            try {
-                testCaseService.reviewTestCaseInternal(projectId, testcaseId);
-            } catch (Exception e) {
-                log.error("AI review failed for test case {} in project {}: {}",
-                        testcaseId, projectId, e.getMessage());
-                testCaseService.markReviewFailed(projectId, testcaseId, e.getMessage());
-            }
-        });
+        try {
+            generationExecutor.execute(() -> {
+                try {
+                    testCaseService.reviewTestCaseInternal(projectId, testcaseId);
+                } catch (Exception e) {
+                    log.error("AI review failed for test case {} in project {}: {}",
+                            testcaseId, projectId, e.getMessage());
+                    testCaseService.markReviewFailed(projectId, testcaseId, e.getMessage());
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // v8.4fix: 生成线程池队列满时快速失败，避免用例卡在 reviewing 状态
+            log.warn("AI review 提交被拒绝（线程池满）: project={}, case={}", projectId, testcaseId);
+            testCaseService.markReviewFailed(projectId, testcaseId, "评审任务队列已满，请稍后重试");
+        }
         return status;
     }
 }

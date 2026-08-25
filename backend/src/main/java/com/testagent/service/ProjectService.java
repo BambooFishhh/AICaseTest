@@ -264,7 +264,14 @@ public class ProjectService {
             throw BusinessException.invalidState("项目当前状态不允许启动分析: " + status);
         }
         projectRepository.updateStatus(id, "analyzing");
-        analysisService.runAnalysis(id, project.getSourcePath());
+        try {
+            analysisService.runAnalysis(id, project.getSourcePath());
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // v8.4fix: 分析线程池队列满——回滚状态避免卡在 analyzing，返回明确的繁忙错误
+            projectRepository.updateStatus(id, status);
+            throw new BusinessException(50300, "服务器繁忙，分析队列已满，请稍后重试",
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
+        }
     }
 
     @Transactional
@@ -289,7 +296,14 @@ public class ProjectService {
             throw BusinessException.invalidState("项目当前状态不允许生成测试用例: " + status);
         }
         projectRepository.updateStatus(id, "generating");
-        testCaseService.runGenerate(id, req);
+        try {
+            testCaseService.runGenerate(id, req);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // v8.4fix: 生成线程池队列满——回滚状态避免卡在 generating，返回明确的繁忙错误
+            projectRepository.updateStatus(id, status);
+            throw new BusinessException(50300, "服务器繁忙，生成队列已满，请稍后重试",
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
+        }
     }
 
     // ==================== v1.10: PRD 驱动相关 ====================

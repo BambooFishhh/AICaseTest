@@ -18,7 +18,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.core.io.ByteArrayResource;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -36,7 +35,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/projects")
-@CrossOrigin
 public class ProjectController {
 
     @Autowired
@@ -109,7 +107,12 @@ public class ProjectController {
             return err;
         }
         SseEmitter emitter = new SseEmitter(sseTimeoutMinutes * 60 * 1000);
-        analysisService.runAnalysisStream(projectId, emitter);
+        try {
+            analysisService.runAnalysisStream(projectId, emitter);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // v8.4fix: 分析线程池队列满时快速失败，避免 SSE 挂死等待
+            sendBusyAndComplete(emitter);
+        }
         return emitter;
     }
 
@@ -147,7 +150,12 @@ public class ProjectController {
         SseEmitter emitter = new SseEmitter(sseTimeoutMinutes * 60 * 1000);
         // v5.3: 生成任务进入队列统计
         taskQueueService.enqueue(TaskQueueService.GENERATION_QUEUE, projectId);
-        testCaseService.runGenerateStream(projectId, emitter);
+        try {
+            testCaseService.runGenerateStream(projectId, emitter);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // v8.4fix: 生成线程池队列满时快速失败，避免 SSE 挂死等待
+            sendBusyAndComplete(emitter);
+        }
         return emitter;
     }
 
@@ -174,8 +182,25 @@ public class ProjectController {
         }
         SseEmitter emitter = new SseEmitter(sseTimeoutMinutes * 60 * 1000);
         taskQueueService.enqueue(TaskQueueService.GENERATION_QUEUE, projectId);
-        testCaseService.runGenerateStreamAppend(projectId, type, emitter);
+        try {
+            testCaseService.runGenerateStreamAppend(projectId, type, emitter);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // v8.4fix: 生成线程池队列满时快速失败，避免 SSE 挂死等待
+            sendBusyAndComplete(emitter);
+        }
         return emitter;
+    }
+
+    // v8.4fix: 线程池满时向 SSE 推送 error 事件并关闭，前端可提示用户稍后重试
+    private void sendBusyAndComplete(SseEmitter emitter) {
+        try {
+            emitter.send(SseEmitter.event().name("error").data(
+                    Map.of("message", "服务器繁忙，任务队列已满，请稍后重试"),
+                    MediaType.APPLICATION_JSON));
+        } catch (Exception ignored) {
+            // 客户端可能已断开，忽略
+        }
+        emitter.complete();
     }
 
     /**
