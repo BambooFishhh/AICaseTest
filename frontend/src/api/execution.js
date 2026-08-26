@@ -1,4 +1,5 @@
 import request from './request'
+import { fetchSseTicket } from './sse'
 
 export function executeTestCase(projectId, caseId, targetUrl, mode = 'programmatic') {
   return request.post(`/projects/${projectId}/testcases/${caseId}/execute${mode === 'agent' ? '?mode=agent' : ''}`, { targetUrl })
@@ -43,18 +44,23 @@ export function getExecutionSteps(eid) {
 }
 
 // v2.9: 执行录屏视频 URL（WebM，文件流直接用作 <video :src>）
-export function getExecutionVideoUrl(eid) {
-  const token = localStorage.getItem('aicase-token') || ''
+// v8.9.4(12.10): 媒体鉴权废弃长期 JWT ?token=，改用短期 ticket（调用方先 ensureMediaTicket）
+export function getExecutionVideoUrl(eid, ticket) {
   const qs = new URLSearchParams()
-  if (token) qs.set('token', token)
+  if (ticket) qs.set('ticket', ticket)
   const query = qs.toString()
   return query ? `/api/executions/${eid}/video?${query}` : `/api/executions/${eid}/video`
 }
 
-// v6.0: 执行证据文件预览（截图/录屏帧）
-export function getExecutionFileUrl(eid, path) {
-  const token = localStorage.getItem('aicase-token') || ''
+// v6.0: 执行证据文件预览（截图/录屏帧）；v8.9.4 同步切换短期 ticket
+export function getExecutionFileUrl(eid, path, ticket) {
   const qs = new URLSearchParams({ path })
-  if (token) qs.set('token', token)
+  if (ticket) qs.set('ticket', ticket)
   return `/api/executions/${eid}/file?${qs.toString()}`
+}
+
+// v8.9.4(12.10): 获取媒体短期票据（TTL 内可复用；页面加载时取一次即可）
+export async function ensureMediaTicket() {
+  const { data } = await fetchSseTicket()
+  return data.ticket
 }

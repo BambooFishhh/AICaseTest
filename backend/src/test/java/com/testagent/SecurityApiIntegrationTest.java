@@ -44,6 +44,9 @@ class SecurityApiIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private com.testagent.security.SseTicketService sseTicketService;
+
     private String loginToken(String username) throws Exception {
         mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -242,5 +245,49 @@ class SecurityApiIntegrationTest {
                         .content(MCP_BODY))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(40300));
+    }
+
+    // ========== v8.9.4(12.10): 凭据卫生 ==========
+
+    @Test
+    void ticketParamIgnoredOnNonSsePath() throws Exception {
+        // v8.9.4: 票据仅限 SSE/媒体白名单路径——普通接口带 ?ticket= 不被认证，仍 401
+        String ticket = sseTicketService.issue("tester", "MEMBER");
+        mockMvc.perform(get("/api/settings").param("ticket", ticket))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void mediaEndpointAcceptsShortTicket() throws Exception {
+        // v8.9.4: 媒体路径用短期 ticket 通过认证（未知 eid 走到业务 40x/5xx 而非 401）
+        String ticket = sseTicketService.issue("tester", "MEMBER");
+        mockMvc.perform(get("/api/executions/unknown-eid/video").param("ticket", ticket))
+                .andExpect(result -> org.junit.jupiter.api.Assertions.assertNotEquals(
+                        401, result.getResponse().getStatus(),
+                        "媒体路径带合法 ticket 不应被认证层拒绝"));
+    }
+
+    @Test
+    void legacyMediaTokenStillWorksDuringDeprecation() throws Exception {
+        // v8.9.4: 废弃期内旧 ?token= 保持可用（每次 WARN），废弃期结束后该断言改为期望 401
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "media-legacy",
+                                "password", "passw0rd123",
+                                "displayName", "M"))))
+                .andExpect(status().isOk());
+        String login = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "username", "media-legacy",
+                                "password", "passw0rd123"))))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String jwt = objectMapper.readTree(login).path("data").path("token").asText();
+
+        mockMvc.perform(get("/api/executions/unknown-eid/video").param("token", jwt))
+                .andExpect(result -> org.junit.jupiter.api.Assertions.assertNotEquals(
+                        401, result.getResponse().getStatus()));
     }
 }

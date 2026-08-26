@@ -283,7 +283,7 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft, Loading, Download, Document, VideoPlay, VideoPause, Camera, Picture, CircleClose
 } from '@element-plus/icons-vue'
-import { getExecution, getExecutionSteps, getExecutionVideoUrl, getExecutionFileUrl, cancelExecution } from '@/api/execution'
+import { getExecution, getExecutionSteps, getExecutionVideoUrl, getExecutionFileUrl, cancelExecution, ensureMediaTicket } from '@/api/execution'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { openAuthPreview, downloadAuth } from '@/utils/download'
 
@@ -344,18 +344,19 @@ const recordingFrames = computed(() => {
 const currentFrameUrl = computed(() => {
   const frame = recordingFrames.value[currentFrameIndex.value]
   if (!frame) return ''
-  return getExecutionFileUrl(executionId, String(frame))
+  // v8.9.4(12.10): 媒体改短期 ticket（mediaTicket 就绪前返回空，就绪后自动渲染）
+  return getExecutionFileUrl(executionId, String(frame), mediaTicket.value)
 })
 
 // v2.9: 视频录屏 URL（优先 WebM 视频，无视频时回退到图片帧）
 const recordingVideoUrl = computed(() => {
-  return execution.value?.recordingVideoPath && !videoError.value
-    ? getExecutionVideoUrl(executionId)
+  return execution.value?.recordingVideoPath && !videoError.value && mediaTicket.value
+    ? getExecutionVideoUrl(executionId, mediaTicket.value)
     : ''
 })
 
 function screenshotUrl(path) {
-  return path ? getExecutionFileUrl(executionId, path) : ''
+  return path ? getExecutionFileUrl(executionId, path, mediaTicket.value) : ''
 }
 
 function screenshotPreviewList(step) {
@@ -606,7 +607,13 @@ function goBack() {
   router.push(`/projects/${projectId}/testcases`)
 }
 
+const mediaTicket = ref('')
+
 onMounted(async () => {
+  // v8.9.4(12.10): 页面加载即取媒体短期票据（TTL 内可复用），媒体 URL 就绪后自动渲染
+  ensureMediaTicket()
+    .then((t) => { mediaTicket.value = t })
+    .catch(() => { /* 票据获取失败时媒体区显示空，不阻断页面 */ })
   loading.value = true
   await Promise.all([loadExecution(), loadSteps()])
   loading.value = false

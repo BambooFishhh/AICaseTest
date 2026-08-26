@@ -4,6 +4,49 @@
 
 ---
 
+## v8.9.4 — 凭据卫生（票据作用域/媒体短票据/弱回退清零，阶段 6 任务 12.10）
+**日期**: 2026-08-26
+**基线**: v8.9.3
+**主题**: 计划书「阶段 6」任务 12.10（CR §9.5 N1/N2/N3）——短期票据存 Redis 解决多实例互通且不再全路径生效；媒体端点废弃长期 JWT `?token=` 改走短票据；DataInitializer 弱回退默认清零。含前端变更
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `security/SseTicketService.java` | 重构 | **N1①** 双实现：APP_REDIS_ENABLED=true 时票据写 Redis（SETEX 带 TTL，多实例互通）；未启用回落内存 Map（单实例语义）。key 前缀 `sse:ticket:` |
+| `security/JwtAuthFilter.java` | 修改 | **N1②/N2** `?ticket=` 接受范围限定白名单（SSE 流式端点 + 媒体端点），其余路径忽略该参数——票据泄露不再等于全部 API 泄露；媒体 `?token=`（12h 长期 JWT）进入废弃期：保持可用但每次 WARN |
+| `config/DataInitializer.java` | 修改 | **N3** `${app.admin.password:admin123}` 回退默认移除 + run() 入口空值确定性抛 IllegalStateException（不依赖 SecurityKeyGuard 时序） |
+
+### 前端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `api/execution.js` | 修改 | **N2** getExecutionVideoUrl/getExecutionFileUrl 签名改收 `ticket` 参数（不再读 localStorage 拼 ?token=）；新增 ensureMediaTicket()（复用 fetchSseTicket 短期凭据） |
+| `views/ExecutionResult.vue` | 修改 | 页面加载即取媒体票据入 ref；视频/帧/截图 URL computed 追加 ticket 参数，就绪前渲染空不阻断页面 |
+
+downloadAuth/openAuthPreview 走 Authorization 头无需改造。
+
+### API 契约变化
+
+- `/api/executions/*/{video,file,report}` 新增接受 `?ticket=`；旧 `?token=` 废弃期保留（WARN 日志一周后移除分支，防存量链接直接断）。
+- 其余接口零变化。
+
+### 测试变更
+
+| 文件 | 例数 | 覆盖 |
+|---|---|---|
+| SseTicketServiceTest | 3 | Redis SETEX 写入+跨"实例"读取 / 过期或未知 null / 内存回落 |
+| SecurityApiIntegrationTest +3 | 3 | 非 SSE 路径带 ticket 被忽略仍 401 / 媒体合法 ticket 通过认证层 / 废弃期旧 token 保持可用 |
+| DataInitializerAdminPasswordTest | 1 | 空密码确定性启动失败并指明 APP_ADMIN_PASSWORD |
+
+### 验证结果
+
+- 后端全量容器测试：491 tests, 0 failures, 0 errors
+- 前端 Vitest 10 passed + build 通过
+- docker compose 重部署健康核验见下节
+
+---
+
 ## v8.9.3 — 对账内存优化 + 并发残留清理（阶段 6 任务 12.5 + 12.6）
 **日期**: 2026-08-26
 **基线**: v8.9.2

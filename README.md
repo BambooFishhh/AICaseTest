@@ -183,7 +183,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v8.9.3（阶段 6 清理优化：对账内存优化 + 并发残留清理）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v8.9.4（阶段 6 凭据卫生：票据作用域 + 媒体短票据 + 弱回退清零）**，生产线基线为 vP5（压测与容量）。
+
+- v8.9.4 要点：计划书「阶段 6」任务 12.10——**票据 Redis 双实现**（多实例互通，TTL 过期自动失效；未启用 Redis 回落内存）；**ticket 作用域限定**（仅 SSE 流式与媒体端点接受 `?ticket=`，泄露不再等于全 API 泄露）；**媒体短票据切换**（video/file 废弃长期 JWT `?token=` 改走短票据，前端 ExecutionResult 页面加载即取票，废弃期保留旧分支 WARN 一周）；**admin 弱回退清零**（空密码确定性启动失败）。后端 491 测试全绿、前端 10 测试全绿。
 
 - v8.9.3 要点：计划书「阶段 6」任务 12.5+12.6——**对账大项目内存优化**（DB 侧 id 投影查询替代全量实体、Milvus 向量 id 分页拉取每页 1000、缺失补索引分批 ≤500）；**并发残留清理**（compose LLM_MAX_PROMPT_CHARS 300k→500k 对齐 v8.4 + 删除死配置注入；degradedProvider ThreadLocal 入口清残留防池化串台；MetricsFacade/ObservabilityFilter 热路径 meter 缓存）。后端 487 测试全绿。
 
@@ -302,6 +304,7 @@ AICaseTest/
 | v8.9.1 | 部署层凭据清零+MCP 来源过滤提层（compose 八处 :? 必填/MinIO 必填/McpSourceFilter+trust-proxy 反代适配） | ✅ 完成 |
 | v8.9.2 | 连接池对齐+LLM 入口限流（Hikari 40+泄漏检测/LlmRateLimiter 四通道配额+指标） | ✅ 完成 |
 | v8.9.3 | 对账内存优化+并发残留清理（id 投影+向量分页/预算对齐 500k/降级标注清残留/meter 缓存） | ✅ 完成 |
+| v8.9.4 | 凭据卫生（票据 Redis 双实现+作用域白名单/媒体短票据切换/admin 弱回退清零） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

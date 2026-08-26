@@ -1,9 +1,12 @@
 package com.testagent.security;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -14,25 +17,54 @@ import java.util.concurrent.ConcurrentMap;
  *
  * 票据默认 TTL 由 app.sse.ticket-ttl-seconds 控制（默认 300s），TTL 内可多次使用，
  * 以兼容 EventSource 断线重连共用同一 URL 的场景；过期后自动失效并被清除。
+ *
+ * v8.9.4(12.10): 双实现——APP_REDIS_ENABLED=true 时票据写 Redis（SETEX 带 TTL），
+ * 多实例下 A 实例签发的票据在 B 实例可用（水平扩展前置）；未启用 Redis 时回落内存 Map
+ * （仅单实例语义）。v8.9.4(12.10) 起该票据同时用于媒体路径（替代长期 JWT ?token=）。
  */
 @Component
 public class SseTicketService {
 
+    private static final String REDIS_KEY_PREFIX = "sse:ticket:";
+
     private final SecureRandom random = new SecureRandom();
-    private final ConcurrentMap<String, Ticket> tickets = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Ticket> memoryTickets = new ConcurrentHashMap<>();
     private final long ttlMillis;
+
+    private StringRedisTemplate redis;
+    private boolean redisEnabled;
 
     public SseTicketService(@Value("${app.sse.ticket-ttl-seconds:300}") long ttlSeconds) {
         this.ttlMillis = Math.max(10, ttlSeconds) * 1000L;
+    }
+
+    @Autowired(required = false)
+    void setRedis(StringRedisTemplate redis) {
+        this.redis = redis;
+    }
+
+    @Value("${app.redis.enabled:false}")
+    void setRedisEnabled(boolean redisEnabled) {
+        this.redisEnabled = redisEnabled;
+    }
+
+    private boolean useRedis() {
+        return redisEnabled && redis != null;
     }
 
     public String issue(String username, String role) {
         String ticket;
         do {
             ticket = Long.toHexString(random.nextLong()) + Long.toHexString(random.nextLong());
-        } while (tickets.containsKey(ticket));
-        tickets.put(ticket, new Ticket(username, role, System.currentTimeMillis()));
-        purgeIfNeeded();
+        } while (useRedis() && Boolean.TRUE.equals(redis.hasKey(REDIS_KEY_PREFIX + ticket))
+                || memoryTickets.containsKey(ticket));
+        if (useRedis()) {
+            redis.opsForValue().set(REDIS_KEY_PREFIX + ticket,
+                    username + "|" + role, Duration.ofMillis(ttlMillis));
+        } else {
+            memoryTickets.put(ticket, new Ticket(username, role, System.currentTimeMillis()));
+            purgeIfNeeded();
+        }
         return ticket;
     }
 
@@ -43,23 +75,34 @@ public class SseTicketService {
         if (ticket == null || ticket.isBlank()) {
             return null;
         }
-        Ticket t = tickets.get(ticket);
+        if (useRedis()) {
+            String value = redis.opsForValue().get(REDIS_KEY_PREFIX + ticket);
+            if (value == null) {
+                return null;
+            }
+            int sep = value.indexOf('|');
+            if (sep < 0) {
+                return null;
+            }
+            return new String[]{value.substring(0, sep), value.substring(sep + 1)};
+        }
+        Ticket t = memoryTickets.get(ticket);
         if (t == null) {
             return null;
         }
         if (System.currentTimeMillis() - t.createdAt > ttlMillis) {
-            tickets.remove(ticket);
+            memoryTickets.remove(ticket);
             return null;
         }
         return new String[]{t.username, t.role};
     }
 
     private void purgeIfNeeded() {
-        if (tickets.size() < 1024) {
+        if (memoryTickets.size() < 1024) {
             return;
         }
         long now = System.currentTimeMillis();
-        tickets.entrySet().removeIf(e -> now - e.getValue().createdAt > ttlMillis);
+        memoryTickets.entrySet().removeIf(e -> now - e.getValue().createdAt > ttlMillis);
     }
 
     private static final class Ticket {

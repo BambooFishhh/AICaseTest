@@ -2,6 +2,8 @@ package com.testagent.security;
 
 import com.testagent.entity.User;
 import com.testagent.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -21,6 +23,8 @@ import java.util.List;
  */
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(JwtAuthFilter.class);
 
     @Autowired
     private JwtUtil jwtUtil;
@@ -46,18 +50,22 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                     role = jwtUtil.extractRole(token);
                 }
             }
-            // 2. SSE：短期 ticket（EventSource 无法设置 Authorization 头）
-            if (username == null) {
+            // 2. v8.9.4(12.10): 短期 ticket 仅在白名单路径接受（SSE 流式 + 媒体）——
+            // 此前对所有路径生效，票据 300s TTL 内泄露可调用全部 API
+            if (username == null && isTicketAcceptedPath(request.getRequestURI())) {
                 String[] principal = sseTicketService.authenticate(request.getParameter("ticket"));
                 if (principal != null) {
                     username = principal[0];
                     role = principal[1];
                 }
             }
-            // 3. 仅媒体访问（video/file 等）保留 ?token= 兼容，SSE 不再接受长期 JWT
+            // 3. v8.9.4(12.10): 媒体 ?token=（长期 JWT）进入废弃期——保留可用但每次 WARN，
+            // 废弃期结束后移除该分支；新代码一律改用短期 ticket（前端已同步切换）
             if (username == null && isMediaPath(request.getRequestURI())) {
                 String param = request.getParameter("token");
                 if (param != null && jwtUtil.isValid(param)) {
+                    log.warn("[deprecated] 媒体路径使用长期 JWT ?token=（{}），请改用短期 ticket，废弃期后将移除该分支",
+                            request.getRequestURI());
                     username = jwtUtil.extractUsername(param);
                     role = jwtUtil.extractRole(param);
                 }
@@ -81,5 +89,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         return uri != null && uri.startsWith("/api/executions/")
                 && (uri.endsWith("/video") || uri.endsWith("/file")
                 || uri.endsWith("/report"));
+    }
+
+    // v8.9.4(12.10): ticket 接受白名单——SSE 流式端点 + 媒体端点；其余路径忽略该参数
+    private boolean isTicketAcceptedPath(String uri) {
+        if (uri == null) {
+            return false;
+        }
+        if (uri.endsWith("/analyze-stream") || uri.contains("generate-stream")) {
+            return true;
+        }
+        return isMediaPath(uri);
     }
 }

@@ -50,11 +50,15 @@ public class DataInitializer implements CommandLineRunner {
     @Autowired
     private AgentTaskService agentTaskService;
 
-    @Value("${app.admin.password:admin123}")
+    @Value("${app.admin.password}")
     private String adminPassword;
 
     @Override
     public void run(String... args) {
+        // v8.9.4(12.10/N3): 弱回退默认清零——空值确定性启动失败（不依赖 SecurityKeyGuard 时序）
+        if (adminPassword == null || adminPassword.isBlank()) {
+            throw new IllegalStateException("APP_ADMIN_PASSWORD 未配置，无法初始化 admin 账号");
+        }
         User admin = userRepository.findByUsername("admin").orElse(null);
         if (admin == null) {
             admin = new User();
