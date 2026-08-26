@@ -183,7 +183,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v8.9.1（阶段 6 上线阻断双项：部署凭据清零 + MCP 来源过滤提层）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v8.9.2（阶段 6 承压瓶颈双项：连接池对齐 + LLM 入口限流）**，生产线基线为 vP5（压测与容量）。
+
+- v8.9.2 要点：计划书「阶段 6」任务 12.1+12.2（CR §9.3 C1/C2 承压瓶颈项）——**连接池对齐**（Hikari 默认 20→40、最小空闲 10、60s 泄漏检测；容量关系写入注释，MySQL max-connections=200 容纳多实例×40）；**LLM 入口实例级限流**（LlmRateLimiter 四通道信号量：text/stream/embedding/fallback-text 独立配额默认 6/6/4/4，等待超时抛 50300 可重试并衔接既有降级路由——主配额满自动分流备用供应商；等待>5s/拒绝双指标）。后端 483 测试全绿。
 
 - v8.9.1 要点：计划书「阶段 6」任务 12.3+12.4（CR §9.3 C3 上线阻断项；版本号遵指示沿用 v8.9 子序列）——**compose 八处业务凭据 `:?` 必填**（MySQL root/user、Redis、Milvus root、MCP bridge token；MinIO minioadmin 弱默认消灭，MINIO_ACCESS_KEY/SECRET_KEY 必填）；CI compose 校验占位值集合同步扩充；**McpSourceFilter 置于 JwtAuthFilter 前**（回环∪白名单外 403 code 40300，`app.mcp.trust-proxy` 支持 XFF 首跳反代判定），控制器保留第二道防线同口径。后端 479 测试全绿。
 
@@ -296,6 +298,7 @@ AICaseTest/
 | v8.8.2 | 双实例就绪+积压可观测+混沌演练（补齐四任务锁/状态 Gauge 两告警/@Tag("chaos") 三场景） | ✅ 完成 |
 | v8.9 | 平台化（多租户/协作/OpenAPI/录制编排 CI——按计划书"阶段 5 整体可裁剪"条款裁剪，方向保留待立项） | ⏸ 裁剪 |
 | v8.9.1 | 部署层凭据清零+MCP 来源过滤提层（compose 八处 :? 必填/MinIO 必填/McpSourceFilter+trust-proxy 反代适配） | ✅ 完成 |
+| v8.9.2 | 连接池对齐+LLM 入口限流（Hikari 40+泄漏检测/LlmRateLimiter 四通道配额+指标） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

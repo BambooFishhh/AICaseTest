@@ -6,10 +6,14 @@ spring:
     username: ${MYSQL_USERNAME:aicasetest}
     password: ${MYSQL_PASSWORD:aicasetest123}
     # v5.7: Hikari 连接池调优（异步执行/生成场景需要更高并发连接）
+    # v8.9.2(12.1): 池容量与任务线程池对齐——analysis 6 + generation 6 + execution 12 + semantic 2
+    # = 26 任务线程，叠加 HTTP 短请求并发；40 ≥ 26+余量，避免高峰期任务线程阻塞在连接获取
+    # （MySQL 侧 max-connections=200 可容纳多实例 × 40）。泄漏检测 60s：超时借出打印 WARN 堆栈。
     hikari:
-      maximum-pool-size: ${HIKARI_MAX_POOL:20}
-      minimum-idle: ${HIKARI_MIN_IDLE:5}
+      maximum-pool-size: ${HIKARI_MAX_POOL:40}
+      minimum-idle: ${HIKARI_MIN_IDLE:10}
       connection-timeout: ${HIKARI_CONNECTION_TIMEOUT:30000}
+      leak-detection-threshold: ${HIKARI_LEAK_DETECTION_MS:60000}
       idle-timeout: 600000
       max-lifetime: 1800000
   jpa:

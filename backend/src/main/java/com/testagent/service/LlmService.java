@@ -152,6 +152,21 @@ public class LlmService {
                 : LlmCircuitBreaker.CHANNEL_TEXT;
     }
 
+    // v8.9.2(12.2): 限流通道映射——主/降级独立配额（fallback 文本与流式共用 fallback-text 配额）
+    private LlmRateLimiter rateLimiter = new LlmRateLimiter();
+
+    @Autowired(required = false)
+    void setRateLimiter(LlmRateLimiter rateLimiter) {
+        this.rateLimiter = rateLimiter;
+    }
+
+    private String rateChannelOf(String providerName, boolean streaming) {
+        if ("fallback".equals(providerName)) {
+            return LlmRateLimiter.CHANNEL_FALLBACK_TEXT;
+        }
+        return streaming ? LlmRateLimiter.CHANNEL_STREAM : LlmRateLimiter.CHANNEL_TEXT;
+    }
+
     @jakarta.annotation.PostConstruct
     void registerMetrics() {
         // v8.7.1: 启动零值预注册
@@ -236,6 +251,13 @@ public class LlmService {
     private LlmCallResult chatWithUsageOn(String providerName, String systemPrompt, String userPrompt,
                                           double temperature, boolean enableThinking) {
         String channel = breakerChannelOf(providerName);
+        // v8.9.2(12.2): 入口限流——通道配额内执行（release 于 finally），50300 可重试语义供降级路由
+        return rateLimiter.execute(rateChannelOf(providerName, false), () ->
+                chatWithUsageBody(providerName, channel, systemPrompt, userPrompt, temperature, enableThinking));
+    }
+
+    private LlmCallResult chatWithUsageBody(String providerName, String channel, String systemPrompt,
+                                            String userPrompt, double temperature, boolean enableThinking) {
         userPrompt = boundPrompt(userPrompt);
         log.info("[LLM] chat() 开始, provider={}, model={}, prompt长度={}, thinking={}",
                 providerName, model, userPrompt == null ? 0 : userPrompt.length(), enableThinking);
@@ -394,6 +416,18 @@ public class LlmService {
                                           boolean enableThinking,
                                           Runnable retryResetHook) {
         String channel = breakerChannelOf(providerName);
+        // v8.9.2(12.2): 流式入口同受通道配额约束
+        return rateLimiter.execute(rateChannelOf(providerName, true), () ->
+                chatStreamingBody(providerName, channel, systemPrompt, userPrompt, temperature,
+                        chunkConsumer, cancelSignal, enableThinking, retryResetHook));
+    }
+
+    private LlmCallResult chatStreamingBody(String providerName, String channel, String systemPrompt,
+                                            String userPrompt, double temperature,
+                                            Consumer<String> chunkConsumer,
+                                            java.util.function.BooleanSupplier cancelSignal,
+                                            boolean enableThinking,
+                                            Runnable retryResetHook) {
         userPrompt = boundPrompt(userPrompt);
         log.info("[LLM] chatStreaming() 开始, provider={}, prompt长度={}, thinking={}",
                 providerName, userPrompt == null ? 0 : userPrompt.length(), enableThinking);

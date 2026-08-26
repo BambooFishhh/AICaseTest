@@ -105,6 +105,14 @@ llm:
   # v6.5: LLM 重试次数（分类 + 抖动，4xx 不重试）
   retry:
     max-attempts: ${LLM_RETRY_MAX_ATTEMPTS:3}
+  # v8.9.2(12.2): LLM 入口实例级并发限流——通道配额与线程池/供应商 RPM 对齐；
+  # 多实例聚合口径 = 实例配额 × 实例数 ≤ 供应商 RPM
+  rate-limit:
+    text-concurrency: ${LLM_RATE_TEXT_CONCURRENCY:6}
+    stream-concurrency: ${LLM_RATE_STREAM_CONCURRENCY:6}
+    embedding-concurrency: ${LLM_RATE_EMBEDDING_CONCURRENCY:4}
+    fallback-text-concurrency: ${LLM_RATE_FALLBACK_TEXT_CONCURRENCY:4}
+    wait-timeout-ms: ${LLM_RATE_WAIT_TIMEOUT_MS:120000}
   # v8.6.2(9.7): 出参契约校验灰度——observe 告警放行（默认）/ enforce 重试一次后阻断
   schema:
     mode: ${LLM_SCHEMA_MODE:observe}

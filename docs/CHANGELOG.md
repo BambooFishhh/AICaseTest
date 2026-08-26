@@ -4,6 +4,42 @@
 
 ---
 
+## v8.9.2 — 连接池对齐 + LLM 入口限流（阶段 6 承压瓶颈双项）
+**日期**: 2026-08-26
+**基线**: v8.9.1
+**主题**: 计划书「阶段 6」任务 12.1 + 12.2（CR §9.3 C1/C2 承压瓶颈项）。Hikari 池容量与任务线程总量对齐 + 泄漏检测；LLM 三入口实例级并发信号量限流（主/降级独立配额），等待/拒绝进指标。纯后端版本
+
+### 工程变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `application-mysql.yml` | 修改 | **12.1** HIKARI_MAX_POOL 默认 20→40、MIN_IDLE 5→10（≥26 任务线程+HTTP 余量；MySQL max-connections=200 容纳多实例×40）；新增 leak-detection-threshold 60s（超时借出 WARN 堆栈）；池容量匹配关系写入注释 |
+| `service/LlmRateLimiter.java` | **新增** | **12.2** 通道信号量限流：text=6 / stream=6 / embedding=4 / fallback-text=4（与线程池及供应商配额对齐，注释说明依据）；tryAcquire 超时默认 120s 抛 50300 可重试异常；release 于 finally；等待 >5s 计 `llm_rate_limit_wait_total{channel}`、拒绝计 `llm_rate_limit_rejected_total{channel}` |
+| `service/LlmService.java` | 修改 | **12.2** chatWithUsageOn/chatStreamingOn 体包 rateLimiter.execute——主通道 text/stream 配额，降级通道统一 fallback-text 独立配额；50300 与既有降级路由语义衔接（主配额满自动切 fallback） |
+| `service/EmbeddingService.java` | 修改 | **12.2** embed 入口包 embedding 配额（聚合 dedup 4 线程与 RAG 检索并发） |
+| `application.yml` | 修改 | 新增 `llm.rate-limit.*` 五键（四通道并发 + wait-timeout-ms），全部环境变量可回调 |
+
+### 设计说明
+
+- **多实例聚合口径**：实例配额 × 实例数 ≤ 供应商 RPM（运维约束写入配置注释；分布式限流如需 Bucket4j+Redis 属计划外依赖，单独立项）。
+- **降级联动**：主通道 text 配额满抛 50300 → 既有降级路由切 fallback-text 独立配额——限流风暴时自然分流到备用供应商。
+- embedAllParallel 的 4 线程与 VueAnalyzer llmConcurrency 无需改造，统一受入口信号量约束。
+
+### API 契约变化
+
+无新端点。LLM 过载时返回 50300（此前为线程池拒绝 50014 或无限排队）。
+
+### 测试变更
+
+LlmRateLimiterTest ×4：配额内执行与归还 / 占满后超时拒绝并计指标 / text 与 embedding 通道独立配额 / 快速获取不误报等待指标。
+
+### 验证结果
+
+- 后端全量容器测试：483 tests, 0 failures, 0 errors（479 基线 + 4 新增）
+- docker compose 重部署验证见下节
+
+---
+
 ## v8.9.1 — 部署层凭据清零 + MCP 来源过滤提层（阶段 6 上线阻断双项）
 **日期**: 2026-08-26
 **基线**: v8.8.2

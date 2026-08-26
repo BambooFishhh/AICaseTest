@@ -47,6 +47,14 @@ public class EmbeddingService {
         this.providers = providers;
     }
 
+    // v8.9.2(12.2): embedding 入口限流——no-op 兜底（直 new 单测不受影响）
+    private LlmRateLimiter rateLimiter = new LlmRateLimiter();
+
+    @Autowired(required = false)
+    void setRateLimiter(LlmRateLimiter rateLimiter) {
+        this.rateLimiter = rateLimiter;
+    }
+
     public boolean isConfigured() {
         return embeddingModel != null;
     }
@@ -71,6 +79,11 @@ public class EmbeddingService {
             log.debug("EmbeddingModel unavailable, skip embedding");
             return List.of();
         }
+        // v8.9.2(12.2): embedding 入口限流（聚合 dedup 并行与 RAG 检索的并发）
+        return rateLimiter.execute(LlmRateLimiter.CHANNEL_EMBEDDING, () -> embedInternal(text));
+    }
+
+    private List<Float> embedInternal(String text) {
         // v8.8.1(10.3): 主通道熔断打开 → 直接走降级端点（未配置则空向量）
         boolean breakerOpen = circuitBreaker != null && !circuitBreaker.allowRequest(CHANNEL_EMBEDDING);
         if (!breakerOpen) {
