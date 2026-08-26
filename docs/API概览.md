@@ -75,6 +75,7 @@
 | GET | `/api/admin/tasks` | 高可用任务列表（分页筛选，仅 ADMIN，v6.5） |
 | GET | `/api/admin/tasks/{id}` | 任务详情（checkpoint/错误/租约，仅 ADMIN，v6.5） |
 | POST | `/api/admin/tasks/{id}/retry` | 重试 FAILED/DLQ/NEEDS_REVIEW 任务（仅 ADMIN，v6.5） |
+| GET | `/api/admin/vector/reconciliation` | 向量对账报告最近 20 条（仅 ADMIN，v8.6.1） |
 | POST | `/api/projects/{pid}/testcases/{caseId}/execute?mode=agent` | 触发用例执行（v2.0，v2.1 加 Agent 模式） |
 | GET | `/api/executions/{eid}` | 查询执行结果（v2.0） |
 | GET | `/api/projects/{pid}/executions` | 执行历史列表（v2.0，v3.11 前端接入执行历史页，v5.10 支持 `testCaseId` 过滤） |

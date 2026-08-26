@@ -2106,7 +2106,8 @@ public class TestGeneratorAgent {
         }
         int skipped = 0;
         int index = 0;
-        for (JsonNode node : array) {            index++;
+        for (JsonNode node : array) {
+            index++;
             try {
                 TestCase tc = buildTestCase(node);
                 result.add(tc);

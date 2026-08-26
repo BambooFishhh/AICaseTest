@@ -284,6 +284,7 @@ AICaseTest/
 | v8.1 | 范围感知基础（Git 基线 diff 识别本期范围/LLM 辅助映射/人工确认锁定/partial clone 改造） | ✅ 完成 |
 | v8.2 | 本期聚焦生成（状态机切片/BFS setup 推导/prompt 分层/phase 标记/blocked 语义/生成前置校验升级） | ✅ 完成 |
 | v8.3 | 覆盖率口径重构（单一本期口径/全量口径移除/引导态/影响面清单/AI 评审覆盖同步收敛） | ✅ 完成 |
+| v8.4 | 256k 上下文扩容与代码审查修复（预算参数化/池快速失败/流式 retryReset/解析容错/向量层加固/SSRF 收敛） | ✅ 完成 |
 | v8.5 | 安全闭环（弱默认密钥清零/MCP 回环限制/DNS rebinding 收敛/Grafana 必填/retryReset 前端消费） | ✅ 完成 |
 | v8.6.1 | 向量一致性闭环（删除补偿表/ShedLock 重放/周期对账修复/检索幽灵过滤） | ✅ 完成 |
 | v8.6.2 | 出参契约化（四 schema 契约/observe-enforce 灰度/括号配平提取） | ✅ 完成 |
