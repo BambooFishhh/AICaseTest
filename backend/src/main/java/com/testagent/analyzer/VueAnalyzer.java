@@ -53,6 +53,14 @@ public class VueAnalyzer {
     @Value("${app.executor.llm-concurrency:4}")
     private int llmConcurrency;
 
+    // v8.9.6(C8): 共享受管并发池——字段默认 null（直 new 单测回落临时池），容器注入后复用
+    private java.util.concurrent.ExecutorService vueLlmExecutor;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setVueLlmExecutor(java.util.concurrent.ExecutorService vueLlmExecutor) {
+        this.vueLlmExecutor = vueLlmExecutor;
+    }
+
     // v7.13: LLM 增强输入预算配置化（原 v1.12 硬编码 12000/800/700，按 32k context 模型
     // 定的保守值，现代模型 128k+ 放大至"大项目全覆盖"）。字段初始化默认值兜底：
     // 单测直接 new 不走容器，纯 @Value 下 int 为 0 会截没全部源码
@@ -1100,7 +1108,12 @@ public class VueAnalyzer {
             // 把外层分析子线程上的埋点上下文与 phase 传播到组件并发池，使 LLM token 也能落库。
             TelemetryService.TelemetryContext telemetryCtx = telemetryService.currentContext();
             String telemetryPhase = telemetryService.currentPhaseOverride();
-            ExecutorService pool = Executors.newFixedThreadPool(workers);
+            // v8.9.6(C8): 共享受管池（AsyncConfig#vueLlmExecutor，带 MdcTaskDecorator）——
+            // 替代每次分析新建固定线程池；直 new 单测无 Bean 时回落临时池保持原行为
+            java.util.concurrent.ExecutorService pool = vueLlmExecutor != null
+                    ? vueLlmExecutor
+                    : java.util.concurrent.Executors.newFixedThreadPool(workers);
+            boolean borrowedShared = vueLlmExecutor != null;
             try {
                 List<CompletableFuture<Void>> futures = new ArrayList<>();
                 for (Map<String, Object> m : businessComponents) {
@@ -1119,7 +1132,10 @@ public class VueAnalyzer {
                 }
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
             } finally {
-                pool.shutdown();
+                // v8.9.6(C8): 共享池不 shutdown（生命周期归容器）；临时池（单测回落）保持关闭
+                if (!borrowedShared) {
+                    pool.shutdown();
+                }
             }
             int failed = summaryFailures.get();
             if (failed > 0) {

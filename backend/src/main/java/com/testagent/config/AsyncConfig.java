@@ -100,6 +100,21 @@ public class AsyncConfig {
         return buildExecutor("semantic-", semanticCore, semanticMax, semanticQueue, false);
     }
 
+    // v8.9.6(C8): VueAnalyzer 组件摘要 LLM 并发共享受管池——替代每次分析 newFixedThreadPool+shutdown
+    // （频繁创建开销 + 无 MDC 装饰）；core=max=llm-concurrency 保证真并发（见 VueAnalyzer 注释）
+    @Bean(destroyMethod = "shutdown")
+    public java.util.concurrent.ExecutorService vueLlmExecutor(
+            @Value("${app.executor.llm-concurrency:4}") int llmConcurrency) {
+        int n = Math.max(1, llmConcurrency);
+        ThreadPoolTaskExecutor te = new ThreadPoolTaskExecutor();
+        te.setCorePoolSize(n);
+        te.setMaxPoolSize(n);
+        te.setThreadNamePrefix("vue-llm-");
+        te.setTaskDecorator(new com.testagent.observability.MdcTaskDecorator());
+        te.initialize();
+        return te.getThreadPoolExecutor();
+    }
+
     private ThreadPoolTaskExecutor buildExecutor(String prefix, int core, int max, int queue, boolean rejectFast) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(core);

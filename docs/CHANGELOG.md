@@ -4,6 +4,31 @@
 
 ---
 
+## v8.9.6 — VueAnalyzer 共享池 + 并发压测补数（阶段 6 尾项收口）
+**日期**: 2026-08-26
+**基线**: v8.9.5
+**主题**: 计划书「阶段 6」可选尾项——12.6④(C8) VueAnalyzer 组件摘要并发改共享受管池（MdcTaskDecorator）；12.7 并发压测数据补齐（k6 镜像不可用降级为 PS 多进程聚合，1200 请求零失败 RPS=202/P95=82ms 入容量报告）。纯后端/工程版本
+
+### 工程变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `config/AsyncConfig.java` | 修改 | **C8** 新增 `vueLlmExecutor` Bean（core=max=llm-concurrency，vue-llm- 线程名前缀，MdcTaskDecorator，destroyMethod=shutdown） |
+| `analyzer/VueAnalyzer.java` | 修改 | **C8** 组件摘要并发池改注入共享池（字段默认 null，直 new 单测回落临时池保持原行为；共享池不 shutdown 生命周期归容器） |
+| `perf/load-shortrequests.ps1` | **新增** | **12.7** 多进程并发压测聚合工具（Start-Job worker ×N，父进程合并 P50/P95/RPS） |
+| `docs/容量基线报告.md` / 计划书状态 | 修改 | 并发组数据回填：**1200 请求 0 失败，RPS=202.4，P50=15ms / P95=82ms / Max=103ms**——印证 C1 连接池对齐后无连接竞争 |
+
+### API 契约变化
+
+无。
+
+### 验证结果
+
+- 后端全量容器测试：491 tests, 0 failures, 0 errors
+- 并发压测实测见上表；docker compose 重部署健康核验见下节
+
+---
+
 ## v8.9.5 — 水平扩容指南 + 双实例演练 + 短请求容量基线（阶段 6 任务 12.8 + 12.7 首组数据）
 **日期**: 2026-08-26
 **基线**: v8.9.4
