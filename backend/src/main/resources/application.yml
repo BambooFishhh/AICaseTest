@@ -80,6 +80,17 @@ llm:
     generation: ${LLM_THINKING_GENERATION:false}
   api-key: ${LLM_API_KEY:}
   base-url: ${LLM_BASE_URL:https://opencode.ai/zen/go/v1}
+  # v8.8.1(10.1): 多供应商注册——现有 llm.* 即 primary；fallback 三键齐备时启用降级路由
+  models:
+    fallback:
+      base-url: ${LLM_FALLBACK_BASE_URL:}
+      api-key: ${LLM_FALLBACK_API_KEY:}
+      model: ${LLM_FALLBACK_MODEL:}
+      max-prompt-chars: ${LLM_FALLBACK_MAX_PROMPT_CHARS:200000}
+      # v8.8.1(10.3): embedding 独立降级端点（与主 embedding LLM_EMBEDDING_* 相互独立）
+      embedding-base-url: ${LLM_FALLBACK_EMBEDDING_BASE_URL:}
+      embedding-api-key: ${LLM_FALLBACK_EMBEDDING_API_KEY:}
+      embedding-model: ${LLM_FALLBACK_EMBEDDING_MODEL:}
   # v6.7: provider 简易熔断（连续失败短路）
   circuit:
     failure-threshold: ${LLM_CIRCUIT_FAILURE_THRESHOLD:5}

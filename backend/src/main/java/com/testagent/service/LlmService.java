@@ -116,11 +116,51 @@ public class LlmService {
         this.metrics = metrics;
     }
 
+    // v8.8.1(10.1/10.2): 多供应商注册与降级路由——providers 未注入（直 new 单测）时单通道行为
+    private com.testagent.config.LlmProviders providers;
+
+    @Autowired(required = false)
+    void setProviders(com.testagent.config.LlmProviders providers) {
+        this.providers = providers;
+    }
+
+    // v8.8.1(10.2): 本次线程最近一次生成是否走了降级通道——由 TestGeneratorAgent 写入报告、
+    // TestCaseService 写入 complete 事件；同线程消费后即清除
+    private final ThreadLocal<String> degradedProvider = new ThreadLocal<>();
+
+    public String consumeDegradedProvider() {
+        String value = degradedProvider.get();
+        degradedProvider.remove();
+        return value;
+    }
+
+    // seam：按通道名取 ChatClient（primary 复用自动装配 builder；fallback 由 LlmProviders 构建）
+    protected ChatClient chatClientFor(String providerName) {
+        if ("fallback".equals(providerName)) {
+            ChatClient client = providers == null ? null : providers.fallbackChatClient();
+            if (client == null) {
+                throw new BusinessException(50002, "降级通道未配置", HttpStatus.SERVICE_UNAVAILABLE);
+            }
+            return client;
+        }
+        return chatClientBuilder.build();
+    }
+
+    private String breakerChannelOf(String providerName) {
+        return "fallback".equals(providerName)
+                ? LlmCircuitBreaker.CHANNEL_TEXT + ":fallback"
+                : LlmCircuitBreaker.CHANNEL_TEXT;
+    }
+
     @jakarta.annotation.PostConstruct
     void registerMetrics() {
         // v8.7.1: 启动零值预注册
         metrics.registerCounter("gen_retry_reset_total");
         metrics.registerCounter("gen_stream_truncated_total");
+        // v8.8.1(10.2): 降级路由使用计数
+        metrics.registerCounter("llm_fallback_used_total", "channel", "text");
+        metrics.registerCounter("llm_fallback_used_total", "channel", "text-stream");
+        metrics.registerCounter("llm_fallback_used_total", "channel", "embedding");
     }
 
     // v1.4: 重试延迟基数（v6.5 起叠加随机抖动）
@@ -173,10 +213,33 @@ public class LlmService {
 
     private LlmCallResult chatWithUsage(String systemPrompt, String userPrompt, double temperature,
                                         boolean enableThinking) {
+        // v8.8.1(10.2): 降级路由——主通道重试耗尽/熔断打开时切换 fallback（未配置则原样抛出）
+        try {
+            return chatWithUsageOn("primary", systemPrompt, userPrompt, temperature, enableThinking);
+        } catch (BusinessException primaryEx) {
+            if (providers == null || !providers.fallbackEnabled()) {
+                throw primaryEx;
+            }
+            metrics.increment("llm_fallback_used_total", "channel", "text");
+            degradedProvider.set("fallback");
+            log.warn("[LLM] 主通道不可用，切换降级通道: {}", primaryEx.getMessage());
+            try {
+                return chatWithUsageOn("fallback", systemPrompt, userPrompt, temperature, enableThinking);
+            } catch (Exception fallbackEx) {
+                throw new BusinessException(50300,
+                        "主/降级 LLM 通道均不可用: " + fallbackEx.getMessage(),
+                        HttpStatus.SERVICE_UNAVAILABLE);
+            }
+        }
+    }
+
+    private LlmCallResult chatWithUsageOn(String providerName, String systemPrompt, String userPrompt,
+                                          double temperature, boolean enableThinking) {
+        String channel = breakerChannelOf(providerName);
         userPrompt = boundPrompt(userPrompt);
         log.info("[LLM] chat() 开始, provider={}, model={}, prompt长度={}, thinking={}",
-                provider, model, userPrompt == null ? 0 : userPrompt.length(), enableThinking);
-        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest(LlmCircuitBreaker.CHANNEL_TEXT)) {
+                providerName, model, userPrompt == null ? 0 : userPrompt.length(), enableThinking);
+        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest(channel)) {
             throw new BusinessException(50002, "LLM 熔断打开，请稍后重试", HttpStatus.SERVICE_UNAVAILABLE);
         }
         Exception lastException = null;
@@ -184,7 +247,7 @@ public class LlmService {
             try {
                 long start = System.currentTimeMillis();
                 OpenAiChatOptions options = buildOptions(temperature, enableThinking);
-                ChatResponse response = chatClientBuilder.build().prompt()
+                ChatResponse response = chatClientFor(providerName).prompt()
                         .system(systemPrompt)
                         .user(userPrompt == null ? "" : userPrompt)
                         .options(options)
@@ -199,7 +262,7 @@ public class LlmService {
                         Map.of("prompt", call.getPromptTokens(), "completion", call.getCompletionTokens(),
                                 "total", call.getTotalTokens()));
                 if (llmCircuitBreaker != null) {
-                    llmCircuitBreaker.onSuccess(LlmCircuitBreaker.CHANNEL_TEXT);
+                    llmCircuitBreaker.onSuccess(channel);
                 }
                 return call;
             } catch (Exception e) {
@@ -226,7 +289,7 @@ public class LlmService {
         }
         // v7.3(L2): 不可重试错误（4xx 配置类）不计入熔断——API Key 填错不应打满熔断拖垮全系统
         if (llmCircuitBreaker != null && LlmRetryPolicy.isRetryable(lastException)) {
-            llmCircuitBreaker.onFailure(LlmCircuitBreaker.CHANNEL_TEXT);
+            llmCircuitBreaker.onFailure(channel);
         }
         throw new BusinessException(50002,
                 "LLM调用失败（已尝试" + maxRetries + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),
@@ -295,10 +358,46 @@ public class LlmService {
                                                  java.util.function.BooleanSupplier cancelSignal,
                                                  boolean enableThinking,
                                                  Runnable retryResetHook) {
+        // v8.8.1(10.2): 降级路由（流式）——主通道整体失败后切 fallback；切换前先清已推送草稿
+        try {
+            return chatStreamingOn("primary", systemPrompt, userPrompt, temperature, chunkConsumer,
+                    cancelSignal, enableThinking, retryResetHook);
+        } catch (BusinessException primaryEx) {
+            if (providers == null || !providers.fallbackEnabled()) {
+                throw primaryEx;
+            }
+            metrics.increment("llm_fallback_used_total", "channel", "text-stream");
+            degradedProvider.set("fallback");
+            log.warn("[LLM] 流式主通道不可用，切换降级通道: {}", primaryEx.getMessage());
+            if (retryResetHook != null) {
+                try {
+                    retryResetHook.run();
+                } catch (Exception ignored) {
+                    // 清态钩子失败不阻断降级
+                }
+            }
+            try {
+                return chatStreamingOn("fallback", systemPrompt, userPrompt, temperature, chunkConsumer,
+                        cancelSignal, enableThinking, retryResetHook);
+            } catch (Exception fallbackEx) {
+                throw new BusinessException(50300,
+                        "主/降级 LLM 通道均不可用: " + fallbackEx.getMessage(),
+                        HttpStatus.SERVICE_UNAVAILABLE);
+            }
+        }
+    }
+
+    private LlmCallResult chatStreamingOn(String providerName, String systemPrompt, String userPrompt,
+                                          double temperature,
+                                          Consumer<String> chunkConsumer,
+                                          java.util.function.BooleanSupplier cancelSignal,
+                                          boolean enableThinking,
+                                          Runnable retryResetHook) {
+        String channel = breakerChannelOf(providerName);
         userPrompt = boundPrompt(userPrompt);
-        log.info("[LLM] chatStreaming() 开始, prompt长度={}, thinking={}",
-                userPrompt == null ? 0 : userPrompt.length(), enableThinking);
-        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest(LlmCircuitBreaker.CHANNEL_TEXT)) {
+        log.info("[LLM] chatStreaming() 开始, provider={}, prompt长度={}, thinking={}",
+                providerName, userPrompt == null ? 0 : userPrompt.length(), enableThinking);
+        if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest(channel)) {
             throw new BusinessException(50002, "LLM 熔断打开，请稍后重试", HttpStatus.SERVICE_UNAVAILABLE);
         }
         Exception lastException = null;
@@ -316,7 +415,7 @@ public class LlmService {
                 CountDownLatch done = new CountDownLatch(1);
 
                 OpenAiChatOptions options = buildOptions(temperature, enableThinking);
-                var flux = chatClientBuilder.build().prompt()
+                var flux = chatClientFor(providerName).prompt()
                         .system(systemPrompt)
                         .user(userPrompt == null ? "" : userPrompt)
                         .options(options)
@@ -394,7 +493,7 @@ public class LlmService {
                         Map.of("prompt", call.getPromptTokens(), "completion", call.getCompletionTokens(),
                                 "total", call.getTotalTokens()));
                 if (llmCircuitBreaker != null) {
-                    llmCircuitBreaker.onSuccess(LlmCircuitBreaker.CHANNEL_TEXT);
+                    llmCircuitBreaker.onSuccess(channel);
                 }
                 return call;
             } catch (Exception e) {
@@ -433,7 +532,7 @@ public class LlmService {
         }
         // v7.3(L2): 不可重试错误不计入熔断（同 chat 链路）
         if (llmCircuitBreaker != null && LlmRetryPolicy.isRetryable(lastException)) {
-            llmCircuitBreaker.onFailure(LlmCircuitBreaker.CHANNEL_TEXT);
+            llmCircuitBreaker.onFailure(channel);
         }
         throw new BusinessException(50002,
                 "LLM流式调用失败（已尝试" + maxRetries + "次）: " + (lastException != null ? lastException.getMessage() : "unknown"),

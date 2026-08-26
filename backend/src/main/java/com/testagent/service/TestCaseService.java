@@ -382,6 +382,10 @@ public class TestCaseService {
             completeData.put("reviewDegraded", genReport.reviewDegraded);
             // v7.7(G10): 容量事实（非降级信号）——达 60 条上限仍有缺口，前端可提示"精简需求或拆分生成"
             completeData.put("coverageCappedByLimit", genReport.coverageCappedByLimit);
+            // v8.8.1(10.2): 走了降级供应商时透出标注（primary 生成不透出该键）
+            if (genReport.degradedProvider != null && !genReport.degradedProvider.isBlank()) {
+                completeData.put("degradedProvider", genReport.degradedProvider);
+            }
             sendSseEvent(emitter, clientGone, "complete", completeData);
             safeSseComplete(emitter, clientGone);
             log.info("Streaming generation completed for project {}: {} cases", projectId, testCases.size());

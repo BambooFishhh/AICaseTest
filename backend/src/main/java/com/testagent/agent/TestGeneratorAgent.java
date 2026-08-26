@@ -163,6 +163,8 @@ public class TestGeneratorAgent {
         public int truncatedRecovered;
         /** 因生成上限提前退出且仍有覆盖缺口——v7.7(G10) 容量事实（非降级信号）；上限由 app.generation.max-generated-cases 控制 */
         public boolean coverageCappedByLimit;
+        /** v8.8.1(10.2): 本次生成走了降级供应商时记录通道名（primary 生成则为 null） */
+        public String degradedProvider;
 
         public Map<String, Object> toMap() {
             Map<String, Object> map = new LinkedHashMap<>();
@@ -177,6 +179,9 @@ public class TestGeneratorAgent {
             map.put("streamTruncated", streamTruncated);
             map.put("truncatedRecovered", truncatedRecovered);
             map.put("coverageCappedByLimit", coverageCappedByLimit);
+            if (degradedProvider != null && !degradedProvider.isBlank()) {
+                map.put("degradedProvider", degradedProvider);
+            }
             return map;
         }
     }
@@ -1290,6 +1295,10 @@ public class TestGeneratorAgent {
                 : (report != null && report.roundsNotConverged) ? "not_converged" : "completed";
         metrics.increment("gen_rounds_total", "result", roundResult);
         metrics.incrementBy("gen_cases_generated_total", all.size());
+        // v8.8.1(10.2): 降级通道标注进报告（primary 生成则为 null，complete 事件不透出该键）
+        if (report != null && llmService != null) {
+            report.degradedProvider = llmService.consumeDegradedProvider();
+        }
         return all;
     }
 

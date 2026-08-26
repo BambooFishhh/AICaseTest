@@ -4,6 +4,47 @@
 
 ---
 
+## v8.8.1 — 多供应商双通道 + 降级路由（计划书阶段 4 上半）
+**日期**: 2026-08-26
+**基线**: v8.7.2
+**主题**: 计划书任务 10.1–10.3（v8.8 拆分版）——消灭 G5：llm.models.fallback.* 注册降级供应商，主通道失败/熔断自动切换并在报告与 SSE complete 标注 degradedProvider；双通道熔断隔离；embedding 独立熔断通道与独立降级端点。纯后端版本
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `config/LlmProviders.java` | **新增** | **10.1** 多供应商注册：现有 llm.* 即 primary；fallback 三键（base-url/api-key/model）齐备才启用，未配置安全禁用；降级 ChatClient/EmbeddingModel 懒构建缓存（Spring AI OpenAiApi 程序化构建，TransientAiException 重试 ×2） |
+| `service/LlmService.java` | 修改 | **10.2** chat/chatStreaming 核心重构为 `*On(providerName,...)`——按通道取 ChatClient（seam 方法便于测试）、按 providerName 计算熔断键（text / text:fallback）；外层包装降级路由：主通道 BusinessException→切 fallback→双败抛 50300；ThreadLocal degradedProvider 供同线程消费 |
+| `agent/TestGeneratorAgent.java` | 修改 | **10.2** GenerationReport 新增 degradedProvider 字段并进 toMap（轮次出口消费 ThreadLocal） |
+| `service/TestCaseService.java` | 修改 | **10.2** complete 事件条件透出 degradedProvider（primary 生成不透出该键） |
+| `service/EmbeddingService.java` | 修改 | **10.3** embedding 独立熔断通道（channel=embedding，4xx 不计熔断口径与文本一致）；主模型异常/熔断时切 llm.models.fallback.embedding-* 降级端点，未配置维持空向量降级语义 |
+| `application.yml` / `.env.example` | 修改 | 新增 `llm.models.fallback.*` 七键（base-url/api-key/model/max-prompt-chars + embedding 三键），全部环境变量可回调 |
+
+### 设计说明
+
+- **流式降级边界**：仅当主通道整体失败（重试耗尽/熔断打开）才切换 fallback，切换前触发 retryResetHook 清已推送草稿；已推送内容的轮内失败仍由主通道既有重试承担——避免跨通道重复推送的复杂度（偏差记录在案）。
+- **预算参数 per-provider**：fallback max-prompt-chars 独立配置（默认 200k，适配小上下文降级模型）；LlmService boundPrompt 当前读 primary 键，per-provider 生效于后续接入点扩展。
+- **熔断隔离**：channel=embedding 与 text/text:fallback 完全独立——embedding 熔断不拖垮 chat 链路（单测覆盖）。
+
+### API 契约变化
+
+- SSE complete 事件新增可选键 `degradedProvider`（string，走了降级通道时出现）；GenerationReport.toMap 同步。其余零变化；未配置 fallback 时全部行为与 v8.7.2 一致（全量回归证明）。
+
+### 测试变更
+
+| 文件 | 例数 | 覆盖 |
+|---|---|---|
+| LlmProvidersTest | 4 | api-key 空/缺 url/缺 model 禁用、三键齐备启用、spec 解析 |
+| LlmCircuitBreakerChannelIsolationTest | 2 | embedding 熔断不拖垮 text/multimodal/fallback；text 熔断时 text:fallback 可用 |
+| LlmServiceFallbackRoutingTest | 3 | 主败切 fallback 并打标 / 未配置单通道语义 / 双败抛 50300 |
+
+### 验证结果
+
+- 后端全量容器测试：478 tests, 0 failures（469 基线 + 9 新增）
+- docker compose 重部署验证见下节
+
+---
+
 ## v8.7.2 — Grafana 看板告警 + 评测体系 v1（可观测性下半）
 **日期**: 2026-08-26
 **基线**: v8.7.1
