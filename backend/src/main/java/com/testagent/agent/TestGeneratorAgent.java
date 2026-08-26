@@ -46,6 +46,14 @@ public class TestGeneratorAgent {
     private static final Logger log = LoggerFactory.getLogger(TestGeneratorAgent.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // v8.6.2(9.8): 出参契约校验器——字段默认 null（直 new 单测不受影响），null 时跳过校验
+    private com.testagent.service.LlmSchemaValidator llmSchemaValidator;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setLlmSchemaValidator(com.testagent.service.LlmSchemaValidator llmSchemaValidator) {
+        this.llmSchemaValidator = llmSchemaValidator;
+    }
+
     // v5.14: 自动多轮补齐上限，避免无限调用 LLM（收敛/成本控制，非上下文约束，未随 256k 放宽）
     private static final int MAX_GENERATION_ROUNDS = 4;
     // v8.4: 生成用例总量上限参数化，60 → 120（60 只够中小项目；大项目接口多时上限先于上下文成为覆盖率瓶颈）。
@@ -2046,6 +2054,12 @@ public class TestGeneratorAgent {
     // v8.4fix: 逐条容错——单条坏数据跳过并告警，不再抛异常丢失整批；
     // 仅当整段文本不是合法 JSON 数组时才视为本轮解析失败向上抛错触发重试。
     private List<TestCase> parseTestCases(String json, CaseCallback caseCb) {
+        // v8.6.2(9.8): 逐条容错之前先过结构契约——enforce 失败抛 50002 走既有整段上抛重试
+        if (llmSchemaValidator != null
+                && !llmSchemaValidator.validateStructured(json, "test-cases", "test-generator")) {
+            throw new BusinessException(50002,
+                    "LLM 输出不符合用例数组结构契约(test-cases)", HttpStatus.INTERNAL_SERVER_ERROR);
+        }
         List<TestCase> result = new ArrayList<>();
         JsonNode array;
         try {

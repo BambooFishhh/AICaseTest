@@ -34,6 +34,14 @@ public class StateMachineAgent {
     @Autowired
     private PromptSkillLoader promptSkillLoader;
 
+    // v8.6.2(9.8): 出参契约校验器——字段默认 null（直 new 单测不受影响），null 时跳过校验
+    private com.testagent.service.LlmSchemaValidator llmSchemaValidator;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setLlmSchemaValidator(com.testagent.service.LlmSchemaValidator llmSchemaValidator) {
+        this.llmSchemaValidator = llmSchemaValidator;
+    }
+
     public List<StateMachine> extract(BackendResult backendResult) {
         return extract(backendResult, null);
     }
@@ -141,6 +149,12 @@ public class StateMachineAgent {
 
         String response = llmService.chatWithAnalysis(systemPrompt, userPrompt, 0.3);
         String json = extractJsonArray(response);
+
+        // v8.6.2(9.8): 解析前先过结构契约——enforce 失败抛 RuntimeException 与既有解析失败同语义
+        if (llmSchemaValidator != null
+                && !llmSchemaValidator.validateStructured(json, "state-machine", "state-machine-agent")) {
+            throw new RuntimeException("LLM 输出不符合状态机结构契约(state-machine)");
+        }
 
         List<StateMachine> result = new ArrayList<>();
         try {

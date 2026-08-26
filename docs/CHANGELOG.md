@@ -4,6 +4,48 @@
 
 ---
 
+## v8.6.2 — LLM 出参契约化（schema 校验 + observe/enforce 灰度 + 括号配平提取）
+**日期**: 2026-08-26
+**基线**: v8.6.1
+**主题**: 计划书阶段 2 下半（任务 9.5–9.8，v8.6 拆分版）——消灭 G3：四个 LLM 结构化出参点全部接入 draft-07 schema 契约，默认 observe 仅观测不阻断；chatJson enforce 附缺失字段清单重试一次；extractJsonObject 括号配平扫描替代首尾截取。纯后端版本
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `backend/pom.xml` | 修改 | **9.5** 新依赖 com.networknt:json-schema-validator 1.5.9（组件总表授权项；1.x 线最终版，draft-07） |
+| `service/LlmSchemaValidator.java` | **新增** | **9.5** classpath llm-schemas/ 加载 + 编译缓存；validateJson 返回含实例路径的错误列表；validateStructured 统一入口（true=通过或 observe 放行）；typeLoose=false 严格类型 |
+| `resources/llm-schemas/*.schema.json` ×4 | **新增** | **9.6** test-cases（title/steps/priority/type 必填，type∈positive·negative·boundary·data、priority P0–P3 对齐 v8.4 白名单）/ prd-analysis（modules+requirements 必填）/ state-machine（transitions.items 必填 from/to，为 validateTransitions 前置结构保证）/ review-result（index≥0、status∈pass·fix·reject）；$comment 标注契约来源 |
+| `service/LlmService.java` | 修改 | **9.7** chatJson 新增 schemaName 重载：observe WARN 放行；enforce 追加缺失字段清单重试 1 次→仍失败抛 50002；原三参方法委托 schemaName=null 行为不变。extractJsonObject 重写为逐段配平+JSON 解析甄别（说明文字含 {格式要求} 类伪段不再误取），无配平段回落旧首尾逻辑 |
+| `agent/TestGeneratorAgent.java` | 修改 | **9.8** parseTestCases 在逐条容错之前过 test-cases 契约；enforce 失败抛 50002 走既有整段上抛重试 |
+| `agent/PrdAgent.java` | 修改 | **9.8** analyzeByLlm readValue 前过 prd-analysis 契约，失败走 analyze 既有异常包装链路 |
+| `agent/StateMachineAgent.java` | 修改 | **9.8** extract 解析前过 state-machine 契约，失败与既有解析失败同语义 |
+| `agent/TestCaseReviewAgent.java` | 修改 | **9.8** 评审解析前过 review-result 契约，失败抛 50002 走评审失败链路 |
+| `application.yml` / `.env.example` | 修改 | 新增 `llm.schema.mode`（LLM_SCHEMA_MODE，默认 observe）；切换判据注释（violation 率<1% 且可解释） |
+
+四接入点统一注入模式：字段默认 null + @Autowired(required=false) setter——直 new 单测零改动。
+
+### API 契约变化
+
+- 无外部 API 变化；observe 默认下所有接口行为与 v8.6.1 完全一致（全量回归证明）。
+- 计划书偏差记录：数组类出参点 enforce 不做二次提示词重试（复用调用方既有轮次重试，语义等价）；PrdAgent 内重复 extractor 未统一（输入已过契约校验，统一不在本期范围）。
+
+### 测试变更
+
+| 文件 | 例数 | 覆盖 |
+|---|---|---|
+| LlmSchemaValidatorTest | 10 | 合法通过/缺必填报路径/枚举脏值拒绝/非法 JSON/未知 schema + 四 schema 双向样本 + observe/enforce 矩阵 |
+| LlmServiceChatJsonSchemaTest | 5 | observe 不重试 / enforce 重试成功 / enforce 二次失败抛降级 / 三参旧路径零影响 / 配平提取三态（噪声大括号·转义花括号·无配平回落） |
+| TestGeneratorAgentSchemaGateTest | 4 | null 校验器旧行为 / observe 放行 / enforce 拦截于逐条容错之前 / 合法数组放行 |
+
+### 验证结果
+
+- 后端全量容器测试：457 tests, 0 failures（441 基线 + 16 新增）
+- 过程修复：schema 加载路径拼接错误（{name}.json → {name}.schema.json，经容器内探针定位）
+- docker compose 重部署验证见下节
+
+---
+
 ## v8.6.1 — 向量数据一致性闭环（删除补偿 + ShedLock 重放 + 周期对账 + 幽灵过滤）
 **日期**: 2026-08-26
 **基线**: v8.5

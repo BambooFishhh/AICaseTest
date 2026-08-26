@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "契约来源: PrdAgent.analyzeByLlm（v8.6.2 任务 9.6）。顶层五数组按 PrdAnalysisResult 字段类型化，核心两块必填",
+  "type": "object",
+  "required": ["modules", "requirements"],
+  "properties": {
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "priority": { "type": "string" },
+          "acceptanceCriteria": { "type": "array" }
+        }
+      }
+    },
+    "businessRules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "rule": { "type": "string" },
+          "ruleType": { "type": "string" }
+        }
+      }
+    },
+    "stateFlows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "states": { "type": "array" },
+          "transitions": { "type": "array" }
+        }
+      }
+    },
+    "entities": { "type": "array", "items": { "type": "string" } }
+  }
+}

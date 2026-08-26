@@ -2,6 +2,7 @@ package com.testagent.agent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.testagent.common.BusinessException;
 import com.testagent.dto.JsonHelper;
 import com.testagent.entity.TestCase;
 import com.testagent.service.LlmService;
@@ -30,6 +31,10 @@ public class TestCaseReviewAgent {
 
     private static final Logger log = LoggerFactory.getLogger(TestCaseReviewAgent.class);
     private static final int MAX_LLM_CASES = 60;
+
+    // v8.6.2(9.8): 出参契约校验器——字段默认 null（直 new 单测不受影响），null 时跳过校验
+    @Autowired(required = false)
+    private com.testagent.service.LlmSchemaValidator llmSchemaValidator;
     /** v7.8(R3): 模糊匹配门槛——0.65 旧阈值会"洗白"CRUD 兄弟路径（2/3 token 相同 +0.2 method 分即过线） */
     private static final double FUZZY_ENDPOINT_THRESHOLD = 0.9;
     /** v7.8(R1): 高置信建议自动采纳门槛 */
@@ -235,7 +240,16 @@ public class TestCaseReviewAgent {
         String userPrompt = "评审输入：\n" + objectMapper.writeValueAsString(payload);
 
         String response = llmService.chat(systemPrompt, userPrompt, 0.2);
-        JsonNode array = objectMapper.readTree(extractJsonArray(response));
+        String reviewJson = extractJsonArray(response);
+
+        // v8.6.2(9.8): 解析前先过结构契约——enforce 失败抛 50002 走评审既有失败链路
+        if (llmSchemaValidator != null
+                && !llmSchemaValidator.validateStructured(reviewJson, "review-result", "review-agent")) {
+            throw new BusinessException(50002,
+                    "LLM 输出不符合评审结果结构契约(review-result)",
+                    org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+        JsonNode array = objectMapper.readTree(reviewJson);
         Map<Integer, JsonNode> byIndex = new LinkedHashMap<>();
         if (!array.isArray()) {
             return byIndex;

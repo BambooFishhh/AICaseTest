@@ -183,7 +183,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v8.6.1（向量数据一致性闭环，阶段 2 上半）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v8.6.2（LLM 出参契约化，阶段 2 收官）**，生产线基线为 vP5（压测与容量）。
+
+- v8.6.2 要点：计划书任务 9.5–9.8——**出参契约化**（json-schema-validator 1.5.9 + 四份 draft-07 schema：用例数组/PRD 解析/状态机/评审结果）；**灰度开关**（llm.schema.mode 默认 observe 仅观测告警，enforce 时 chatJson 附缺失字段清单重试一次仍失败降级；切换判据=violation 率<1% 且可解释）；**括号配平提取**（extractJsonObject 逐段配平+JSON 甄别，说明文字含大括号不再误取）。后端 457 测试全绿。
 
 - v8.6.1 要点：计划书任务 9.1–9.4——**删除补偿**（Milvus 删除终败落 pending_vector_ops 表，同 expr upsert 不堆行）；**ShedLock 重放**（每 5 分钟指数退避重放，超限 DEAD 告警；补偿/对账双任务上锁多实例安全；新增依赖 shedlock 5.16.0）；**周期对账**（每日逐项目比对 DB↔向量 id 集，缺失补索引、孤儿删除，漂移率>2% 记 WARN，查询失败 SKIPPED 防重建风暴；报告经 /api/admin/vector/reconciliation 暴露）；**幽灵兜底过滤**（去重 top-1 与语义检索批量校验存在性，DB 已删向量不再误杀新用例）。后端 441 测试全绿。
 
@@ -276,6 +278,7 @@ AICaseTest/
 | v8.3 | 覆盖率口径重构（单一本期口径/全量口径移除/引导态/影响面清单/AI 评审覆盖同步收敛） | ✅ 完成 |
 | v8.5 | 安全闭环（弱默认密钥清零/MCP 回环限制/DNS rebinding 收敛/Grafana 必填/retryReset 前端消费） | ✅ 完成 |
 | v8.6.1 | 向量一致性闭环（删除补偿表/ShedLock 重放/周期对账修复/检索幽灵过滤） | ✅ 完成 |
+| v8.6.2 | 出参契约化（四 schema 契约/observe-enforce 灰度/括号配平提取） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

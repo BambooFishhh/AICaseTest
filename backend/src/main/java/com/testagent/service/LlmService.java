@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service;
 import reactor.core.Disposable;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -98,6 +99,14 @@ public class LlmService {
 
     @Autowired
     private LlmCircuitBreaker llmCircuitBreaker;
+
+    // v8.6.2(9.7): 出参契约校验器——字段默认 null（直 new 单测不受影响），null 时跳过校验
+    private LlmSchemaValidator schemaValidator;
+
+    @Autowired(required = false)
+    void setSchemaValidator(LlmSchemaValidator schemaValidator) {
+        this.schemaValidator = schemaValidator;
+    }
 
     // v1.4: 重试延迟基数（v6.5 起叠加随机抖动）
     private static final long[] RETRY_DELAYS_MS = {1000, 2000, 4000};
@@ -514,15 +523,54 @@ public class LlmService {
 
     /**
      * v2.6: chatJson 复用 chat() + JSON 解析。
+     * v8.6.2(9.7): schemaName 非空时按 llm.schema.mode 灰度执行出参契约校验——
+     * observe 仅告警放行；enforce 附缺失字段清单重试一次，仍失败抛 50002 降级。
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> chatJson(String systemPrompt, String userPrompt, double temperature) {
+        return chatJson(systemPrompt, userPrompt, temperature, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> chatJson(String systemPrompt, String userPrompt, double temperature,
+                                        String schemaName) {
         String response = chat(systemPrompt, userPrompt, temperature);
         String json = extractJsonObject(response);
+        Map<String, Object> parsed;
         try {
-            return objectMapper.readValue(json, Map.class);
+            parsed = objectMapper.readValue(json, Map.class);
         } catch (Exception e) {
             log.error("Failed to parse LLM JSON response. Raw: {}", response, e);
+            throw new BusinessException(50002,
+                    "LLM返回JSON解析失败: " + e.getMessage(),
+                    HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+        if (schemaName == null || schemaValidator == null) {
+            return parsed;
+        }
+        List<String> errors = schemaValidator.validateJson(json, schemaName);
+        if (errors.isEmpty()) {
+            return parsed;
+        }
+        log.warn("chatJson 契约校验未通过 (schema={}, mode={}): {}", schemaName, schemaValidator.isEnforce() ? "enforce" : "observe", errors);
+        if (!schemaValidator.isEnforce()) {
+            return parsed;
+        }
+        // enforce：附缺失字段清单重试一次
+        String hint = "上次输出不符合结构契约。缺失或类型错误的字段：\n"
+                + String.join("\n", errors)
+                + "\n请严格按约定结构重新输出完整 JSON，不要输出其他文字。";
+        String retryResponse = chat(systemPrompt, userPrompt + "\n\n" + hint, temperature);
+        String retryJson = extractJsonObject(retryResponse);
+        List<String> retryErrors = schemaValidator.validateJson(retryJson, schemaName);
+        if (!retryErrors.isEmpty()) {
+            throw new BusinessException(50002,
+                    "LLM 输出不符合结构契约(" + schemaName + "): " + String.join("; ", retryErrors),
+                    HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+        try {
+            return objectMapper.readValue(retryJson, Map.class);
+        } catch (Exception e) {
             throw new BusinessException(50002,
                     "LLM返回JSON解析失败: " + e.getMessage(),
                     HttpStatus.INTERNAL_SERVER_ERROR);
@@ -546,6 +594,20 @@ public class LlmService {
             }
         }
 
+        // v8.6.2(9.7): 括号配平扫描替代首尾截取——逐段尝试 JSON 解析，取第一个可解析的配平段，
+        // 说明文字含大括号（如 {格式要求}）时不再误取；全部失败回落旧首尾逻辑兜底
+        int start = trimmed.indexOf('{');
+        while (start != -1) {
+            int end = matchingBrace(trimmed, start);
+            if (end != -1) {
+                String candidate = trimmed.substring(start, end + 1);
+                if (parsesAsJsonObject(candidate)) {
+                    return candidate;
+                }
+            }
+            start = trimmed.indexOf('{', start + 1);
+        }
+
         int firstBrace = trimmed.indexOf('{');
         int lastBrace = trimmed.lastIndexOf('}');
         if (firstBrace != -1 && lastBrace != -1 && lastBrace > firstBrace) {
@@ -553,6 +615,44 @@ public class LlmService {
         }
 
         return trimmed;
+    }
+
+    // v8.6.2(9.7): 候选段是否为可解析的 JSON 对象（配平扫描的甄别步骤）
+    private boolean parsesAsJsonObject(String candidate) {
+        try {
+            return objectMapper.readTree(candidate).isObject();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // v8.6.2(9.7): 从 openIdx 起字符串感知的括号配平扫描，返回配平 '}' 下标；无配平返回 -1
+    private Integer matchingBrace(String s, int openIdx) {
+        boolean inString = false;
+        boolean escaped = false;
+        int depth = 0;
+        for (int i = openIdx; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (ch == '\\') {
+                    escaped = true;
+                } else if (ch == '"') {
+                    inString = false;
+                }
+            } else if (ch == '"') {
+                inString = true;
+            } else if (ch == '{') {
+                depth++;
+            } else if (ch == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
     }
 
     /**

@@ -53,6 +53,14 @@ public class PrdAgent {
         this.safeDnsResolver = safeDnsResolver;
     }
 
+    // v8.6.2(9.8): 出参契约校验器——字段默认 null（直 new 单测不受影响），null 时跳过校验
+    private com.testagent.service.LlmSchemaValidator llmSchemaValidator;
+
+    @Autowired(required = false)
+    void setLlmSchemaValidator(com.testagent.service.LlmSchemaValidator llmSchemaValidator) {
+        this.llmSchemaValidator = llmSchemaValidator;
+    }
+
     // v1.10: PRD 文本最大长度（防止 LLM token 超限）
     // v8.4: 参数化并适配 256k 上下文模型——单文档 12000→40000、总量 24000→96000；
     // 此处截断发生在需求结构化解析入口，截太狠会直接丢需求（覆盖率根因）。
@@ -277,6 +285,12 @@ public class PrdAgent {
     private PrdAnalysisResult parsePrdResponse(String response) {
         try {
             String json = extractJsonObject(response);
+            // v8.6.2(9.8): 反序列化前先过结构契约——enforce 失败抛 50002 走 analyze 既有异常包装
+            if (llmSchemaValidator != null
+                    && !llmSchemaValidator.validateStructured(json, "prd-analysis", "prd-agent")) {
+                throw new BusinessException(50002,
+                        "LLM 输出不符合 PRD 解析结构契约(prd-analysis)", HttpStatus.INTERNAL_SERVER_ERROR);
+            }
             return objectMapper.readValue(json, PrdAnalysisResult.class);
         } catch (Exception e) {
             log.warn("[PRD] 解析 LLM 响应失败: {}", e.getMessage());

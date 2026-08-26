@@ -94,6 +94,9 @@ llm:
   # v6.5: LLM 重试次数（分类 + 抖动，4xx 不重试）
   retry:
     max-attempts: ${LLM_RETRY_MAX_ATTEMPTS:3}
+  # v8.6.2(9.7): 出参契约校验灰度——observe 告警放行（默认）/ enforce 重试一次后阻断
+  schema:
+    mode: ${LLM_SCHEMA_MODE:observe}
   # v8.4fix: 流式调用流级总超时看门狗（毫秒）——底层心跳保活时 read-timeout 不触发，
   # 超过该时长主动中断并按超时可重试分类处理，防止挂死流永久占用线程与 SSE 连接
   stream-total-timeout-ms: ${LLM_STREAM_TOTAL_TIMEOUT_MS:900000}

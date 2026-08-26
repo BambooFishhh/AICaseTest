@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "契约来源: TestGeneratorAgent.parseTestCases（v8.6.2 任务 9.6）。type/priority 枚举与 v8.4 白名单 normalizeCaseType/normalizePriority 一致；steps 为字符串数组",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["title", "steps", "priority", "type"],
+    "properties": {
+      "title": { "type": "string", "minLength": 1 },
+      "module": { "type": "string" },
+      "priority": { "enum": ["P0", "P1", "P2", "P3"] },
+      "type": { "enum": ["positive", "negative", "boundary", "data"] },
+      "steps": { "type": "array", "items": { "type": "string" } },
+      "expectedResults": { "type": "array" },
+      "requirementIds": { "type": "array", "items": { "type": "string" } }
+    }
+  }
+}
