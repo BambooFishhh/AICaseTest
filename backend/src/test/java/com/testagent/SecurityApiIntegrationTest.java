@@ -29,7 +29,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "app.jwt.secret=integration-test-jwt-secret-0123456789abcdef",
         "app.admin.password=integration-test-admin-pw",
         "app.milvus.password=integration-test-milvus-pw",
-        "app.mcp.bridge-token=test-mcp-token-2026"
+        "app.mcp.bridge-token=test-mcp-token-2026",
+        // v8.9.1(12.4): 白名单含一个非回环 IP，供过滤器层放行用例使用
+        "app.mcp.allowed-remote-addrs=10.0.0.5"
 })
 @AutoConfigureMockMvc
 class SecurityApiIntegrationTest {
@@ -206,6 +208,38 @@ class SecurityApiIntegrationTest {
                         .header("X-MCP-Token", MCP_TOKEN)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"sourcePath\":\"../../outside\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(40300));
+    }
+
+    // ========== v8.9.1(12.4): 来源过滤提层后行为回归 ==========
+
+    @Test
+    void whitelistedIpPassesFilterButWrongTokenStill401() throws Exception {
+        // v8.9.1: 白名单 IP 通过过滤器层，token 校验仍由控制器层承担 → 401
+        mockMvc.perform(post("/api/mcp/semantic-search")
+                        .header("X-MCP-Token", "wrong-token")
+                        .with(req -> {
+                            req.setRemoteAddr("10.0.0.5");
+                            return req;
+                        })
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(MCP_BODY))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value(40100));
+    }
+
+    @Test
+    void nonWhitelistedIpBlockedBeforeController() throws Exception {
+        // v8.9.1: 非白名单来源在过滤器层即被拦（携带正确 token 也 40300）
+        mockMvc.perform(post("/api/mcp/semantic-search")
+                        .header("X-MCP-Token", MCP_TOKEN)
+                        .with(req -> {
+                            req.setRemoteAddr("172.16.0.9");
+                            return req;
+                        })
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(MCP_BODY))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value(40300));
     }

@@ -224,6 +224,9 @@ app:
     bridge-token: ${MCP_BRIDGE_TOKEN}
     # v8.5: /api/mcp/** 来源白名单——默认仅回环，反代部署可注入额外 IP（逗号分隔）
     allowed-remote-addrs: ${APP_MCP_ALLOWED_REMOTE_ADDRS:}
+    # v8.9.1(12.4): 反代部署置 true 后按 X-Forwarded-For 首跳判定客户端 IP
+    # ⚠️ 仅能在可信反代之后开启，否则该头可被伪造绕过白名单
+    trust-proxy: ${APP_MCP_TRUST_PROXY:false}
     # v6.6: MCP 工具请求超时（秒），超时抛 TOOL_TIMEOUT 并支持幂等工具重试
     request-timeout-seconds: ${APP_MCP_REQUEST_TIMEOUT_SECONDS:60}
   # v5.8: 数据保留策略（0=关闭）

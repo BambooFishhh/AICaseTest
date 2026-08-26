@@ -12,10 +12,10 @@ services:
           memory: 1g
           cpus: "2.0"
     environment:
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-aicasetest-root}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD 必须设置}
       - MYSQL_DATABASE=${MYSQL_DATABASE:-aicasetest}
       - MYSQL_USER=${MYSQL_USERNAME:-aicasetest}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-aicasetest123}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:?MYSQL_PASSWORD 必须设置}
       - TZ=Asia/Shanghai
     # vP1: 仅本机可访问，容器间通过内部网络互连
     ports:
@@ -24,7 +24,7 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-aicasetest-root}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD 必须设置}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -42,9 +42,9 @@ services:
           memory: 256m
           cpus: "0.5"
     # vP1: 强制 AUTH + protected-mode，端口仅绑定本机
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-aicasetest-redis}", "--protected-mode", "yes"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD 必须设置}", "--protected-mode", "yes"]
     environment:
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-aicasetest-redis}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD 必须设置}
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
@@ -86,8 +86,9 @@ services:
           memory: 1g
           cpus: "1.0"
     environment:
-      - MINIO_ACCESS_KEY=minioadmin
-      - MINIO_SECRET_KEY=minioadmin
+      # v8.9.1(12.3): MinIO 凭据必填（Milvus 对象存储层），消灭 minioadmin/minioadmin 弱默认
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY 必须设置}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:?MINIO_SECRET_KEY 必须设置}
     volumes:
       - minio-data:/minio_data
     command: minio server /minio_data
@@ -113,7 +114,7 @@ services:
       - MINIO_ADDRESS=minio:9000
       # vP1: Milvus 鉴权（生产建议开启并修改默认口令）
       - COMMON_SECURITY_AUTHORIZATIONENABLED=${MILVUS_AUTH_ENABLED:-true}
-      - COMMON_SECURITY_ROOTPASSWORD=${MILVUS_ROOT_PASSWORD:-aicasetest-milvus}
+      - COMMON_SECURITY_ROOTPASSWORD=${MILVUS_ROOT_PASSWORD:?MILVUS_ROOT_PASSWORD 必须设置}
     ports:
       - "127.0.0.1:${MILVUS_PORT:-19530}:19530"
       - "127.0.0.1:9091:9091"
@@ -175,14 +176,14 @@ services:
       # v5.5: 正式切换 MySQL + Redis + Milvus
       - MYSQL_URL=jdbc:mysql://aicasetest-mysql:3306/aicasetest?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
       - MYSQL_USERNAME=${MYSQL_USERNAME:-aicasetest}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-aicasetest123}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:?MYSQL_PASSWORD 必须设置}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-aicasetest-redis}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD 必须设置}
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
       - MILVUS_USERNAME=root
-      - MILVUS_PASSWORD=${MILVUS_ROOT_PASSWORD:-aicasetest-milvus}
+      - MILVUS_PASSWORD=${MILVUS_ROOT_PASSWORD:?MILVUS_ROOT_PASSWORD 必须设置}
       # v6.4: RAG 切片与多路检索
       - RAG_CHUNK_SIZE=${RAG_CHUNK_SIZE:-500}
       - RAG_CHUNK_OVERLAP=${RAG_CHUNK_OVERLAP:-150}
@@ -215,7 +216,7 @@ services:
       - APP_COPY_EXECUTE_REQUIRE_OPERATE=${APP_COPY_EXECUTE_REQUIRE_OPERATE:-false}
       # v5.13: tools MCP Server 访问后端桥接接口
       - MCP_BRIDGE_URL=http://backend:8000
-      - MCP_BRIDGE_TOKEN=${MCP_BRIDGE_TOKEN:-aicasetest-mcp-local}
+      - MCP_BRIDGE_TOKEN=${MCP_BRIDGE_TOKEN:?MCP_BRIDGE_TOKEN 必须设置}
       - TZ=Asia/Shanghai
       - JAVA_OPTS=-Xms256m -Xmx2g -Dfile.encoding=UTF-8
     depends_on:
@@ -307,7 +308,7 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
       - MYSQL_DATABASE=${MYSQL_DATABASE:-aicasetest}
       - MYSQL_USERNAME=${MYSQL_USERNAME:-aicasetest}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-aicasetest123}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:?MYSQL_PASSWORD 必须设置}
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro

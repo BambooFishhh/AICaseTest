@@ -183,7 +183,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v8.8.2（多供应商 + 扩展性，阶段 4 收官）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v8.9.1（阶段 6 上线阻断双项：部署凭据清零 + MCP 来源过滤提层）**，生产线基线为 vP5（压测与容量）。
+
+- v8.9.1 要点：计划书「阶段 6」任务 12.3+12.4（CR §9.3 C3 上线阻断项；版本号遵指示沿用 v8.9 子序列）——**compose 八处业务凭据 `:?` 必填**（MySQL root/user、Redis、Milvus root、MCP bridge token；MinIO minioadmin 弱默认消灭，MINIO_ACCESS_KEY/SECRET_KEY 必填）；CI compose 校验占位值集合同步扩充；**McpSourceFilter 置于 JwtAuthFilter 前**（回环∪白名单外 403 code 40300，`app.mcp.trust-proxy` 支持 XFF 首跳反代判定），控制器保留第二道防线同口径。后端 479 测试全绿。
 
 - v8.8.2 要点：计划书任务 10.4–10.6——**双实例就绪**（四项既有定时任务补齐 ShedLock；排查报告 docs/双实例就绪排查报告.md：状态权威源 DB/Redis 核对、遗留限制=RuntimeStore 必须 Redis + outputs 共享卷）；**任务积压可观测**（agent_task 七状态 Gauge + RUNNING/QUEUED 两条告警 + 看板面板）；**混沌演练固化**（@Tag("chaos") 三场景：畸形输出对抗集/Milvus 断连补偿/池饱和拒绝——默认排除不阻塞日常构建）。后端 478 测试全绿 + chaos 8 例全绿。
 
@@ -292,6 +294,8 @@ AICaseTest/
 | v8.7.2 | 看板告警+评测体系 v1（两看板三告警/黄金数据集/EvalRunner 回放对比） | ✅ 完成 |
 | v8.8.1 | 多供应商双通道+降级路由（fallback 注册/degradedProvider 标注/embedding 独立熔断） | ✅ 完成 |
 | v8.8.2 | 双实例就绪+积压可观测+混沌演练（补齐四任务锁/状态 Gauge 两告警/@Tag("chaos") 三场景） | ✅ 完成 |
+| v8.9 | 平台化（多租户/协作/OpenAPI/录制编排 CI——按计划书"阶段 5 整体可裁剪"条款裁剪，方向保留待立项） | ⏸ 裁剪 |
+| v8.9.1 | 部署层凭据清零+MCP 来源过滤提层（compose 八处 :? 必填/MinIO 必填/McpSourceFilter+trust-proxy 反代适配） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

@@ -168,19 +168,20 @@ public class McpBridgeController {
         }
     }
 
+    // v8.9.1(12.4): 反代场景与过滤器层同口径——开启后按 X-Forwarded-For 首跳判定
+    @Value("${app.mcp.trust-proxy:false}")
+    private boolean trustProxy;
+
     // v8.5: 仅接受回环来源（127.*、::1），杜绝外部主机直连桥接接口；反代场景用白名单显式放行
+    // v8.9.1(12.4): 第二道防线改用过滤器同款 resolveClientIp，代理场景两层判定一致
     private void assertLoopbackSource(HttpServletRequest request) {
-        String ip = request.getRemoteAddr();
-        if (ip != null && (isLoopbackIp(ip) || allowedRemoteAddrs.contains(ip))) {
+        String ip = com.testagent.security.McpSourceFilter.resolveClientIp(request, trustProxy);
+        if (ip != null && (com.testagent.security.McpSourceFilter.isLoopbackIp(ip)
+                || allowedRemoteAddrs.contains(ip))) {
             return;
         }
         log.warn("拒绝非回环来源的 MCP 桥接请求: remoteAddr={}", ip);
         throw new BusinessException(40300, "MCP bridge 仅允许本机回环访问", HttpStatus.FORBIDDEN);
-    }
-
-    private boolean isLoopbackIp(String ip) {
-        return ip.equals("127.0.0.1") || ip.startsWith("127.")
-                || ip.equals("::1") || ip.equals("0:0:0:0:0:0:0:1");
     }
 
     private String text(Map<String, Object> body, String key) {

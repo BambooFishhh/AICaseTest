@@ -63,9 +63,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate compose
         env:
-          # v8.5(8.2): GF_SECURITY_ADMIN_PASSWORD 为 :? 必填校验——CI 仅做语法验证，
-          # 注入占位值；生产部署由 .env 提供真实强密码（不入库）
+          # v8.5(8.2)/v8.9.1(12.3): compose 必填凭据在 CI 仅注入占位值做语法校验；
+          # 生产部署由 .env 提供真实强密码（不入库）。新增必填变量时同步维护此清单。
           GRAFANA_ADMIN_PASSWORD: ci-placeholder-not-for-login
+          MYSQL_ROOT_PASSWORD: ci-placeholder
+          MYSQL_PASSWORD: ci-placeholder
+          REDIS_PASSWORD: ci-placeholder
+          MILVUS_ROOT_PASSWORD: ci-placeholder
+          MINIO_ACCESS_KEY: ci-placeholder-access
+          MINIO_SECRET_KEY: ci-placeholder-secret
+          MCP_BRIDGE_TOKEN: ci-placeholder-token
         run: docker compose config --quiet
 
   security:

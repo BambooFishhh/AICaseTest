@@ -2,6 +2,7 @@ package com.testagent.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpStatus;
@@ -28,6 +29,13 @@ public class SecurityConfig {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    // v8.9.1(12.4): MCP 来源白名单过滤器——反代场景可开 APP_MCP_TRUST_PROXY 取 XFF 首跳
+    @Value("${app.mcp.allowed-remote-addrs:}")
+    private java.util.List<String> mcpAllowedRemoteAddrs = new java.util.ArrayList<>();
+
+    @Value("${app.mcp.trust-proxy:false}")
+    private boolean mcpTrustProxy;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -63,7 +71,11 @@ public class SecurityConfig {
                     res.getWriter().write(objectMapper.writeValueAsString(
                             body));
                 }))
-                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                // v8.9.1(12.4): MCP 来源白名单过滤器置于 JwtAuthFilter 之前（纵深第一道，
+                // 控制器层保留第二道）；非 Bean 声明避免 Servlet 自动注册双重执行
+                .addFilterBefore(new McpSourceFilter(objectMapper, mcpAllowedRemoteAddrs, mcpTrustProxy),
+                        JwtAuthFilter.class);
         return http.build();
     }
 }

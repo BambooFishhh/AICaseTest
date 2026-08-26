@@ -4,6 +4,43 @@
 
 ---
 
+## v8.9.1 — 部署层凭据清零 + MCP 来源过滤提层（阶段 6 上线阻断双项）
+**日期**: 2026-08-26
+**基线**: v8.8.2
+**主题**: 计划书「阶段 6」任务 12.3 + 12.4（CR §9.3 C3 上线阻断项；版本号遵用户指示沿用 v8.9 子序列，不开新大版本编号）。消灭部署层弱默认口令残留 + MCP 来源控制提层至过滤器并支持反代。纯后端/工程版本
+
+### 工程变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `docker-compose.yml` | 修改 | **12.3** 八处业务凭据改 `:?` 必填（报错中文）：MYSQL_ROOT/MYSQL_PASSWORD（mysql 服务+healthcheck+backend 注入+grafana 注入）、REDIS_PASSWORD（command+env）、MILVUS_ROOT_PASSWORD、MCP_BRIDGE_TOKEN；MinIO minioadmin/minioadmin 弱默认改 MINIO_ACCESS_KEY/SECRET_KEY 必填 |
+| `.env.example` / 本地 .env | 修改 | 新增键补齐强占位示例并标注存量卷兼容策略（本机对齐原初始化凭据，生产首部署设随机强值） |
+| `.github/workflows/ci.yml` | 修改 | compose 校验步骤占位值集合扩充至全部必填键（注释锚定同步维护约定） |
+| `security/McpSourceFilter.java` | **新增** | **12.4** OncePerRequestFilter 仅拦 /api/mcp/**：客户端 IP 解析（trust-proxy 开启取 XFF 首跳，警告伪造风险）→ 回环∪白名单外 403 code 40300；非 Bean 声明规避 Servlet 自动注册双重执行 |
+| `security/SecurityConfig.java` | 修改 | 过滤器构造注册于 JwtAuthFilter 之前 |
+| `controller/McpBridgeController.java` | 修改 | **12.4** 第二道防线改用 McpSourceFilter.resolveClientIp 同口径解析（注入同一 trust-proxy 键），代理场景两层判定一致 |
+| `application.yml` | 修改 | mcp 段新增 `trust-proxy: ${APP_MCP_TRUST_PROXY:false}` |
+
+### API 契约变化
+
+无新端点。`/api/mcp/**` 非白名单来源 403 拦截点从控制器前移至过滤器层（对外 code 40300 不变）；容器端口映射访问场景（remoteAddr=网关 IP）现按白名单语义拦截——tools-mcp-server 容器内 localhost 调用不受影响（实测核验）。
+
+### 测试变更
+
+| 文件 | 例数 | 覆盖 |
+|---|---|---|
+| security/McpSourceFilterTest | 4 | trust-proxy 关闭忽略 XFF / 开启取首跳 / XFF 空回落 / 回环形态判定 |
+| SecurityApiIntegrationTest +2 | 2 | 白名单 IP 过滤器放行但错 token 仍 401 / 非白名单带正确 token 在过滤器层 403 |
+
+### 验证结果
+
+- 后端全量容器测试：479 tests, 0 failures, 0 errors（chaos 分组默认排除）
+- docker compose config：本地 .env 通过；模拟 CI 无变量环境复现失败→占位值方案验证通过
+- 重部署实测：栈 healthy；`POST /api/mcp/semantic-search` 自宿主机（Docker 网关 IP）返回 403+JSON，符合白名单语义
+- CI compose job 修复后全绿（见 ci fix 提交）
+
+---
+
 ## v8.8.2 — 双实例就绪 + 积压可观测 + 混沌演练固化（计划书阶段 4 下半）
 **日期**: 2026-08-26
 **基线**: v8.8.1
