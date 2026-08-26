@@ -228,6 +228,8 @@ public class LlmService {
 
     private LlmCallResult chatWithUsage(String systemPrompt, String userPrompt, double temperature,
                                         boolean enableThinking) {
+        // v8.9.2(12.6/C6): 入口先清残留——池化线程上一次异常路径未消费的旧值不再串台
+        degradedProvider.remove();
         // v8.8.1(10.2): 降级路由——主通道重试耗尽/熔断打开时切换 fallback（未配置则原样抛出）
         try {
             return chatWithUsageOn("primary", systemPrompt, userPrompt, temperature, enableThinking);
@@ -380,6 +382,8 @@ public class LlmService {
                                                  java.util.function.BooleanSupplier cancelSignal,
                                                  boolean enableThinking,
                                                  Runnable retryResetHook) {
+        // v8.9.2(12.6/C6): 同 chat 入口——先清残留降级标注
+        degradedProvider.remove();
         // v8.8.1(10.2): 降级路由（流式）——主通道整体失败后切 fallback；切换前先清已推送草稿
         try {
             return chatStreamingOn("primary", systemPrompt, userPrompt, temperature, chunkConsumer,

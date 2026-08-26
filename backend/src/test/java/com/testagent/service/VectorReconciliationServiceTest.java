@@ -49,6 +49,11 @@ class VectorReconciliationServiceTest {
         service.setDriftThreshold(0.02);
         when(reportRepository.save(org.mockito.ArgumentMatchers.any(ReconciliationReport.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
+        // v8.9.2(12.5): 缺失分支按 id 分批拉实体——统一应答按 id 构造
+        when(testCaseRepository.findAllById(org.mockito.ArgumentMatchers.anyList()))
+                .thenAnswer(inv -> ((java.util.List<String>) inv.getArgument(0)).stream()
+                        .map(this::caseOf)
+                        .collect(java.util.stream.Collectors.toList()));
     }
 
     private TestCase caseOf(String id) {
@@ -58,10 +63,15 @@ class VectorReconciliationServiceTest {
         return tc;
     }
 
+    // v8.9.2(12.5): 对账改用 id 投影——桩统一迁移
+    private void stubDbIds(String projectId, List<String> ids) {
+        when(testCaseRepository.findIdsByProjectId(projectId)).thenReturn(ids);
+    }
+
     @Test
     void consistentProjectRecordsOkWithoutRepairs() {
         when(milvusService.isEnabled()).thenReturn(true);
-        when(testCaseRepository.findByProjectId("p1")).thenReturn(List.of(caseOf("TC-1"), caseOf("TC-2")));
+        stubDbIds("p1", List.of("TC-1", "TC-2"));
         when(milvusService.queryIdsByProject(MilvusService.COLLECTION_CASES, "p1"))
                 .thenReturn(List.of("TC-1", "TC-2"));
 
@@ -77,8 +87,7 @@ class VectorReconciliationServiceTest {
     @Test
     void missingVectorsAreReindexed() {
         when(milvusService.isEnabled()).thenReturn(true);
-        when(testCaseRepository.findByProjectId("p1"))
-                .thenReturn(List.of(caseOf("TC-1"), caseOf("TC-2"), caseOf("TC-3")));
+        stubDbIds("p1", List.of("TC-1", "TC-2", "TC-3"));
         when(milvusService.queryIdsByProject(MilvusService.COLLECTION_CASES, "p1"))
                 .thenReturn(List.of("TC-1"));
 
@@ -93,7 +102,7 @@ class VectorReconciliationServiceTest {
     @Test
     void orphanVectorsAreDeleted() {
         when(milvusService.isEnabled()).thenReturn(true);
-        when(testCaseRepository.findByProjectId("p1")).thenReturn(List.of(caseOf("TC-1")));
+        stubDbIds("p1", List.of("TC-1"));
         when(milvusService.queryIdsByProject(MilvusService.COLLECTION_CASES, "p1"))
                 .thenReturn(List.of("TC-1", "GHOST-9"));
 
@@ -112,7 +121,7 @@ class VectorReconciliationServiceTest {
         for (int i = 1; i <= 100; i++) {
             many.add(caseOf("TC-" + i));
         }
-        when(testCaseRepository.findByProjectId("p1")).thenReturn(many);
+        stubDbIds("p1", many.stream().map(com.testagent.entity.TestCase::getId).collect(java.util.stream.Collectors.toList()));
         // 90/100 → 漂移率 0.1 > 0.02，且存在缺失触发修复
         when(milvusService.queryIdsByProject(MilvusService.COLLECTION_CASES, "p1"))
                 .thenReturn(List.of("TC-1", "TC-2", "TC-3"));
@@ -131,7 +140,7 @@ class VectorReconciliationServiceTest {
         for (int i = 1; i <= 100; i++) {
             many.add(caseOf("TC-" + i));
         }
-        when(testCaseRepository.findByProjectId("p1")).thenReturn(many);
+        stubDbIds("p1", many.stream().map(com.testagent.entity.TestCase::getId).collect(java.util.stream.Collectors.toList()));
         // 99/100 → 漂移率 0.01 ≤ 0.02，有修复但不过阈值 → REPAIRED 而非 WARN
         List<String> vecIds = new java.util.ArrayList<>();
         for (int i = 1; i <= 99; i++) {
@@ -148,7 +157,7 @@ class VectorReconciliationServiceTest {
     @Test
     void queryFailureSkipsInsteadOfMassRebuild() {
         when(milvusService.isEnabled()).thenReturn(true);
-        when(testCaseRepository.findByProjectId("p1")).thenReturn(List.of(caseOf("TC-1")));
+        stubDbIds("p1", List.of("TC-1"));
         // null = Milvus 查询失败（区别于合法空集）
         when(milvusService.queryIdsByProject(MilvusService.COLLECTION_CASES, "p1")).thenReturn(null);
 

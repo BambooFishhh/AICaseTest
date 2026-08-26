@@ -104,6 +104,19 @@ class LlmServiceFallbackRoutingTest {
     }
 
     @Test
+    void staleDegradedMarkerClearedAtEntryOnPooledThread() {
+        // v8.9.2(12.6/C6): 池化线程残留旧标注——下一次调用入口必须先清，不再串台
+        @SuppressWarnings("unchecked")
+        ThreadLocal<String> tl = (ThreadLocal<String>)
+                ReflectionTestUtils.getField(service, "degradedProvider");
+        tl.set("fallback");
+
+        assertThrows(BusinessException.class, () -> service.chatJson("sys", "user", 0.2));
+
+        assertNull(service.consumeDegradedProvider());
+    }
+
+    @Test
     void bothChannelsDownThrows50300() {
         enableFallback();
         when(fallbackCall.chatResponse()).thenThrow(new RuntimeException("fallback down too"));

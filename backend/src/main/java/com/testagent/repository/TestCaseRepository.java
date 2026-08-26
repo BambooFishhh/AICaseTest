@@ -13,6 +13,10 @@ public interface TestCaseRepository extends JpaRepository<TestCase, String>, Jpa
 
     List<TestCase> findByProjectId(String projectId);
 
+    // v8.9.2(12.5): id 投影查询——对账集合比对不拉全量实体（万级项目内存优化）
+    @org.springframework.data.jpa.repository.Query("select t.id from TestCase t where t.projectId = :projectId")
+    List<String> findIdsByProjectId(@Param("projectId") String projectId);
+
     long countByProjectId(String projectId);
 
     List<TestCase> findByProjectIdAndType(String projectId, String type);

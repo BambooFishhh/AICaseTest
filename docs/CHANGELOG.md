@@ -4,6 +4,47 @@
 
 ---
 
+## v8.9.3 — 对账内存优化 + 并发残留清理（阶段 6 任务 12.5 + 12.6）
+**日期**: 2026-08-26
+**基线**: v8.9.2
+**主题**: 计划书「阶段 6」任务 12.5 + 12.6（CR §9.3 C4/C5/C6/C7；C8 可选项暂缓）。对账大项目不再拉全量实体/全量向量 id；compose 预算与代码对齐；降级标注残留与热路径 meter 查找清理。纯后端版本
+
+### 工程变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `repository/TestCaseRepository.java` | 修改 | **12.5** 新增 `findIdsByProjectId` id 投影查询——对账集合比对不拉全量实体 |
+| `service/MilvusService.java` | 修改 | **12.5** queryIdsByProject 改分页循环（每页 1000，`withLimit/withOffset`，不足页终止；页获取抽包级私有 `queryIdPage` 供单测覆写）；任一页失败整体 null（保留"失败≠空集"语义）+ query 失败计数 |
+| `service/VectorReconciliationService.java` | 修改 | **12.5** 对账改用 id 投影集合比对；缺失补索引按 ≤500/批 findAllById 拉实体 |
+| `docker-compose.yml` | 修改 | **12.6①(C5)** LLM_MAX_PROMPT_CHARS 默认 300000→500000（v8.4 扩容对齐生产容器实际生效）；删除死配置 LLM_MAX_CONTEXT_CHARS 注入行 |
+| `service/LlmService.java` | 修改 | **12.6②(C6)** chat/chatStreaming 路由包装器入口先 remove degradedProvider——池化线程上一次异常路径未消费的旧值不再串台 |
+| `observability/MetricsFacade.java` | 修改 | **12.6③(C7)** Counter/Timer 按 name+tags 缓存复用，热路径不再每调用走 Builder+registry 查找 |
+| `observability/ObservabilityFilter.java` | 修改 | **12.6③(C7)** recordSlo 本地 method\|status 缓存 Counter/Timer，每请求零查找开销 |
+
+### 设计说明
+
+- Milvus SDK offset 分页在万级偏移下性能可接受（id 单字段、每页 1000）；若实测深分页劣化再切主键范围分批（注释已预留取舍说明）。
+- C8（VueAnalyzer 共享线程池）为任务卡可选子项，本版暂缓——现有池有 shutdown 且量级小，收益有限。
+
+### 测试变更
+
+| 文件 | 例数 | 覆盖 |
+|---|---|---|
+| MilvusQueryPaginationTest | 3 | 整页续拉至短页终止 / 短页即止 / 单页失败整体 null |
+| VectorReconciliationServiceTest | 桩迁移 | findByProjectId→findIdsByProjectId 投影桩统一迁移 + findAllById 应答 |
+| LlmServiceFallbackRoutingTest +1 | 1 | 池化线程残留 degradedProvider 在下次调用入口被清除 |
+
+### API 契约变化
+
+无。
+
+### 验证结果
+
+- 后端全量容器测试：487 tests, 0 failures, 0 errors
+- docker compose config 通过；重部署健康核验见下节
+
+---
+
 ## v8.9.2 — 连接池对齐 + LLM 入口限流（阶段 6 承压瓶颈双项）
 **日期**: 2026-08-26
 **基线**: v8.9.1

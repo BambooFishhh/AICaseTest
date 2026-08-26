@@ -25,6 +25,9 @@ public class MetricsFacade {
     private MeterRegistry registry;
     // v8.7.1: Gauge 强引用表——micrometer gauge 只持弱引用，无强引用会被 GC 归零
     private final Map<String, AtomicLong> gauges = new ConcurrentHashMap<>();
+    // v8.9.2(12.6/C7): 热路径 meter 缓存——避免每次 increment 都走 Builder+registry 查找
+    private final Map<String, Counter> counterCache = new ConcurrentHashMap<>();
+    private final Map<String, Timer> timerCache = new ConcurrentHashMap<>();
 
     @Autowired(required = false)
     void setMeterRegistry(MeterRegistry registry) {
@@ -35,7 +38,7 @@ public class MetricsFacade {
         if (registry == null) {
             return;
         }
-        Counter.builder(name).tags(toTags(tagPairs)).register(registry).increment();
+        counterFor(name, tagPairs).increment();
     }
 
     // v8.7.1: 启动期零值预注册——避免懒注册导致 /actuator/prometheus 首事件前面板断线
@@ -43,29 +46,42 @@ public class MetricsFacade {
         if (registry == null) {
             return;
         }
-        Counter.builder(name).tags(toTags(tagPairs)).register(registry);
+        counterFor(name, tagPairs);
+    }
+
+    private Counter counterFor(String name, String... tagPairs) {
+        List<Tag> tags = toTags(tagPairs);
+        String key = name + tags;
+        return counterCache.computeIfAbsent(key,
+                k -> Counter.builder(name).tags(tags).register(registry));
     }
 
     public void registerTimer(String name, String... tagPairs) {
         if (registry == null) {
             return;
         }
-        Timer.builder(name).tags(toTags(tagPairs)).register(registry);
+        timerFor(name, tagPairs);
+    }
+
+    private Timer timerFor(String name, String... tagPairs) {
+        List<Tag> tags = toTags(tagPairs);
+        String key = name + tags;
+        return timerCache.computeIfAbsent(key,
+                k -> Timer.builder(name).tags(tags).register(registry));
     }
 
     public void incrementBy(String name, double amount, String... tagPairs) {
         if (registry == null) {
             return;
         }
-        Counter.builder(name).tags(toTags(tagPairs)).register(registry).increment(amount);
+        counterFor(name, tagPairs).increment(amount);
     }
 
     public void recordMillis(String name, long millis, String... tagPairs) {
         if (registry == null) {
             return;
         }
-        Timer.builder(name).tags(toTags(tagPairs)).register(registry)
-                .record(Duration.ofMillis(millis));
+        timerFor(name, tagPairs).record(Duration.ofMillis(millis));
     }
 
     /**

@@ -448,11 +448,42 @@ public class MilvusService {
         if (c == null || projectId == null || projectId.isBlank()) {
             return null;
         }
+        String expr = "project_id == \"" + escapeExpr(projectId) + "\"";
+        List<String> ids = queryIdsPaged(c, collection, expr);
+        if (ids == null) {
+            metrics.increment("milvus_op_failed_total", "op", "query", "collection", collection);
+        }
+        return ids;
+    }
+
+    // v8.9.2(12.5): 分页循环（每页 1000，返回少于页大小即止）——避免万级项目一次性拉全量 id 的
+    // gRPC 报文压力；任一页失败整体返回 null（保留"失败≠空集"语义）。包级私有供单测覆写页获取。
+    List<String> queryIdsPaged(MilvusServiceClient c, String collection, String expr) {
+        int pageSize = 1000;
+        long offset = 0;
+        List<String> ids = new ArrayList<>();
+        while (true) {
+            List<String> page = queryIdPage(c, collection, expr, offset, pageSize);
+            if (page == null) {
+                return null;
+            }
+            ids.addAll(page);
+            if (page.size() < pageSize) {
+                return ids;
+            }
+            offset += pageSize;
+        }
+    }
+
+    // 包级私有：单页拉取；失败返回 null
+    List<String> queryIdPage(MilvusServiceClient c, String collection, String expr, long offset, int limit) {
         try {
             var resp = c.query(QueryParam.newBuilder()
                     .withCollectionName(collection)
-                    .withExpr("project_id == \"" + escapeExpr(projectId) + "\"")
+                    .withExpr(expr)
                     .withOutFields(List.of("id"))
+                    .withLimit((long) limit)
+                    .withOffset(offset)
                     .build());
             if (resp == null || resp.getData() == null) {
                 return null;
@@ -467,9 +498,7 @@ public class MilvusService {
             }
             return ids;
         } catch (Exception e) {
-            log.warn("Milvus queryIdsByProject failed (collection={}, project={}): {}",
-                    collection, projectId, e.getMessage());
-            metrics.increment("milvus_op_failed_total", "op", "query", "collection", collection);
+            log.warn("Milvus queryIdPage failed (collection={}, offset={}): {}", collection, offset, e.getMessage());
             return null;
         }
     }

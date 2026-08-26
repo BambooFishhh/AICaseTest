@@ -31,6 +31,9 @@ public class ObservabilityFilter extends OncePerRequestFilter {
     private static final int MAX_TRACE_LENGTH = 64;
 
     private final MeterRegistry meterRegistry;
+    // v8.9.2(12.6/C7): 热路径 meter 缓存——按 method|status 复用，避免每请求 Builder+registry 查找
+    private final java.util.Map<String, Counter> sloCounters = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Map<String, Timer> sloTimers = new java.util.concurrent.ConcurrentHashMap<>();
 
     public ObservabilityFilter(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
@@ -68,14 +71,13 @@ public class ObservabilityFilter extends OncePerRequestFilter {
 
     private void recordSlo(String method, String status, long durationMs) {
         try {
-            Counter.builder("aicasetest.http.requests")
-                    .tags("method", method, "status", status)
-                    .register(meterRegistry)
+            String key = method + "|" + status;
+            sloCounters.computeIfAbsent(key, k -> Counter.builder("aicasetest.http.requests")
+                            .tags("method", method, "status", status).register(meterRegistry))
                     .increment();
-            Timer.builder("aicasetest.http.requests.duration")
-                    .tags("method", method, "status", status)
-                    .publishPercentileHistogram()
-                    .register(meterRegistry)
+            sloTimers.computeIfAbsent(key, k -> Timer.builder("aicasetest.http.requests.duration")
+                            .tags("method", method, "status", status)
+                            .publishPercentileHistogram().register(meterRegistry))
                     .record(Duration.ofMillis(durationMs));
         } catch (Exception e) {
             log.debug("SLO metric recording failed: {}", e.getMessage());

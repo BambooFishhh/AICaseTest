@@ -30,6 +30,9 @@ import java.util.UUID;
 @Service
 public class VectorReconciliationService {
 
+    // v8.9.2(12.5): 缺失补索引的批量拉取上限
+    private static final int REINDEX_BATCH_SIZE = 500;
+
     private static final Logger log = LoggerFactory.getLogger(VectorReconciliationService.class);
 
     @Autowired
@@ -115,15 +118,13 @@ public class VectorReconciliationService {
         if (!milvusService.isEnabled()) {
             return null;
         }
-        List<TestCase> dbCases = testCaseRepository.findByProjectId(projectId);
-        Set<String> dbIds = new HashSet<>();
-        for (TestCase tc : dbCases) {
-            dbIds.add(tc.getId());
-        }
+        // v8.9.2(12.5): 集合比对只用 id 投影，不拉全量实体（万级项目内存优化）
+        List<String> dbIdList = testCaseRepository.findIdsByProjectId(projectId);
+        Set<String> dbIds = new HashSet<>(dbIdList);
         List<String> vecIds = milvusService.queryIdsByProject(MilvusService.COLLECTION_CASES, projectId);
         LocalDateTime now = LocalDateTime.now();
         if (vecIds == null) {
-            return saveReport(projectId, dbCases.size(), -1, 1.0, 0, 0,
+            return saveReport(projectId, dbIdList.size(), -1, 1.0, 0, 0,
                     ReconciliationReport.STATUS_SKIPPED, "Milvus 查询失败，本轮跳过", now);
         }
         Set<String> vecIdSet = new HashSet<>(vecIds);
@@ -136,12 +137,11 @@ public class VectorReconciliationService {
         int added = 0;
         int removed = 0;
         if (!missingInVec.isEmpty()) {
-            // DB 有向量无 → 批量补索引（复用生成链路同款写入）
+            // DB 有向量无 → 按缺失 id 分批 findAllById（每批 ≤500）后批量补索引（复用生成链路同款写入）
             List<TestCase> toIndex = new ArrayList<>();
-            for (TestCase tc : dbCases) {
-                if (missingInVec.contains(tc.getId())) {
-                    toIndex.add(tc);
-                }
+            for (int i = 0; i < missingInVec.size(); i += REINDEX_BATCH_SIZE) {
+                List<String> batch = missingInVec.subList(i, Math.min(i + REINDEX_BATCH_SIZE, missingInVec.size()));
+                toIndex.addAll(testCaseRepository.findAllById(batch));
             }
             semanticService.indexCases(projectId, toIndex);
             added = toIndex.size();
@@ -152,7 +152,7 @@ public class VectorReconciliationService {
             removed = orphansInVec.size();
         }
 
-        long dbCount = dbCases.size();
+        long dbCount = dbIdList.size();
         long vecCount = vecIds.size();
         // v8.6.1: 注意先转 double 再除——long 整除会把所有 <100% 的漂移截断成 0
         double driftRatio = Math.abs((double) dbCount - vecCount) / Math.max(dbCount, 1);

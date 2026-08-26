@@ -183,7 +183,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v8.9.2（阶段 6 承压瓶颈双项：连接池对齐 + LLM 入口限流）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v8.9.3（阶段 6 清理优化：对账内存优化 + 并发残留清理）**，生产线基线为 vP5（压测与容量）。
+
+- v8.9.3 要点：计划书「阶段 6」任务 12.5+12.6——**对账大项目内存优化**（DB 侧 id 投影查询替代全量实体、Milvus 向量 id 分页拉取每页 1000、缺失补索引分批 ≤500）；**并发残留清理**（compose LLM_MAX_PROMPT_CHARS 300k→500k 对齐 v8.4 + 删除死配置注入；degradedProvider ThreadLocal 入口清残留防池化串台；MetricsFacade/ObservabilityFilter 热路径 meter 缓存）。后端 487 测试全绿。
 
 - v8.9.2 要点：计划书「阶段 6」任务 12.1+12.2（CR §9.3 C1/C2 承压瓶颈项）——**连接池对齐**（Hikari 默认 20→40、最小空闲 10、60s 泄漏检测；容量关系写入注释，MySQL max-connections=200 容纳多实例×40）；**LLM 入口实例级限流**（LlmRateLimiter 四通道信号量：text/stream/embedding/fallback-text 独立配额默认 6/6/4/4，等待超时抛 50300 可重试并衔接既有降级路由——主配额满自动分流备用供应商；等待>5s/拒绝双指标）。后端 483 测试全绿。
 
@@ -299,6 +301,7 @@ AICaseTest/
 | v8.9 | 平台化（多租户/协作/OpenAPI/录制编排 CI——按计划书"阶段 5 整体可裁剪"条款裁剪，方向保留待立项） | ⏸ 裁剪 |
 | v8.9.1 | 部署层凭据清零+MCP 来源过滤提层（compose 八处 :? 必填/MinIO 必填/McpSourceFilter+trust-proxy 反代适配） | ✅ 完成 |
 | v8.9.2 | 连接池对齐+LLM 入口限流（Hikari 40+泄漏检测/LlmRateLimiter 四通道配额+指标） | ✅ 完成 |
+| v8.9.3 | 对账内存优化+并发残留清理（id 投影+向量分页/预算对齐 500k/降级标注清残留/meter 缓存） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |
