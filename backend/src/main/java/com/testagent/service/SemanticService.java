@@ -46,6 +46,13 @@ public class SemanticService {
     @Autowired
     private TestCaseRepository testCaseRepository;
 
+    // v8.6.1(9.4): 幽灵召回计数器（DB 已删但向量残留仍被召回的次数）——v8.7 指标接入预留
+    private final java.util.concurrent.atomic.AtomicLong ghostRecallCount = new java.util.concurrent.atomic.AtomicLong();
+
+    public long getGhostRecallCount() {
+        return ghostRecallCount.get();
+    }
+
     @Value("${app.rag.chunk-size:900}")
     private int chunkSize;
 
@@ -268,7 +275,20 @@ public class SemanticService {
             return false;
         }
         List<SearchHit> hits = milvusService.search(MilvusService.COLLECTION_CASES, projectId, vector, 1);
-        return !hits.isEmpty() && hits.get(0).score() >= milvusService.duplicateThreshold();
+        if (hits.isEmpty()) {
+            return false;
+        }
+        SearchHit top = hits.get(0);
+        if (top.score() < milvusService.duplicateThreshold()) {
+            return false;
+        }
+        // v8.6.1(9.4): 存在性兜底——幽灵向量（DB 已删但向量残留）不再误杀新用例
+        if (!testCaseRepository.existsById(top.id())) {
+            ghostRecallCount.incrementAndGet();
+            log.warn("语义去重命中幽灵向量，已放行 (id={}, score={})", top.id(), top.score());
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -380,9 +400,24 @@ public class SemanticService {
             return List.of();
         }
         List<SearchHit> hits = milvusService.search(MilvusService.COLLECTION_CASES, projectId, vector, 20);
+        // v8.6.1(9.4): 单次 findAllById 批量往返替代逐条 findById N+1；幽灵 id 跳过并计数
+        List<String> hitIds = new ArrayList<>();
+        for (SearchHit hit : hits) {
+            hitIds.add(hit.id());
+        }
+        Map<String, TestCase> existingById = new LinkedHashMap<>();
+        for (TestCase tc : testCaseRepository.findAllById(hitIds)) {
+            existingById.put(tc.getId(), tc);
+        }
         List<TestCaseDTO> result = new ArrayList<>();
         for (SearchHit hit : hits) {
-            testCaseRepository.findById(hit.id()).ifPresent(tc -> result.add(TestCaseDTO.from(tc)));
+            TestCase tc = existingById.get(hit.id());
+            if (tc == null) {
+                ghostRecallCount.incrementAndGet();
+                log.warn("语义检索命中幽灵向量，已过滤 (id={}, score={})", hit.id(), hit.score());
+                continue;
+            }
+            result.add(TestCaseDTO.from(tc));
         }
         return result;
     }

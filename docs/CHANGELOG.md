@@ -4,6 +4,52 @@
 
 ---
 
+## v8.6.1 — 向量数据一致性闭环（删除补偿 + ShedLock 重放 + 周期对账 + 幽灵过滤）
+**日期**: 2026-08-26
+**基线**: v8.5
+**主题**: 计划书阶段 2 上半（任务 9.1–9.4，v8.6 拆分版）——消灭 G2：Milvus 删除终败落补偿表、ShedLock 定时重放指数退避、每日 DB↔向量对账自动修复漂移、检索/去重双链路幽灵向量兜底过滤。纯后端版本
+
+### 背景
+
+Milvus 与 MySQL 无对账机制：删除失败仅 ERROR 日志无补偿（幽灵向量累积）、去重取 top-1 相似命中即判重（幽灵误杀新用例）、漂移无人发现。v8.6 阶段含两个新依赖两条子线，按授权拆为 v8.6.1/v8.6.2。
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `entity/PendingVectorOp.java` + Repository | **新增** | **9.1** 补偿表——op_type/collection/expr 原样/attempts/status(PENDING·DONE·DEAD)/next_attempt_at；H2 走 ddl-auto 自动建表 |
+| `service/MilvusService.java` | 修改 | **9.1** deleteWithRetry 终败分支调 recordDeleteFailure 落表（upsert 不堆行）；新增 `deleteByRawExpr`（重放专用入口）与 `queryIdsByProject`（对账用 expr 查询 id 集，失败返回 null 区别于合法空集防重建风暴） |
+| `backend/pom.xml` | 修改 | **9.2** 新依赖 shedlock-spring 5.16.0 + shedlock-provider-jdbc-template 5.16.0（组件总表授权项；5.x 线最终版，计划书所写 5.16.2 不存在） |
+| `config/ShedLockConfig.java` | **新增** | **9.2** @EnableSchedulerLock + JdbcTemplateLockProvider(usingDbTime)；ApplicationRunner 幂等建 shedlock 表兜底 H2 环境 |
+| `db/migration/mysql/V14/V15/V16` | **新增** | pending_vector_ops / shedlock（官方 DDL）/ reconciliation_reports |
+| `service/VectorOpCompensationTask.java` | **新增** | **9.2** 每 5 分钟扫 PENDING 到期记录（批 ≤50）：成功 DONE；失败 attempts+1 按 60s×2^n 退避；≥max-attempts(5) 转 DEAD 并 ERROR；整轮 try/catch 调度不中断 |
+| `entity/ReconciliationReport.java` + Repository | **新增** | **9.3** 对账报告实体 |
+| `service/VectorReconciliationService.java` | **新增** | **9.3** 每日 02:00 cron：逐项目比对 DB 用例 id 集↔cases 向量 id 集；DB 多→indexCases 批量补索引；向量多→孤儿走 deleteByIds（终败自动落补偿表闭环）；driftRatio>threshold(0.02) 记 WARN；查询失败记 SKIPPED |
+| `controller/AdminVectorController.java` | **新增** | **9.3** GET `/api/admin/vector/reconciliation` 最近 20 条报告（复用 /api/admin/** ADMIN 门禁） |
+| `service/SemanticService.java` | 修改 | **9.4** isDuplicate top-1 命中须 existsById 才判重（幽灵 WARN+放行）；searchCases 逐条 findById N+1 改单次 findAllById 批量往返并保序过滤幽灵；新增 ghostRecallCount 计数器（v8.7 指标预留） |
+| `application.yml` | 修改 | 新增 `app.vector.*` 五键（interval/initial-delay/max-attempts/reconcile-cron/drift-threshold），全部环境变量可回调 |
+
+### API 契约变化
+
+- 新增 GET `/api/admin/vector/reconciliation`（ADMIN）；其余接口零变化。
+
+### 测试变更
+
+| 文件 | 例数 | 覆盖 |
+|---|---|---|
+| MilvusServiceCompensationTest | 3 | 首败落表 upsert / 同 expr 复用行 / 无仓库纯日志兼容 |
+| VectorOpCompensationTaskTest | 4 | 成功 DONE / 失败退避 PENDING / 超限 DEAD / 整轮异常不中断调度 |
+| VectorReconciliationServiceTest | 7 | OK / 缺失补索引 / 孤儿删除 / 超阈值 WARN / 低漂移 REPAIRED / 查询失败 SKIPPED / milvus 关闭 |
+| SemanticServiceExistenceFilterTest | 3 | 幽灵不判重 / 存在仍判重 / searchCases 保序过滤 |
+
+### 验证结果
+
+- 后端全量容器测试：441 tests, 0 failures（421 基线 + 20 新增）
+- 期间修复两处实现缺陷：ShedLock provider 包名实际为 `jdbctemplate`（非 jdbc.template）；对账 driftRatio 曾因 long 整除恒为 0（先转 double 再除）
+- docker compose 重部署验证见下节
+
+---
+
 ## v8.5 — 安全闭环（弱默认密钥清零 + MCP 回环限制 + DNS rebinding 收敛）
 **日期**: 2026-08-26
 **基线**: v8.4

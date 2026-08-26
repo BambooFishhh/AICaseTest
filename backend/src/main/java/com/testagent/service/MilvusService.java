@@ -22,16 +22,24 @@ import io.milvus.param.collection.LoadCollectionParam;
 import io.milvus.param.collection.GetCollectionStatisticsParam;
 import io.milvus.param.dml.DeleteParam;
 import io.milvus.param.dml.InsertParam;
+import io.milvus.param.dml.QueryParam;
 import io.milvus.param.dml.SearchParam;
 import io.milvus.param.index.CreateIndexParam;
+import io.milvus.response.QueryResultsWrapper;
 import io.milvus.response.SearchResultsWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.testagent.entity.PendingVectorOp;
+import com.testagent.repository.PendingVectorOpRepository;
+
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * v5.4: Milvus 向量检索服务。默认关闭，开启且连接可用时自动建集合。
@@ -69,6 +77,14 @@ public class MilvusService {
     private String password;
 
     private volatile MilvusServiceClient client;
+
+    // v8.6.1(9.1): 删除补偿落表仓库——字段默认 null（直 new 单测不受影响），容器注入后生效
+    private PendingVectorOpRepository pendingVectorOpRepository;
+
+    @Autowired(required = false)
+    void setPendingVectorOpRepository(PendingVectorOpRepository pendingVectorOpRepository) {
+        this.pendingVectorOpRepository = pendingVectorOpRepository;
+    }
 
     public boolean isEnabled() {
         return enabled;
@@ -320,6 +336,14 @@ public class MilvusService {
                 "project_id == \"" + escapeExpr(projectId) + "\" and module == \"" + escapeExpr(module) + "\"");
     }
 
+    // v8.6.1(9.2): 补偿重放专用入口——expr 由补偿表原样恢复，重放走统一 deleteWithRetry 链路
+    public void deleteByRawExpr(String collection, String expr) {
+        if (collection == null || collection.isBlank() || expr == null || expr.isBlank()) {
+            return;
+        }
+        deleteWithRetry(collection, expr);
+    }
+
     // v8.4fix: 删除统一入口：短重试 + 失败升级为 ERROR 并带上下文。
     // 删除失败仅 warn 无补偿会产生召回脏数据（幽灵用例/误判重复），
     // 重试可消除瞬时故障；最终失败升级为 ERROR 便于告警接入与人工对账
@@ -342,8 +366,75 @@ public class MilvusService {
                 log.warn("Milvus delete 失败 (collection={}, attempt={}): {}", collection, attempt, e.getMessage());
             }
         }
-        log.error("Milvus delete 重试后仍失败，可能存在残留向量脏数据，需对账 (collection={}, expr={}): {}",
+        log.error("Milvus delete 重试后仍失败，落补偿表待重放 (collection={}, expr={}): {}",
                 collection, expr, last == null ? "unknown" : last.getMessage());
+        // v8.6.1(9.1): 终败落补偿表（upsert，同 collection+expr 不堆行），由重放任务接管
+        recordDeleteFailure(collection, expr, last == null ? "unknown" : last.getMessage());
+    }
+
+    // v8.6.1(9.1): 包级私有供单测直测；repo 未注入（纯单测环境）时仅保留日志行为
+    void recordDeleteFailure(String collection, String expr, String error) {
+        if (pendingVectorOpRepository == null) {
+            return;
+        }
+        try {
+            PendingVectorOp existing = pendingVectorOpRepository
+                    .findByCollectionAndExprAndStatus(collection, expr, PendingVectorOp.STATUS_PENDING)
+                    .orElse(null);
+            LocalDateTime now = LocalDateTime.now();
+            if (existing == null) {
+                PendingVectorOp op = new PendingVectorOp();
+                op.setId(UUID.randomUUID().toString().replace("-", ""));
+                op.setOpType(PendingVectorOp.OP_DELETE);
+                op.setCollection(collection);
+                op.setExpr(expr);
+                op.setAttempts(0);
+                op.setLastError(error);
+                op.setStatus(PendingVectorOp.STATUS_PENDING);
+                op.setNextAttemptAt(now);
+                op.setCreatedAt(now);
+                op.setUpdatedAt(now);
+                pendingVectorOpRepository.save(op);
+            } else {
+                existing.setLastError(error);
+                existing.setUpdatedAt(now);
+                pendingVectorOpRepository.save(existing);
+            }
+        } catch (Exception recordError) {
+            log.error("补偿记录落表失败 (collection={}): {}", collection, recordError.getMessage());
+        }
+    }
+
+    // v8.6.1(9.3): 按项目查询 cases 集合全部向量 id——对账用。
+    // 返回 null 表示查询失败/不可用（区别于合法空集），调用方据此记 SKIPPED 而非误判全量缺失
+    public List<String> queryIdsByProject(String collection, String projectId) {
+        MilvusServiceClient c = client();
+        if (c == null || projectId == null || projectId.isBlank()) {
+            return null;
+        }
+        try {
+            var resp = c.query(QueryParam.newBuilder()
+                    .withCollectionName(collection)
+                    .withExpr("project_id == \"" + escapeExpr(projectId) + "\"")
+                    .withOutFields(List.of("id"))
+                    .build());
+            if (resp == null || resp.getData() == null) {
+                return null;
+            }
+            QueryResultsWrapper wrapper = new QueryResultsWrapper(resp.getData());
+            List<String> ids = new ArrayList<>();
+            for (QueryResultsWrapper.RowRecord record : wrapper.getRowRecords()) {
+                Object id = record.getFieldValues().get("id");
+                if (id != null) {
+                    ids.add(String.valueOf(id));
+                }
+            }
+            return ids;
+        } catch (Exception e) {
+            log.warn("Milvus queryIdsByProject failed (collection={}, project={}): {}",
+                    collection, projectId, e.getMessage());
+            return null;
+        }
     }
 
     // v8.4fix: 布尔表达式字符串转义（反斜杠/双引号）

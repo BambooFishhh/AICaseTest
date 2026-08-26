@@ -195,6 +195,13 @@ app:
     context-topk: ${RAG_CONTEXT_TOPK:6}
     failure-topk: ${RAG_FAILURE_TOPK:3}
     max-queries: ${RAG_MAX_QUERIES:12}
+  # v8.6.1: 向量数据一致性（补偿重放 + 周期对账）
+  vector:
+    compensation-interval-ms: ${VECTOR_COMPENSATION_INTERVAL_MS:300000}
+    compensation-initial-delay-ms: ${VECTOR_COMPENSATION_INITIAL_DELAY_MS:60000}
+    compensation-max-attempts: ${VECTOR_COMPENSATION_MAX_ATTEMPTS:5}
+    reconcile-cron: ${VECTOR_RECONCILE_CRON:0 0 2 * * *}
+    reconcile-drift-threshold: ${VECTOR_RECONCILE_DRIFT_THRESHOLD:0.02}
   # vT6: 测试环境可关闭 MCP 子进程
   mcp:
     enabled: ${APP_MCP_ENABLED:true}
