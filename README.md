@@ -183,7 +183,11 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v8.7.2（看板告警 + 评测体系，可观测性收官）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v8.8.2（多供应商 + 扩展性，阶段 4 收官）**，生产线基线为 vP5（压测与容量）。
+
+- v8.8.2 要点：计划书任务 10.4–10.6——**双实例就绪**（四项既有定时任务补齐 ShedLock；排查报告 docs/双实例就绪排查报告.md：状态权威源 DB/Redis 核对、遗留限制=RuntimeStore 必须 Redis + outputs 共享卷）；**任务积压可观测**（agent_task 七状态 Gauge + RUNNING/QUEUED 两条告警 + 看板面板）；**混沌演练固化**（@Tag("chaos") 三场景：畸形输出对抗集/Milvus 断连补偿/池饱和拒绝——默认排除不阻塞日常构建）。后端 478 测试全绿 + chaos 8 例全绿。
+
+- v8.8.1 要点：计划书任务 10.1–10.3——**多供应商双通道**（llm.models.fallback.* 注册降级供应商，三键齐备启用；ChatClient 懒构建缓存）；**降级路由**（主通道失败/熔断自动切换 fallback 并在 GenerationReport 与 SSE complete 标注 degradedProvider；双败抛 50300；熔断键 text/text:fallback 隔离）；**embedding 独立熔断与降级端点**。后端 478 测试全绿。
 
 - v8.7.2 要点：计划书任务 9.5.5/9.5.7–9.5.10——**两块 Grafana 看板**（生成质量：轮次结果/产出跳过/跳过率健康线/契约违规/RAG 延迟；数据一致性：补偿积压/对账漂移 Gauge/Milvus 失败）+ **三条告警规则**（补偿积压>0 持续 1h、解析跳过率>30%、池饱和拒绝）promtool 校验通过；**评测体系 v1**（黄金数据集小/中/大三档 + EvalRunner mock 回放工具 + compare 基线对比 + 流程固化规则入 eval/README.md）；mock 基线归档全绿（结构 100%/召回 100%/覆盖 100%）；9.5.6 追踪按计划书默认裁剪。后端 469 测试全绿。
 
@@ -285,6 +289,8 @@ AICaseTest/
 | v8.6.2 | 出参契约化（四 schema 契约/observe-enforce 灰度/括号配平提取） | ✅ 完成 |
 | v8.7.1 | 指标埋点+MDC（MetricsFacade/13 项指标/日志链按项目聚合） | ✅ 完成 |
 | v8.7.2 | 看板告警+评测体系 v1（两看板三告警/黄金数据集/EvalRunner 回放对比） | ✅ 完成 |
+| v8.8.1 | 多供应商双通道+降级路由（fallback 注册/degradedProvider 标注/embedding 独立熔断） | ✅ 完成 |
+| v8.8.2 | 双实例就绪+积压可观测+混沌演练（补齐四任务锁/状态 Gauge 两告警/@Tag("chaos") 三场景） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

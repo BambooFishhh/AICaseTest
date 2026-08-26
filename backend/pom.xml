@@ -20,6 +20,8 @@
 
     <properties>
         <java.version>17</java.version>
+        <!-- v8.8.2(10.6): 默认排除 chaos 分组；-Dsurefire.excludedGroups= 可覆盖放行 -->
+        <surefire.excludedGroups>chaos</surefire.excludedGroups>
         <okhttp.version>4.12.0</okhttp.version>
         <javaparser.version>3.25.10</javaparser.version>
         <!-- v6.0: Spring AI main line uses the OpenAI starter (DashScope via OpenAI-compatible endpoint) -->
@@ -277,6 +279,10 @@
                     <excludes>
                         <exclude>**/*IntegrationTest.java</exclude>
                     </excludes>
+                    <!-- v8.8.2(10.6): 混沌演练单独分组，不阻塞日常构建；触发：
+                         mvn test -Dgroups=chaos -Dsurefire.excludedGroups=
+                         （excludedGroups 走属性，可用空值覆盖以放行 chaos 分组） -->
+                    <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
         </plugins>

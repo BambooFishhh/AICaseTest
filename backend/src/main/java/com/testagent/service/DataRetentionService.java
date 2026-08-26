@@ -3,6 +3,7 @@ package com.testagent.service;
 import com.testagent.entity.ExecutionRecord;
 import com.testagent.repository.ExecutionRecordRepository;
 import com.testagent.repository.ExecutionStepRepository;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +34,8 @@ public class DataRetentionService {
     private ExecutionStepRepository executionStepRepository;
 
     @Scheduled(cron = "${app.retention.cron:0 0 3 * * *}")
+    // v8.8.2(10.4): 双实例就绪——保留策略清理任务上锁
+    @SchedulerLock(name = "dataRetentionClean", lockAtMostFor = "PT10M", lockAtLeastFor = "PT30S")
     public void cleanOldExecutions() {
         if (retentionDays <= 0) {
             return;

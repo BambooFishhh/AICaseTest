@@ -4,6 +4,34 @@
 
 ---
 
+## v8.8.2 — 双实例就绪 + 积压可观测 + 混沌演练固化（计划书阶段 4 下半）
+**日期**: 2026-08-26
+**基线**: v8.8.1
+**主题**: 计划书任务 10.4–10.6（v8.8 拆分版）——四个既有定时任务补齐 ShedLock（10.4 排查命中预判）、agent_task 状态计数进 Gauge + 两条积压告警、三场景混沌演练 @Tag("chaos") 固化。纯后端/工程版本
+
+### 工程变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `service/HaTaskScheduler.java` / `DataRetentionService.java` | 修改 | **10.4** 四个既有任务补上 @SchedulerLock：租约恢复/TTL 过期/QUEUED 兜底分发/保留清理——排查命中计划书"既有任务未上锁"预判 |
+| `docs/双实例就绪排查报告.md` | **新增** | **10.4** 清单式排查：锁覆盖表/状态源核对/调度幂等性/遗留限制（RuntimeStore 必须 Redis、outputs 需共享卷）与双实例演练步骤 |
+| `observability/TaskBacklogMetrics.java` | **新增** | **10.5** agent_task 七状态计数 Gauge（30s 刷新，只读无锁）；MetricsFacade 增 gaugeRaw |
+| `monitoring/prometheus/alerts.yml` / `data-consistency.json` | 修改 | **10.5** AICaseTestRunningBacklogHigh(RUNNING>5 持续 15m) / AICaseTestQueueStarved(QUEUED>20 持续 10m)；看板新增任务积压面板 |
+| `backend/pom.xml` | 修改 | **10.6** surefire excludedGroups 属性化（默认排除 chaos；`mvn test -Dgroups=chaos -Dsurefire.excludedGroups=` 触发演练） |
+| `test/.../chaos/` ×3 | **新增** | **10.6** 畸形输出对抗集（截断数组/非数组整段上抛重试、标量与嵌套炸弹条目级容错）/ Milvus 断连补偿落表 upsert + DNS 故障拒绝 / 快速拒绝池打满抛异常并计 executor_rejected_total |
+
+### API 契约变化
+
+无。
+
+### 验证结果
+
+- 日常构建：478 tests 全绿（chaos 默认排除）
+- 混沌分组显式触发：8 tests 全绿（Malformed 4 + Milvus 断连 3 + 线程池饱和 1）
+- promtool 校验通过（11 rules）；docker compose 重部署验证见下节
+
+---
+
 ## v8.8.1 — 多供应商双通道 + 降级路由（计划书阶段 4 上半）
 **日期**: 2026-08-26
 **基线**: v8.7.2

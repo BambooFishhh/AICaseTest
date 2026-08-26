@@ -51,7 +51,7 @@
     {
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
       "id": 3,
       "options": {
         "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
@@ -61,6 +61,34 @@
         { "expr": "sum by (op) (increase(milvus_op_failed_total[1h]))", "legendFormat": "op={{op}}" },
         { "expr": "sum(increase(milvus_insert_truncated_total[1h]))", "legendFormat": "insert 字段截断" }
       ],
+      "title": "Milvus 操作失败 / 写入截断（1h）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 20 } ] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "id": 4,
+      "options": {
+        "legend": { "calcs": ["max"], "displayMode": "table", "placement": "bottom" },
+        "mode": "chart"
+      },
+      "targets": [
+        { "expr": "agent_task_queued", "legendFormat": "QUEUED" },
+        { "expr": "agent_task_running", "legendFormat": "RUNNING" },
+        { "expr": "agent_task_needs_review", "legendFormat": "NEEDS_REVIEW" },
+        { "expr": "agent_task_dlq", "legendFormat": "DLQ" }
+      ],
+      "title": "任务积压（v8.8.2，告警线 RUNNING>5 持续 15m）",
+      "type": "timeseries"
+    }
+  ],
       "title": "Milvus 操作失败 / 写入截断（1h）",
       "type": "timeseries"
     }

@@ -84,6 +84,14 @@ public class MetricsFacade {
         ref.set(value);
     }
 
+    // v8.8.2(10.5): 调用方自持强引用的原始 Gauge 注册（如 TaskBacklogMetrics 的状态计数表）
+    public void gaugeRaw(String name, Number holder) {
+        if (registry == null || holder == null) {
+            return;
+        }
+        registry.gauge(name, holder);
+    }
+
     private List<Tag> toTags(String... tagPairs) {
         List<Tag> tags = new ArrayList<>();
         if (tagPairs != null) {

@@ -92,3 +92,22 @@ groups:
         annotations:
           summary: "线程池发生饱和拒绝"
           description: "5 分钟内出现 analysis/generation 池拒绝（用户已收到繁忙提示），考虑调大 EXECUTOR_*_QUEUE 或扩容。"
+
+      # ========== v8.8.2(10.5): 任务积压告警 ==========
+      - alert: AICaseTestRunningBacklogHigh
+        expr: agent_task_running > 5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RUNNING 任务积压超过 15 分钟"
+          description: "agent_task RUNNING 数量持续高于 5，执行/生成链路可能出现堆积或租约泄漏，请检查任务中心与线程池指标。"
+
+      - alert: AICaseTestQueueStarved
+        expr: agent_task_queued > 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "QUEUED 任务超过 20 持续 10 分钟"
+          description: "排队任务未被及时分发，检查 dispatchQueuedTasks 调度与执行池容量。"
