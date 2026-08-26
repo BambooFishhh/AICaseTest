@@ -60,3 +60,35 @@ groups:
         annotations:
           summary: "AICaseTest 任务失败率过高"
           description: "近 10 分钟任务失败率超过 20%。"
+
+  # ========== v8.7.2(9.5.5): 生成质量与数据一致性告警 ==========
+  - name: aicasetest-generation-quality
+    rules:
+      - alert: AICaseTestVectorPendingOpsStuck
+        expr: vector_pending_ops_size > 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "向量补偿积压超过 1 小时未清零"
+          description: "pending_vector_ops 存在 PENDING 记录持续 1h，Milvus 删除失败未被重放成功，需检查 Milvus 健康与补偿任务日志。"
+
+      - alert: AICaseTestParseSkipRatioHigh
+        expr: |
+          rate(gen_parse_skipped_total[10m])
+            / clamp_min(rate(gen_cases_generated_total[10m]) + rate(gen_parse_skipped_total[10m]), 0.001) > 0.3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "生成解析跳过率超过 30%"
+          description: "10 分钟窗口内畸形用例条目占比超 30%，LLM 输出格式劣化，建议检查模型版本与 llm.schema.mode 灰度数据。"
+
+      - alert: AICaseTestExecutorRejected
+        expr: increase(executor_rejected_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "线程池发生饱和拒绝"
+          description: "5 分钟内出现 analysis/generation 池拒绝（用户已收到繁忙提示），考虑调大 EXECUTOR_*_QUEUE 或扩容。"

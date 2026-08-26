@@ -1,0 +1,22 @@
+{
+  "requirements": ["租户管理", "内容创建与编辑", "提交审核", "全文检索", "定时发布", "回收站", "审计日志", "并发编辑保护"],
+  "requirementIdMap": {
+    "租户管理": ["req-tenant"],
+    "内容创建与编辑": ["req-content-edit"],
+    "提交审核": ["req-review"],
+    "全文检索": ["req-search"],
+    "定时发布": ["req-schedule"],
+    "回收站": ["req-recycle"],
+    "审计日志": ["req-audit"],
+    "并发编辑保护": ["req-concurrent"]
+  },
+  "endpoints": [
+    "POST /api/tenants",
+    "PUT /api/tenants/{id}/status",
+    "POST /api/contents",
+    "POST /api/contents/{id}/submit",
+    "GET /api/search",
+    "POST /api/recycle-bin/{id}/restore"
+  ],
+  "p0Points": ["跨租户访问40300", "提交人不能自审", "并发编辑不静默覆盖", "敏感词拦截"]
+}

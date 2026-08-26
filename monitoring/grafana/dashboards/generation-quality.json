@@ -1,0 +1,126 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
+        "mode": "chart"
+      },
+      "targets": [
+        {
+          "expr": "sum by (result) (increase(gen_rounds_total[1h]))",
+          "legendFormat": "{{result}}"
+        }
+      ],
+      "title": "生成轮次结果分布（1h）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "mode": "chart"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(gen_cases_generated_total[1h]))",
+          "legendFormat": "产出用例"
+        },
+        {
+          "expr": "sum(increase(gen_parse_skipped_total[1h]))",
+          "legendFormat": "解析跳过"
+        }
+      ],
+      "title": "产出与解析跳过（1h）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.3 } ] } }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "mode": "chart"
+      },
+      "targets": [
+        {
+          "expr": "rate(gen_parse_skipped_total[10m]) / clamp_min(rate(gen_cases_generated_total[10m]) + rate(gen_parse_skipped_total[10m]), 0.001)",
+          "legendFormat": "跳过率"
+        }
+      ],
+      "title": "解析跳过率（健康线 ≤2%，告警线 30%）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "mode": "chart"
+      },
+      "targets": [
+        { "expr": "sum by (agent) (increase(llm_schema_violation_total[1h]))", "legendFormat": "{{agent}}" },
+        { "expr": "sum(increase(gen_retry_reset_total[1h]))", "legendFormat": "流式重试重置" },
+        { "expr": "sum(increase(gen_stream_truncated_total[1h]))", "legendFormat": "流级超时截断" }
+      ],
+      "title": "契约违规 / 重试重置 / 流截断（1h）",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "id": 5,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" },
+        "mode": "chart"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(rag_latency_seconds_bucket[15m])) by (le))",
+          "legendFormat": "RAG P95"
+        },
+        {
+          "expr": "sum(rate(rag_latency_seconds_sum[15m])) / clamp_min(sum(rate(rag_latency_seconds_count[15m])), 0.001)",
+          "legendFormat": "RAG 平均"
+        }
+      ],
+      "title": "RAG 检索延迟",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["aicasetest", "generation"],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "AICaseTest · 生成质量（v8.7.2）",
+  "uid": "aict-gen-quality",
+  "version": 1
+}

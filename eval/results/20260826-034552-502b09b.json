@@ -1,0 +1,52 @@
+{
+  "mode" : "mock",
+  "generatedAt" : "2026-08-26T03:45:52.729914364",
+  "gitSha" : "502b09b",
+  "healthLine" : {
+    "structurePassRatio" : 0.98,
+    "endpointCoverage" : 0.8,
+    "requirementRecall" : 0.9,
+    "parseSkipRatioMax" : 0.02
+  },
+  "overall" : {
+    "structurePassRatio" : 1.0,
+    "parseSkipRatio" : 0.0,
+    "requirementRecall" : 1.0,
+    "endpointCoverage" : 1.0,
+    "durationMs" : 39900,
+    "tokens" : 44400,
+    "healthyLinePassed" : true
+  },
+  "datasets" : {
+    "large" : {
+      "items" : 13,
+      "intentionalMalformed" : 2,
+      "structurePass" : 11,
+      "structurePassRatio" : 1.0,
+      "parseSkipped" : 0,
+      "parseSkipRatio" : 0.0,
+      "requirementRecall" : 1.0,
+      "endpointCoverage" : 1.0
+    },
+    "medium" : {
+      "items" : 6,
+      "intentionalMalformed" : 1,
+      "structurePass" : 5,
+      "structurePassRatio" : 1.0,
+      "parseSkipped" : 0,
+      "parseSkipRatio" : 0.0,
+      "requirementRecall" : 1.0,
+      "endpointCoverage" : 1.0
+    },
+    "small" : {
+      "items" : 4,
+      "intentionalMalformed" : 1,
+      "structurePass" : 3,
+      "structurePassRatio" : 1.0,
+      "parseSkipped" : 0,
+      "parseSkipRatio" : 0.0,
+      "requirementRecall" : 1.0,
+      "endpointCoverage" : 1.0
+    }
+  }
+}

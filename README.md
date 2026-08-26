@@ -183,7 +183,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v8.7.1（指标埋点 + MDC，可观测性上半）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v8.7.2（看板告警 + 评测体系，可观测性收官）**，生产线基线为 vP5（压测与容量）。
+
+- v8.7.2 要点：计划书任务 9.5.5/9.5.7–9.5.10——**两块 Grafana 看板**（生成质量：轮次结果/产出跳过/跳过率健康线/契约违规/RAG 延迟；数据一致性：补偿积压/对账漂移 Gauge/Milvus 失败）+ **三条告警规则**（补偿积压>0 持续 1h、解析跳过率>30%、池饱和拒绝）promtool 校验通过；**评测体系 v1**（黄金数据集小/中/大三档 + EvalRunner mock 回放工具 + compare 基线对比 + 流程固化规则入 eval/README.md）；mock 基线归档全绿（结构 100%/召回 100%/覆盖 100%）；9.5.6 追踪按计划书默认裁剪。后端 469 测试全绿。
 
 - v8.7.1 要点：计划书任务 9.5.1–9.5.4——**MetricsFacade 统一指标入口**（no-op 兜底/gauge 强引用）；13 项新指标落地：gen_parse_skipped_total、gen_retry_reset_total、gen_stream_truncated_total、gen_rounds_total{result}、gen_cases_generated_total、milvus_insert_truncated_total、milvus_op_failed_total{op}、vector_pending_ops_size、reconciliation_drift_ratio、executor_rejected_total{pool}、llm_schema_violation_total{agent}、rag_recall_count/rag_empty_recall_total/rag_latency_seconds；**MDC 标准化**（SSE 提交线程注入 projectId → TaskDecorator 透传异步线程 + Semantic/Milvus 入口直接注入）。后端 469 测试全绿。
 
@@ -281,6 +283,8 @@ AICaseTest/
 | v8.5 | 安全闭环（弱默认密钥清零/MCP 回环限制/DNS rebinding 收敛/Grafana 必填/retryReset 前端消费） | ✅ 完成 |
 | v8.6.1 | 向量一致性闭环（删除补偿表/ShedLock 重放/周期对账修复/检索幽灵过滤） | ✅ 完成 |
 | v8.6.2 | 出参契约化（四 schema 契约/observe-enforce 灰度/括号配平提取） | ✅ 完成 |
+| v8.7.1 | 指标埋点+MDC（MetricsFacade/13 项指标/日志链按项目聚合） | ✅ 完成 |
+| v8.7.2 | 看板告警+评测体系 v1（两看板三告警/黄金数据集/EvalRunner 回放对比） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |

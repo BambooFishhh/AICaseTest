@@ -4,6 +4,47 @@
 
 ---
 
+## v8.7.2 — Grafana 看板告警 + 评测体系 v1（可观测性下半）
+**日期**: 2026-08-26
+**基线**: v8.7.1
+**主题**: 计划书任务 9.5.5 + 9.5.7–9.5.10（9.5.6 追踪按计划书默认跳过；v8.7 拆分版）——生成质量/数据一致性两块看板、三条告警规则进既有 alerts 链路；黄金数据集 + mock 回放评测工具 + 基线对比命令，评测流程固化为评审硬检查项。纯后端/工程版本
+
+### 工程变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `monitoring/prometheus/alerts.yml` | 修改 | **9.5.5** 新增 aicasetest-generation-quality 组：VectorPendingOpsStuck(>0 持续 1h) / ParseSkipRatioHigh(>30% 持续 10m) / ExecutorRejected(increase[5m]>0)；promtool 校验通过 |
+| `monitoring/grafana/dashboards/generation-quality.json` | **新增** | 轮次结果分布/产出与跳过/跳过率健康线/契约违规·重试·截断/RAG 延迟五区 |
+| `monitoring/grafana/dashboards/data-consistency.json` | **新增** | 补偿积压/对账漂移率 Gauge/Milvus 失败与截断 |
+| `eval/datasets/{small,medium,large}/` | **新增** | **9.5.7** 黄金数据集三档（合成内容已脱敏）：prd.md + expected.json（requirements/endpoints/p0Points/requirementIdMap）+ fixture-response.json（mock 回放夹具，含故意畸形条目验证跳过统计） |
+| `backend/src/main/java/com/testagent/eval/EvalRunner.java` | **新增** | **9.5.8** mock 回放评测：逐条 schema 校验→结构合格率/解析跳过率；requirementIdMap 双口径召回；coverageRefs 端点覆盖；报告落 eval/results/{date}-{gitsha}.json；compare 子命令对比基线并按健康线判定 REGRESSION |
+| `eval/README.md` | **新增** | **9.5.9** 流程固化——prompt/预算参数改动必须先跑评测对比基线且无回归才可合入；真实模式命令就绪 |
+
+### 评测基线（mock 模式首版）
+
+| 指标 | 值 | 健康线 |
+|---|---|---|
+| 结构合格率 | 100% | ≥98% ✅ |
+| 解析跳过率 | 0%（夹具故意畸形条目已剔除分母） | ≤2% ✅ |
+| 需求召回率 | 100% | ≥90% ✅ |
+| 接口覆盖率 | 100% | ≥80% ✅ |
+
+### 9.5.10 处置说明
+
+256k 扩容回测工具已就绪（真实模式命令见 eval/README.md）；真实回测需消耗 LLM token 且结果解读涉及参数回调决策（计划书标注 `[需确认]`），留待用户择机执行——本次以 mock 基线归档（`eval/results/20260826-034552-502b09b.json`）。
+
+### API 契约变化
+
+无。
+
+### 验证结果
+
+- 后端全量容器测试：BUILD SUCCESS（469 tests 基线不变，EvalRunner 为 main 工具类不进 surefire）
+- promtool check rules：SUCCESS 9 rules
+- docker compose 重部署 + prometheus/grafana 重载验证见下节
+
+---
+
 ## v8.7.1 — 指标埋点 + MDC 标准化（可观测性上半）
 **日期**: 2026-08-26
 **基线**: v8.6.2

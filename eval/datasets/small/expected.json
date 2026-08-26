@@ -1,0 +1,10 @@
+{
+  "requirements": ["用户登录", "登录失败锁定", "角色权限"],
+  "requirementIdMap": {
+    "用户登录": ["req-user-login"],
+    "登录失败锁定": ["req-login-lockout"],
+    "角色权限": ["req-role-permission"]
+  },
+  "endpoints": ["POST /api/auth/login", "GET /api/settings"],
+  "p0Points": ["正确账密颁发 token", "5 次失败锁定", "MEMBER 访问 ADMIN 接口 403"]
+}

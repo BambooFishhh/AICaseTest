@@ -1,0 +1,10 @@
+{
+  "requirements": ["创建订单", "支付回调", "发货"],
+  "requirementIdMap": {
+    "创建订单": ["req-create-order"],
+    "支付回调": ["req-pay-notify"],
+    "发货": ["req-ship"]
+  },
+  "endpoints": ["POST /api/orders", "POST /api/pay/notify", "POST /api/orders/{id}/ship"],
+  "p0Points": ["库存不足不落库", "回调幂等不重复扣库存", "PENDING 订单禁止发货"]
+}

@@ -1,0 +1,6 @@
+{
+  "comment": "v8.7.2(9.5.8): mock 模式回放用的 LLM 出参夹具——模拟模型对 small 数据集的输出；含 1 条故意畸形条目（__malformed__）用于验证解析跳过机制，不计入健康线",
+  "chatResponse": "[{\"title\":\"用户登录成功颁发token\",\"module\":\"auth\",\"priority\":\"P0\",\"type\":\"positive\",\"steps\":[\"打开登录页\",\"输入正确账密\",\"点击登录\"],\"expectedResults\":[\"返回 token 与用户信息\"],\"coverageRefs\":{\"endpointIds\":[\"POST /api/auth/login\"]},\"requirementIds\":[\"req-user-login\"]},{\"title\":\"连续5次失败锁定10分钟\",\"module\":\"auth\",\"priority\":\"P0\",\"type\":\"negative\",\"steps\":[\"连续输错密码5次\"],\"expectedResults\":[\"第5次返回429并提示锁定\"],\"requirementIds\":[\"req-login-lockout\"]},{\"title\":\"MEMBER访问ADMIN接口403\",\"module\":\"auth\",\"priority\":\"P0\",\"type\":\"negative\",\"steps\":[\"以MEMBER登录\",\"请求/api/settings\"],\"expectedResults\":[\"403且无数据泄漏\"],\"coverageRefs\":{\"endpointIds\":[\"GET /api/settings\"]},\"requirementIds\":[\"req-role-permission\"]},{\"__malformed__\":true,\"note\":\"故意畸形：验证解析跳过统计\"}]",
+  "tokens": { "prompt": 3200, "completion": 900 },
+  "durationMs": 4100
+}
