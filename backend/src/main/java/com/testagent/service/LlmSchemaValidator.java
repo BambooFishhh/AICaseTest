@@ -9,6 +9,7 @@ import com.networknt.schema.SpecVersion;
 import com.networknt.schema.ValidationMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -34,6 +35,28 @@ public class LlmSchemaValidator {
     // 配置三件套：yml 键 + @Value 默认值 + 字段初始化
     @Value("${llm.schema.mode:observe}")
     private String mode = "observe";
+
+    // v8.7.1(9.5.3): 指标门面——no-op 兜底
+    private com.testagent.observability.MetricsFacade metrics = new com.testagent.observability.MetricsFacade();
+
+    @Autowired(required = false)
+    void setMetrics(com.testagent.observability.MetricsFacade metrics) {
+        this.metrics = metrics;
+    }
+
+    // v8.7.1(9.5.3): 契约违规计数（agent 标签=schemaName）
+    void recordViolation(String schemaName) {
+        metrics.increment("llm_schema_violation_total", "agent", schemaName);
+    }
+
+    @jakarta.annotation.PostConstruct
+    void registerMetrics() {
+        // v8.7.1: 启动零值预注册
+        metrics.registerCounter("llm_schema_violation_total", "agent", "test-cases");
+        metrics.registerCounter("llm_schema_violation_total", "agent", "prd-analysis");
+        metrics.registerCounter("llm_schema_violation_total", "agent", "state-machine");
+        metrics.registerCounter("llm_schema_violation_total", "agent", "review-result");
+    }
 
     public void setMode(String mode) {
         this.mode = mode;
@@ -92,6 +115,7 @@ public class LlmSchemaValidator {
         if (errors.isEmpty()) {
             return true;
         }
+        recordViolation(schemaName);
         log.warn("LLM 出参契约校验未通过 (schema={}, caller={}, mode={}): {}",
                 schemaName, caller, mode, errors);
         return !isEnforce();

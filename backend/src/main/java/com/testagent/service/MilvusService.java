@@ -86,6 +86,23 @@ public class MilvusService {
         this.pendingVectorOpRepository = pendingVectorOpRepository;
     }
 
+    // v8.7.1(9.5.2): 指标门面——no-op 兜底
+    private com.testagent.observability.MetricsFacade metrics = new com.testagent.observability.MetricsFacade();
+
+    @Autowired(required = false)
+    void setMetrics(com.testagent.observability.MetricsFacade metrics) {
+        this.metrics = metrics;
+    }
+
+    @jakarta.annotation.PostConstruct
+    void registerMetrics() {
+        // v8.7.1: 启动零值预注册
+        metrics.registerCounter("milvus_insert_truncated_total", "collection", "cases");
+        for (String op : new String[]{"insert", "delete", "search", "count", "query"}) {
+            metrics.registerCounter("milvus_op_failed_total", "op", op, "collection", "cases");
+        }
+    }
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -208,6 +225,17 @@ public class MilvusService {
 
     public void insert(String collection, String projectId, String id, String title,
                        String module, String text, List<Float> vector) {
+        // v8.7.1(9.5.4): 索引入口注入 projectId MDC，日志链可按项目聚合
+        com.testagent.observability.ObservabilityMdc.putProjectId(projectId);
+        try {
+            doInsert(collection, projectId, id, title, module, text, vector);
+        } finally {
+            com.testagent.observability.ObservabilityMdc.clear();
+        }
+    }
+
+    private void doInsert(String collection, String projectId, String id, String title,
+                          String module, String text, List<Float> vector) {
         MilvusServiceClient c = client();
         if (c == null || vector == null || vector.isEmpty()) {
             return;
@@ -223,6 +251,8 @@ public class MilvusService {
         if ((title != null && !safeTitle.equals(title)) || (text != null && !safeText.equals(text))) {
             log.warn("Milvus insert 字段截断 (collection={}, id={}, titleLen={}, textLen={})",
                     collection, safeId, title == null ? 0 : title.length(), text == null ? 0 : text.length());
+            // v8.7.1(9.5.2): 截断进指标——中文超限静默丢向量的劣化信号
+            metrics.increment("milvus_insert_truncated_total", "collection", collection);
         }
         try {
             InsertParam param = InsertParam.newBuilder()
@@ -238,6 +268,8 @@ public class MilvusService {
             c.insert(param);
         } catch (Exception e) {
             log.warn("Milvus insert failed (collection={}, id={}): {}", collection, safeId, e.getMessage());
+            // v8.7.1(9.5.2): 操作失败进指标
+            metrics.increment("milvus_op_failed_total", "op", "insert", "collection", collection);
         }
     }
 
@@ -282,6 +314,8 @@ public class MilvusService {
             return hits;
         } catch (Exception e) {
             log.warn("Milvus search failed: {}", e.getMessage());
+            // v8.7.1(9.5.2): 操作失败进指标
+            metrics.increment("milvus_op_failed_total", "op", "search", "collection", collection);
             return List.of();
         }
     }
@@ -364,6 +398,8 @@ public class MilvusService {
             } catch (Exception e) {
                 last = e;
                 log.warn("Milvus delete 失败 (collection={}, attempt={}): {}", collection, attempt, e.getMessage());
+            // v8.7.1(9.5.2): 删除失败进指标（终败另有补偿表 + ERROR 日志）
+            metrics.increment("milvus_op_failed_total", "op", "delete", "collection", collection);
             }
         }
         log.error("Milvus delete 重试后仍失败，落补偿表待重放 (collection={}, expr={}): {}",
@@ -433,6 +469,7 @@ public class MilvusService {
         } catch (Exception e) {
             log.warn("Milvus queryIdsByProject failed (collection={}, project={}): {}",
                     collection, projectId, e.getMessage());
+            metrics.increment("milvus_op_failed_total", "op", "query", "collection", collection);
             return null;
         }
     }
@@ -480,6 +517,7 @@ public class MilvusService {
             return -1;
         } catch (Exception e) {
             log.warn("Milvus count failed for {}: {}", collection, e.getMessage());
+            metrics.increment("milvus_op_failed_total", "op", "count", "collection", collection);
             return -1;
         }
     }

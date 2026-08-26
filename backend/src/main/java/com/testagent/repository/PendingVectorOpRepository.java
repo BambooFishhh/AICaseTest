@@ -13,4 +13,7 @@ public interface PendingVectorOpRepository extends JpaRepository<PendingVectorOp
 
     List<PendingVectorOp> findByStatusAndNextAttemptAtLessThanEqualOrderByCreatedAtAsc(
             String status, LocalDateTime cutoff);
+
+    // v8.7.1(9.5.2): 补偿积压量 Gauge 数据源
+    long countByStatus(String status);
 }

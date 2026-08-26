@@ -54,6 +54,24 @@ public class TestGeneratorAgent {
         this.llmSchemaValidator = llmSchemaValidator;
     }
 
+    // v8.7.1(9.5.2): 指标门面——no-op 兜底，直 new 单测不受影响
+    private com.testagent.observability.MetricsFacade metrics = new com.testagent.observability.MetricsFacade();
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setMetrics(com.testagent.observability.MetricsFacade metrics) {
+        this.metrics = metrics;
+    }
+
+    @jakarta.annotation.PostConstruct
+    void registerMetrics() {
+        // v8.7.1: 启动零值预注册（懒注册会让首事件前面板断线）
+        metrics.registerCounter("gen_parse_skipped_total");
+        metrics.registerCounter("gen_cases_generated_total");
+        metrics.registerCounter("gen_rounds_total", "result", "completed");
+        metrics.registerCounter("gen_rounds_total", "result", "not_converged");
+        metrics.registerCounter("gen_rounds_total", "result", "capped_by_limit");
+    }
+
     // v5.14: 自动多轮补齐上限，避免无限调用 LLM（收敛/成本控制，非上下文约束，未随 256k 放宽）
     private static final int MAX_GENERATION_ROUNDS = 4;
     // v8.4: 生成用例总量上限参数化，60 → 120（60 只够中小项目；大项目接口多时上限先于上下文成为覆盖率瓶颈）。
@@ -1267,6 +1285,11 @@ public class TestGeneratorAgent {
                 progressCallback.update("已达生成上限(" + maxGeneratedCases + ")，剩余覆盖缺口未补齐");
             }
         }
+        // v8.7.1(9.5.2): 轮次出口与产出量进指标
+        String roundResult = (report != null && report.coverageCappedByLimit) ? "capped_by_limit"
+                : (report != null && report.roundsNotConverged) ? "not_converged" : "completed";
+        metrics.increment("gen_rounds_total", "result", roundResult);
+        metrics.incrementBy("gen_cases_generated_total", all.size());
         return all;
     }
 
@@ -2074,8 +2097,7 @@ public class TestGeneratorAgent {
         }
         int skipped = 0;
         int index = 0;
-        for (JsonNode node : array) {
-            index++;
+        for (JsonNode node : array) {            index++;
             try {
                 TestCase tc = buildTestCase(node);
                 result.add(tc);
@@ -2087,6 +2109,8 @@ public class TestGeneratorAgent {
                 }
             } catch (Exception e) {
                 skipped++;
+                // v8.7.1(9.5.2): 解析跳过进指标——跳过率是生成质量健康线之一
+                metrics.increment("gen_parse_skipped_total");
                 String snippet = node == null ? "" : node.toString();
                 if (snippet.length() > 200) {
                     snippet = snippet.substring(0, 200) + "...";

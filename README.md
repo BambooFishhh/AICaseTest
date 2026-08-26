@@ -183,7 +183,9 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v8.6.2（LLM 出参契约化，阶段 2 收官）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v8.7.1（指标埋点 + MDC，可观测性上半）**，生产线基线为 vP5（压测与容量）。
+
+- v8.7.1 要点：计划书任务 9.5.1–9.5.4——**MetricsFacade 统一指标入口**（no-op 兜底/gauge 强引用）；13 项新指标落地：gen_parse_skipped_total、gen_retry_reset_total、gen_stream_truncated_total、gen_rounds_total{result}、gen_cases_generated_total、milvus_insert_truncated_total、milvus_op_failed_total{op}、vector_pending_ops_size、reconciliation_drift_ratio、executor_rejected_total{pool}、llm_schema_violation_total{agent}、rag_recall_count/rag_empty_recall_total/rag_latency_seconds；**MDC 标准化**（SSE 提交线程注入 projectId → TaskDecorator 透传异步线程 + Semantic/Milvus 入口直接注入）。后端 469 测试全绿。
 
 - v8.6.2 要点：计划书任务 9.5–9.8——**出参契约化**（json-schema-validator 1.5.9 + 四份 draft-07 schema：用例数组/PRD 解析/状态机/评审结果）；**灰度开关**（llm.schema.mode 默认 observe 仅观测告警，enforce 时 chatJson 附缺失字段清单重试一次仍失败降级；切换判据=violation 率<1% 且可解释）；**括号配平提取**（extractJsonObject 逐段配平+JSON 甄别，说明文字含大括号不再误取）。后端 457 测试全绿。
 

@@ -64,6 +64,22 @@ public class AsyncConfig {
     @Value("${app.executor.await-termination-seconds:30}")
     private int awaitTerminationSeconds;
 
+    // v8.7.1(9.5.3): 池拒绝指标——no-op 兜底，直 new 单测不受影响
+    private com.testagent.observability.MetricsFacade metrics = new com.testagent.observability.MetricsFacade();
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setMetrics(com.testagent.observability.MetricsFacade metrics) {
+        this.metrics = metrics;
+    }
+
+    @jakarta.annotation.PostConstruct
+    void registerMetrics() {
+        // v8.7.1: 启动零值预注册
+        for (String pool : new String[]{"analysis", "generation", "execution", "semantic"}) {
+            metrics.registerCounter("executor_rejected_total", "pool", pool);
+        }
+    }
+
     @Bean(name = "analysisExecutor")
     public ThreadPoolTaskExecutor analysisExecutor() {
         return buildExecutor("analysis-", analysisCore, analysisMax, analysisQueue, true);
@@ -90,12 +106,16 @@ public class AsyncConfig {
         executor.setMaxPoolSize(max);
         executor.setQueueCapacity(queue);
         executor.setThreadNamePrefix(prefix);
+        // v8.7.1(9.5.4): MDC 上下文透传（taskId/projectId 跨线程聚合日志链）
+        executor.setTaskDecorator(new com.testagent.observability.MdcTaskDecorator());
         // v8.4fix: 长耗时池（分析/生成）队列满时快速拒绝，由调用方转为"服务繁忙"返回；
         // 旧的统一 CallerRunsPolicy 会让分钟级 AI 任务回落 HTTP 线程执行，阻塞全部普通接口。
         // 短任务池（执行/语义索引）保留 CallerRuns 降低失败率。
         if (rejectFast) {
             executor.setRejectedExecutionHandler((r, ex) -> {
                 log.error("线程池 {} 已达上限（队列满），拒绝新任务，请稍后重试", prefix);
+                // v8.7.1(9.5.3): 饱和拒绝进指标
+                metrics.increment("executor_rejected_total", "pool", prefix.endsWith("-") ? prefix.substring(0, prefix.length() - 1) : prefix);
                 throw new java.util.concurrent.RejectedExecutionException("线程池 " + prefix + " 已满，请稍后重试");
             });
         } else {

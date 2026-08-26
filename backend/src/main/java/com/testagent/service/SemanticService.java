@@ -53,6 +53,22 @@ public class SemanticService {
         return ghostRecallCount.get();
     }
 
+    // v8.7.1(9.5.3): 指标门面——no-op 兜底
+    private com.testagent.observability.MetricsFacade metrics = new com.testagent.observability.MetricsFacade();
+
+    @Autowired(required = false)
+    void setMetrics(com.testagent.observability.MetricsFacade metrics) {
+        this.metrics = metrics;
+    }
+
+    @jakarta.annotation.PostConstruct
+    void registerMetrics() {
+        // v8.7.1: 启动零值预注册
+        metrics.registerCounter("rag_recall_count");
+        metrics.registerCounter("rag_empty_recall_total");
+        metrics.registerTimer("rag_latency_seconds");
+    }
+
     @Value("${app.rag.chunk-size:900}")
     private int chunkSize;
 
@@ -444,6 +460,24 @@ public class SemanticService {
     // v6.4: 按多个查询段分别召回，RRF 融合去重后返回 topK；
     // modules 非空时限定命中 module，生成侧只取需求类上下文，避免自我检索代码分析 JSON。
     public List<String> retrieveContexts(String projectId, List<String> queries, int topK, List<String> modules) {
+        // v8.7.1(9.5.3): RAG 链路埋点——延迟/召回量/空召回；入口注入 projectId MDC
+        long start = System.currentTimeMillis();
+        com.testagent.observability.ObservabilityMdc.putProjectId(projectId);
+        try {
+            List<String> merged = retrieveContextsInternal(projectId, queries, topK, modules);
+            long elapsed = System.currentTimeMillis() - start;
+            metrics.recordMillis("rag_latency_seconds", elapsed);
+            if (merged.isEmpty()) {
+                metrics.increment("rag_empty_recall_total");
+            }
+            metrics.incrementBy("rag_recall_count", merged.size());
+            return merged;
+        } finally {
+            com.testagent.observability.ObservabilityMdc.clear();
+        }
+    }
+
+    private List<String> retrieveContextsInternal(String projectId, List<String> queries, int topK, List<String> modules) {
         if (!isAvailable() || queries == null || queries.isEmpty() || topK <= 0) {
             return List.of();
         }

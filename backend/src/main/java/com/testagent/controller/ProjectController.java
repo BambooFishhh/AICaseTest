@@ -108,10 +108,14 @@ public class ProjectController {
         }
         SseEmitter emitter = new SseEmitter(sseTimeoutMinutes * 60 * 1000);
         try {
+            // v8.7.1(9.5.4): 提交线程注入 projectId MDC，经 TaskDecorator 透传到分析线程
+            com.testagent.observability.ObservabilityMdc.putProjectId(projectId);
             analysisService.runAnalysisStream(projectId, emitter);
         } catch (java.util.concurrent.RejectedExecutionException e) {
             // v8.4fix: 分析线程池队列满时快速失败，避免 SSE 挂死等待
             sendBusyAndComplete(emitter);
+        } finally {
+            com.testagent.observability.ObservabilityMdc.clear();
         }
         return emitter;
     }
@@ -151,10 +155,14 @@ public class ProjectController {
         // v5.3: 生成任务进入队列统计
         taskQueueService.enqueue(TaskQueueService.GENERATION_QUEUE, projectId);
         try {
+            // v8.7.1(9.5.4): 提交线程注入 projectId MDC，经 TaskDecorator 透传到生成线程
+            com.testagent.observability.ObservabilityMdc.putProjectId(projectId);
             testCaseService.runGenerateStream(projectId, emitter);
         } catch (java.util.concurrent.RejectedExecutionException e) {
             // v8.4fix: 生成线程池队列满时快速失败，避免 SSE 挂死等待
             sendBusyAndComplete(emitter);
+        } finally {
+            com.testagent.observability.ObservabilityMdc.clear();
         }
         return emitter;
     }
@@ -183,10 +191,14 @@ public class ProjectController {
         SseEmitter emitter = new SseEmitter(sseTimeoutMinutes * 60 * 1000);
         taskQueueService.enqueue(TaskQueueService.GENERATION_QUEUE, projectId);
         try {
+            // v8.7.1(9.5.4): 同 generate-stream，提交线程 MDC 经 TaskDecorator 透传
+            com.testagent.observability.ObservabilityMdc.putProjectId(projectId);
             testCaseService.runGenerateStreamAppend(projectId, type, emitter);
         } catch (java.util.concurrent.RejectedExecutionException e) {
             // v8.4fix: 生成线程池队列满时快速失败，避免 SSE 挂死等待
             sendBusyAndComplete(emitter);
+        } finally {
+            com.testagent.observability.ObservabilityMdc.clear();
         }
         return emitter;
     }

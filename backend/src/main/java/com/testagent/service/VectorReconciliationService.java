@@ -51,8 +51,23 @@ public class VectorReconciliationService {
     @Value("${app.vector.reconcile-drift-threshold:0.02}")
     private double driftThreshold = 0.02;
 
+    // v8.7.1(9.5.2): 指标门面——no-op 兜底
+    private com.testagent.observability.MetricsFacade metrics = new com.testagent.observability.MetricsFacade();
+
+    @Autowired(required = false)
+    void setMetrics(com.testagent.observability.MetricsFacade metrics) {
+        this.metrics = metrics;
+    }
+
+    private volatile double lastMaxDriftRatio = 0;
+
     public void setDriftThreshold(double driftThreshold) {
         this.driftThreshold = driftThreshold;
+    }
+
+    @jakarta.annotation.PostConstruct
+    void registerGauges() {
+        metrics.setGauge("reconciliation_drift_ratio", 0);
     }
 
     @Scheduled(cron = "${app.vector.reconcile-cron:0 0 2 * * *}")
@@ -77,6 +92,8 @@ public class VectorReconciliationService {
                 }
             }
             log.info("向量周期对账完成: 修复 {}, 超阈值告警 {}, 跳过 {}", repaired, warned, skipped);
+            // v8.7.1(9.5.2): 最近一轮最大漂移率进 Gauge
+            metrics.setGauge("reconciliation_drift_ratio", Math.round(lastMaxDriftRatio * 10000));
         } catch (Exception e) {
             log.error("向量周期对账任务异常: {}", e.getMessage(), e);
         }
@@ -85,6 +102,16 @@ public class VectorReconciliationService {
     // 对账单个项目，返回报告；milvus 关闭时返回 null（不计报告）
     ReconciliationReport reconcileProject(Project project) {
         String projectId = project.getId();
+        // v8.7.1(9.5.4): 对账入口注入 projectId MDC
+        com.testagent.observability.ObservabilityMdc.putProjectId(projectId);
+        try {
+            return reconcileProjectInternal(project, projectId);
+        } finally {
+            com.testagent.observability.ObservabilityMdc.clear();
+        }
+    }
+
+    private ReconciliationReport reconcileProjectInternal(Project project, String projectId) {
         if (!milvusService.isEnabled()) {
             return null;
         }
@@ -129,6 +156,10 @@ public class VectorReconciliationService {
         long vecCount = vecIds.size();
         // v8.6.1: 注意先转 double 再除——long 整除会把所有 <100% 的漂移截断成 0
         double driftRatio = Math.abs((double) dbCount - vecCount) / Math.max(dbCount, 1);
+        // v8.7.1(9.5.2): 记录本轮最大漂移率供 Gauge 刷新
+        if (driftRatio > lastMaxDriftRatio) {
+            lastMaxDriftRatio = driftRatio;
+        }
         String status;
         String message;
         if (driftRatio > driftThreshold && (added > 0 || removed > 0)) {

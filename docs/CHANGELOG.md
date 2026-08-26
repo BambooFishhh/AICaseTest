@@ -4,6 +4,47 @@
 
 ---
 
+## v8.7.1 — 指标埋点 + MDC 标准化（可观测性上半）
+**日期**: 2026-08-26
+**基线**: v8.6.2
+**主题**: 计划书任务 9.5.1–9.5.4（v8.7 拆分版；9.5.6 追踪按计划书默认跳过）——消灭 G4：v8.4–v8.6 埋下的降级与一致性钩子全部进 Prometheus；生成/检索/索引日志链按 projectId 聚合。纯后端版本
+
+### 后端变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `observability/MetricsFacade.java` | **新增** | **9.5.1** 统一指标入口——registry 未注入全 no-op（直 new 单测零判空）；gauge 以 AtomicLong 强引用防 GC 回收，同 name+tags 幂等注册；前缀约定 gen_/milvus_/executor_/llm_/rag_ |
+| `observability/MdcTaskDecorator.java` / `ObservabilityMdc.java` | **新增** | **9.5.4** 提交线程 MDC 快照透传到执行线程并还原；putProjectId/putTaskId/clear 工具 |
+| `config/AsyncConfig.java` | 修改 | **9.5.3/9.5.4** 四池统一 TaskDecorator；快速拒绝 handler 计 executor_rejected_total{pool} |
+| `agent/TestGeneratorAgent.java` | 修改 | **9.5.2** gen_parse_skipped_total（单条跳过）/ gen_rounds_total{completed·not_converged·capped_by_limit}（轮次出口）/ gen_cases_generated_total（产出条数） |
+| `service/LlmService.java` | 修改 | **9.5.2** gen_retry_reset_total（重试重置钩子触发）/ gen_stream_truncated_total（看门狗超时） |
+| `service/MilvusService.java` | 修改 | **9.5.2** milvus_insert_truncated_total{collection}；milvus_op_failed_total{op=insert·delete·search·count·query, collection}；insert 入口 projectId MDC |
+| `service/SemanticService.java` | 修改 | **9.5.3** retrieveContexts 包裹 rag_latency_seconds(Timer)/rag_recall_count/rag_empty_recall_total + MDC |
+| `service/LlmSchemaValidator.java` + `LlmService.chatJson` | 修改 | **9.5.3** llm_schema_violation_total{agent=schemaName}（validateStructured 与 chatJson 两路共用 recordViolation） |
+| `service/VectorOpCompensationTask.java` + Repository | 修改 | **9.5.2** vector_pending_ops_size Gauge（每轮刷新，仓库新增 countByStatus） |
+| `service/VectorReconciliationService.java` | 修改 | **9.5.2** reconciliation_drift_ratio Gauge（本轮最大漂移率 ×10000）+ 项目级 MDC |
+| `controller/ProjectController.java` | 修改 | **9.5.4** analyze-stream/generate-stream/generate-stream-append 提交线程注入 projectId MDC，经 TaskDecorator 自动透传到分析/生成线程 |
+
+### 设计说明
+
+- **MDC 接线选点**：SSE 长方法体多出口路径不宜整体 try/finally 包裹，改为"控制器提交线程设置 → TaskDecorator 传播到异步线程"，配合 Semantic/Milvus 入口的直接注入，实现一次生成的日志链按 projectId 聚合。
+- 指标命名采用计划书前缀（gen_* 等），与既有 aicasetest.* 系列并存。
+
+### API 契约变化
+
+无。新增配置：无（指标自动注册）。
+
+### 测试变更
+
+MetricsFacadeTest ×4（counter/timer/gauge 更新/no-op）、MdcTaskDecoratorTest ×2（透传/无残留）、LlmSchemaValidatorViolationMetricTest ×3（observe/enforce 计数、合法不计数）。
+
+### 验证结果
+
+- 后端全量容器测试：469 tests, 0 failures（457 基线 + 12 新增）
+- docker compose 重部署后 `/actuator/prometheus` 指标可见性核验见下节
+
+---
+
 ## v8.6.2 — LLM 出参契约化（schema 校验 + observe/enforce 灰度 + 括号配平提取）
 **日期**: 2026-08-26
 **基线**: v8.6.1

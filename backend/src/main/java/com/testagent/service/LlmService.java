@@ -108,6 +108,21 @@ public class LlmService {
         this.schemaValidator = schemaValidator;
     }
 
+    // v8.7.1(9.5.2): 指标门面——no-op 兜底
+    private com.testagent.observability.MetricsFacade metrics = new com.testagent.observability.MetricsFacade();
+
+    @Autowired(required = false)
+    void setMetricsFacade(com.testagent.observability.MetricsFacade metrics) {
+        this.metrics = metrics;
+    }
+
+    @jakarta.annotation.PostConstruct
+    void registerMetrics() {
+        // v8.7.1: 启动零值预注册
+        metrics.registerCounter("gen_retry_reset_total");
+        metrics.registerCounter("gen_stream_truncated_total");
+    }
+
     // v1.4: 重试延迟基数（v6.5 起叠加随机抖动）
     private static final long[] RETRY_DELAYS_MS = {1000, 2000, 4000};
 
@@ -345,6 +360,8 @@ public class LlmService {
                         // v8.4fix: 超过流级总时长主动中断，异常消息含 timeout 字样会被重试策略识别为可重试
                         if (System.currentTimeMillis() > deadline) {
                             disposable.dispose();
+                            // v8.7.1(9.5.2): 流级看门狗超时进指标——网关保活掩盖的挂死流劣化信号
+                            metrics.increment("gen_stream_truncated_total");
                             throw new RuntimeException("LLM stream total timeout after " + streamTotalTimeoutMs + "ms");
                         }
                     }
@@ -397,6 +414,8 @@ public class LlmService {
                 if (delivered.get() && retryResetHook != null) {
                     try {
                         retryResetHook.run();
+                        // v8.7.1(9.5.2): 重试重置次数进指标
+                        metrics.increment("gen_retry_reset_total");
                         log.warn("[LLM] 流式重试前已通知调用方重置已推送内容 (attempt {})", attempt + 1);
                     } catch (Exception hookEx) {
                         log.warn("[LLM] retryResetHook 执行失败: {}", hookEx.getMessage());
@@ -552,6 +571,7 @@ public class LlmService {
         if (errors.isEmpty()) {
             return parsed;
         }
+        schemaValidator.recordViolation(schemaName);
         log.warn("chatJson 契约校验未通过 (schema={}, mode={}): {}", schemaName, schemaValidator.isEnforce() ? "enforce" : "observe", errors);
         if (!schemaValidator.isEnforce()) {
             return parsed;

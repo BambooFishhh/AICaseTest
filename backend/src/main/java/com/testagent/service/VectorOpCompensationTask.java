@@ -38,8 +38,24 @@ public class VectorOpCompensationTask {
     @Value("${app.vector.compensation-max-attempts:5}")
     private int compensationMaxAttempts = 5;
 
+    // v8.7.1(9.5.2): 指标门面——no-op 兜底
+    private com.testagent.observability.MetricsFacade metrics = new com.testagent.observability.MetricsFacade();
+
+    @Autowired(required = false)
+    void setMetrics(com.testagent.observability.MetricsFacade metrics) {
+        this.metrics = metrics;
+    }
+
     public void setCompensationMaxAttempts(int compensationMaxAttempts) {
         this.compensationMaxAttempts = compensationMaxAttempts;
+    }
+
+    @jakarta.annotation.PostConstruct
+    void registerGauges() {
+        // v8.7.1(9.5.2): 补偿积压量 Gauge（每次采集读库）
+        metrics.setGauge("vector_pending_ops_size",
+                pendingVectorOpRepository == null ? 0
+                        : pendingVectorOpRepository.countByStatus(PendingVectorOp.STATUS_PENDING));
     }
 
     @Scheduled(fixedDelayString = "${app.vector.compensation-interval-ms:300000}",
@@ -47,6 +63,9 @@ public class VectorOpCompensationTask {
     @SchedulerLock(name = "vectorOpCompensation", lockAtMostFor = "PT4M", lockAtLeastFor = "PT30S")
     public void replayPendingOps() {
         try {
+            // v8.7.1(9.5.2): 每轮刷新补偿积压 Gauge
+            metrics.setGauge("vector_pending_ops_size",
+                    pendingVectorOpRepository.countByStatus(PendingVectorOp.STATUS_PENDING));
             List<PendingVectorOp> due = pendingVectorOpRepository.findByStatusAndNextAttemptAtLessThanEqualOrderByCreatedAtAsc(
                     PendingVectorOp.STATUS_PENDING, LocalDateTime.now());
             if (due.isEmpty()) {
