@@ -92,11 +92,21 @@
             <div class="def-actions">
               <template v-if="def.status === 'draft'">
                 <el-button size="small" :icon="Refresh" @click.stop="handleRecompute(def)">重算</el-button>
-                <el-popconfirm title="确认后范围锁定为只读，确定？" width="220" @confirm="handleConfirm(def)">
-                  <template #reference>
-                    <el-button size="small" type="success" :icon="Check">确认锁定</el-button>
-                  </template>
-                </el-popconfirm>
+                <el-popconfirm
+                    title="确认后范围锁定为只读，确定？"
+                    width="220"
+                    :disabled="!def.itemCount"
+                    @confirm="handleConfirm(def)"
+                  >
+                    <template #reference>
+                      <el-button size="small" type="success" :icon="Check" :disabled="!def.itemCount">
+                        确认锁定
+                      </el-button>
+                    </template>
+                    <template #title v-if="!def.itemCount">
+                      范围暂无条目，无法确认。请先「重算」识别或手动添加条目。
+                    </template>
+                  </el-popconfirm>
                 <el-popconfirm title="删除该范围定义及全部条目？" width="200" @confirm="handleDelete(def)">
                   <template #reference>
                     <el-button size="small" type="danger" plain :icon="Delete">删除</el-button>
