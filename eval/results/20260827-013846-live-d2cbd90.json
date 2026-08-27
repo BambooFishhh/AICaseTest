@@ -1,0 +1,39 @@
+{
+  "mode" : "live",
+  "model" : "mimo-v2.5",
+  "generatedAt" : "2026-08-27T01:38:46.064923764",
+  "gitSha" : "d2cbd90",
+  "overall" : {
+    "structurePassRatio" : 1.0,
+    "parseSkipRatio" : 0,
+    "requirementRecall" : 0.6429,
+    "endpointCoverage" : 0.4545
+  },
+  "note" : "tokens 记录于 task_telemetry 表；召回口径=标题包含（live 生成无人工 id 标注）",
+  "datasets" : {
+    "large" : {
+      "cases" : 14,
+      "degradedProvider" : "",
+      "roundsNotConverged" : false,
+      "structurePassRatio" : 1.0,
+      "endpointCoverage" : 0.0,
+      "requirementRecall" : 0.75
+    },
+    "medium" : {
+      "cases" : 8,
+      "degradedProvider" : "",
+      "roundsNotConverged" : false,
+      "structurePassRatio" : 1.0,
+      "endpointCoverage" : 1.0,
+      "requirementRecall" : 1.0
+    },
+    "small" : {
+      "cases" : 7,
+      "degradedProvider" : "",
+      "roundsNotConverged" : false,
+      "structurePassRatio" : 1.0,
+      "endpointCoverage" : 1.0,
+      "requirementRecall" : 0.0
+    }
+  }
+}

@@ -12,8 +12,11 @@ import com.testagent.service.ProjectService;
 import com.testagent.service.TaskQueueService;
 import com.testagent.service.TestCaseService;
 import jakarta.validation.Valid;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -40,6 +43,14 @@ public class ProjectController {
     @Autowired
     private ProjectService projectService;
 
+    // v8.9.8(12.12): 生成线程池（排队预检闸门）
+    @Autowired
+    @Qualifier("generationExecutor")
+    private ThreadPoolTaskExecutor generationExecutor;
+
+    @Value("${app.generation.stream-max-queued:8}")
+    private int streamMaxQueued = 8;
+
     @Autowired
     private TestCaseService testCaseService;
 
@@ -54,6 +65,10 @@ public class ProjectController {
 
     @Autowired
     private TaskQueueService taskQueueService;
+    // v8.9.8(12.11-P1): 跨实例回放
+    @Autowired
+    private com.testagent.service.AgentTaskService agentTaskService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
 
     @Value("${app.sse.timeout-minutes:30}")
     private long sseTimeoutMinutes;
@@ -150,6 +165,19 @@ public class ProjectController {
             }
             return err;
         }
+        // v8.9.8(12.12): 排队预检闸门——生成队列过深快速 503，不静默排队
+        int queued = generationExecutor.getThreadPoolExecutor().getQueue().size();
+        if (queued >= streamMaxQueued) {
+            SseEmitter err = new SseEmitter(0L);
+            try {
+                err.send(SseEmitter.event().name("error").data(
+                        Map.of("message", "生成繁忙，请稍后重试（当前排队 " + queued + "）"),
+                        MediaType.APPLICATION_JSON));
+                err.complete();
+            } catch (Exception ignored) {
+            }
+            return err;
+        }
         // v5.13fix: 生成包含多次 LLM 调用，可能远超 5 分钟；超时由 app.sse.timeout-minutes 控制
         SseEmitter emitter = new SseEmitter(sseTimeoutMinutes * 60 * 1000);
         // v5.3: 生成任务进入队列统计
@@ -163,6 +191,45 @@ public class ProjectController {
             sendBusyAndComplete(emitter);
         } finally {
             com.testagent.observability.ObservabilityMdc.clear();
+        }
+        return emitter;
+    }
+
+    // v8.9.8(12.11-P1): 跨实例回放端点——非属主实例重连时回放已产生的用例事件（+提示任务仍在运行）
+    @GetMapping("/{projectId}/testcases/generate-stream-replay")
+    public SseEmitter generateStreamReplay(@PathVariable String projectId) {
+        projectAccessService.assertOperateAccess(projectId);
+        SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
+        try {
+            var task = agentTaskService.latestGenerationTask(projectId);
+            if (task == null) {
+                emitter.send(SseEmitter.event().name("error").data(
+                        Map.of("message", "未找到生成任务，无回放内容"), MediaType.APPLICATION_JSON));
+                emitter.complete();
+                return emitter;
+            }
+            emitter.send(SseEmitter.event().name("progress").data(
+                    Map.of("message", "任务仍在运行中，以下为已产生结果（历史回放）"),
+                    MediaType.APPLICATION_JSON));
+            int replayed = 0;
+            for (var ev : agentTaskService.timeline(task.getId())) {
+                if ("case".equals(ev.getPhase()) && ev.getErrorMessage() != null && !ev.getErrorMessage().isBlank()) {
+                    JsonNode tc = objectMapper.readTree(ev.getErrorMessage());
+                    emitter.send(SseEmitter.event().name("case").data(
+                            Map.of("testCase", tc), MediaType.APPLICATION_JSON));
+                    replayed++;
+                }
+            }
+            emitter.send(SseEmitter.event().name("complete").data(
+                    Map.of("message", "回放完成", "replayed", replayed), MediaType.APPLICATION_JSON));
+            emitter.complete();
+        } catch (Exception e) {
+            try {
+                emitter.send(SseEmitter.event().name("error").data(
+                        Map.of("message", "回放失败: " + e.getMessage()), MediaType.APPLICATION_JSON));
+            } catch (Exception ignore) {
+            }
+            emitter.complete();
         }
         return emitter;
     }

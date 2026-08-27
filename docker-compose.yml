@@ -213,6 +213,8 @@ services:
       # v7.9: 执行链路收敛——批量排队超时（分钟，<=0 禁用）与复制执行权限（true 要求 OPERATE）
       - EXECUTOR_PROJECT_ACQUIRE_TIMEOUT_MINUTES=${EXECUTOR_PROJECT_ACQUIRE_TIMEOUT_MINUTES:-30}
       - APP_COPY_EXECUTE_REQUIRE_OPERATE=${APP_COPY_EXECUTE_REQUIRE_OPERATE:-false}
+        # v8.9.7(临时): 浏览器设备模拟预设（iPhone 14）。默认空=桌面；移移动端项目时注入
+      - APP_EXECUTION_BROWSER_DEVICE=${APP_EXECUTION_BROWSER_DEVICE:-iPhone 14}
       # v5.13: tools MCP Server 访问后端桥接接口
       - MCP_BRIDGE_URL=http://backend:8000
       - MCP_BRIDGE_TOKEN=${MCP_BRIDGE_TOKEN:?MCP_BRIDGE_TOKEN 必须设置}
@@ -230,7 +232,7 @@ services:
       - ./data:/app/data
       - ./outputs:/app/outputs
       # 待分析项目代码（只读挂载 litemall，后台管理代码已移除）
-      - E:/java_project/litemall:/app/projects/litemall-mall:ro
+      - E:/java_project/AICaseTest/projects/litemall:/app/projects/litemall-mall:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]

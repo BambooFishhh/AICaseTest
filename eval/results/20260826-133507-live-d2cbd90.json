@@ -1,0 +1,24 @@
+{
+  "mode" : "live",
+  "model" : "mimo-v2.5",
+  "generatedAt" : "2026-08-26T13:35:07.723518098",
+  "gitSha" : "d2cbd90",
+  "overall" : {
+    "structurePassRatio" : 0.0,
+    "parseSkipRatio" : 0,
+    "requirementRecall" : 0.0,
+    "endpointCoverage" : 0.0
+  },
+  "note" : "tokens 记录于 task_telemetry 表；召回口径=标题包含（live 生成无人工 id 标注）",
+  "datasets" : {
+    "large" : {
+      "error" : "Java 8 date/time type `java.time.LocalDateTime` not supported by default: add Module \"com.fasterxml.jackson.datatype:jackson-datatype-jsr310\" to enable handling (through reference chain: com.testagent.entity.TestCase[\"createdAt\"])"
+    },
+    "medium" : {
+      "error" : "Java 8 date/time type `java.time.LocalDateTime` not supported by default: add Module \"com.fasterxml.jackson.datatype:jackson-datatype-jsr310\" to enable handling (through reference chain: com.testagent.entity.TestCase[\"createdAt\"])"
+    },
+    "small" : {
+      "error" : "Java 8 date/time type `java.time.LocalDateTime` not supported by default: add Module \"com.fasterxml.jackson.datatype:jackson-datatype-jsr310\" to enable handling (through reference chain: com.testagent.entity.TestCase[\"createdAt\"])"
+    }
+  }
+}

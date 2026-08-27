@@ -23,7 +23,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { chromium } from 'playwright';
+import { chromium, devices } from 'playwright';
 import fs from 'fs';
 import path from 'path';
 
@@ -111,6 +111,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           headless: { type: 'boolean', default: true },
           width: { type: 'integer', default: 1280 },
           height: { type: 'integer', default: 720 },
+          device: { type: 'string', description: 'Playwright 设备预设名（如 iPhone 14）；传入且存在时启用设备模拟，否则回落宽高' },
           video_dir: { type: 'string', description: '视频保存目录（传入则启用录屏）' },
           session_id: sessionIdProperty,
         },
@@ -216,6 +217,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: { type: 'object', properties: { session_id: sessionIdProperty } },
     },
     {
+      // v8.9.7(临时): 注入 localStorage（如 litemall_token），解决 token 型前端登录态（cookie 注入不适用）
+      name: 'browser_set_storage',
+      description: '向当前页面 localStorage 批量写入键值（如登录 token），需先 browser_navigate 到目标源。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          storage: {
+            type: 'array',
+            items: { type: 'object' },
+            description: 'localStorage 键值数组，例如 [{key:"litemall_token",value:"xxx"}]',
+          },
+          session_id: sessionIdProperty,
+        },
+        required: ['storage'],
+      },
+    },
+    {
       name: 'browser_video_get_path',
       description: '获取录屏视频临时文件路径。',
       inputSchema: { type: 'object', properties: { session_id: sessionIdProperty } },
@@ -253,15 +271,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           await closeSessionInternal(sid);
         }
         const browser = await chromium.launch({ headless: args.headless ?? true });
-        const ctxOpts = {
-          viewport: { width: args.width ?? 1280, height: args.height ?? 720 },
-        };
+        // v8.9.7(临时): 支持移动设备模拟——传 device 且存在预设时用 devices[device]（含视口/isMobile/touch/UA），
+        // 否则回落纯宽高桌面模式。默认不传即保持原桌面行为，便于后续切回 B 端。
+        const device = args.device && devices[args.device] ? devices[args.device] : null;
+        const viewW = device ? device.viewport.width : (args.width ?? 1280);
+        const viewH = device ? device.viewport.height : (args.height ?? 720);
+        let ctxOpts;
+        if (device) {
+          ctxOpts = { ...device, viewport: { width: viewW, height: viewH } };
+        } else {
+          ctxOpts = { viewport: { width: viewW, height: viewH } };
+        }
         if (args.video_dir) {
           fs.mkdirSync(args.video_dir, { recursive: true });
-          ctxOpts.recordVideo = {
-            dir: args.video_dir,
-            size: { width: args.width ?? 1280, height: args.height ?? 720 },
-          };
+          ctxOpts.recordVideo = { dir: args.video_dir, size: { width: viewW, height: viewH } };
         }
         const context = await browser.newContext(ctxOpts);
         const page = await context.newPage();
@@ -342,11 +365,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: `scrolled ${args.direction}` }] };
       }
 
-      case 'browser_add_cookies': {
-        const { context } = getSession(sid);
-        await context.addCookies(args.cookies || []);
-        return { content: [{ type: 'text', text: `added ${(args.cookies || []).length} cookies` }] };
-      }
+case 'browser_add_cookies': {
+          const { context } = getSession(sid);
+          await context.addCookies(args.cookies || []);
+          return { content: [{ type: 'text', text: `added ${(args.cookies || []).length} cookies` }] };
+        }
+
+        // v8.9.7(临时): 注入 localStorage（token 型前端登录态）
+        case 'browser_set_storage': {
+          const { page } = getSession(sid);
+          const storage = args.storage || [];
+          for (const item of storage) {
+            if (!item || item.key == null) continue;
+            await page.evaluate(({ k, v }) => { localStorage.setItem(k, v == null ? '' : String(v)); }, { k: String(item.key), v: item.value });
+          }
+          return { content: [{ type: 'text', text: `set ${storage.length} localStorage keys` }] };
+        }
 
       case 'browser_get_page_status': {
         const { page } = getSession(sid);

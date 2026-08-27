@@ -64,6 +64,12 @@ public class ExecutionAgent {
      */
     public ExecutionStep executeStep(String sessionId, JsonNode step, String testCaseContext,
                                      int stepIndex, String executionId) {
+        return executeStep(sessionId, step, testCaseContext, stepIndex, executionId, null);
+    }
+
+    // v8.9.8(12.14-A): baseUrl 透传，支持导航步骤（打开目标页/路由）
+    public ExecutionStep executeStep(String sessionId, JsonNode step, String testCaseContext,
+                                      int stepIndex, String executionId, String baseUrl) {
         String action = step.path("action").asText("");
         String target = step.path("target").asText("");
 
@@ -111,6 +117,10 @@ public class ExecutionAgent {
                         .result("skipped")
                         .error("target 为接口引用而非页面元素（生成数据缺陷），已自动跳过点击")
                         .build();
+            }
+            // v8.9.8(12.14-A): 导航步骤分支——"打开/进入/跳转到 XX页(路由)"的 ui_action，不走点击流水线
+            if (isNavigationStep(step, action, target)) {
+                return executeNavigation(sessionId, step, stepIndex, executionId, action, target, baseUrl);
             }
             if ("input".equals(step.path("type").asText())) {
                 JsonNode selector = step.path("uiSelector");
@@ -302,6 +312,102 @@ public class ExecutionAgent {
     }
 
     // ==================== 辅助方法 ====================
+
+    // v8.9.8(12.14-A): 导航步骤识别——route 选择器，或 ui_action 的 target 为路由路径（/xxx 或 /goods/:id 等）
+    private boolean isNavigationStep(JsonNode step, String action, String target) {
+        String selType = step.path("uiSelector").path("type").asText("");
+        if ("route".equals(selType)) {
+            return true;
+        }
+        // 目标为路由路径形态 → 视为导航（frontendRoutes 注入后 LLM 常以 "/user" 等为 target，
+        // 动词可能是"点击底部导航/进入/跳转"等，无法枚举，用路径形态判定最稳）
+        if (target != null && target.trim().matches("^/[\\w:{}$-].*")) {
+            return true;
+        }
+        return false;
+    }
+
+    // v8.9.8(12.14-A): 执行导航步骤——调浏览器导航，校验 URL，不进点击流水线
+    private ExecutionStep executeNavigation(String sessionId, JsonNode step, int stepIndex,
+                                            String executionId, String action, String target, String baseUrl) {
+        String url = joinBase(baseUrl, target);
+        String error = null;
+        try {
+            playwrightSkill.browserNavigate(sessionId, url);
+            Map<String, String> status = playwrightSkill.getPageStatus(sessionId);
+            String cur = status.get("url");
+            if (cur != null && cur.contains(routeKey(target))) {
+                return okNav(executionId, stepIndex, action, target, cur);
+            }
+            // v8.9.8: hash 路由兜底——history 路由拼不到时尝试 baseUrl/#/target（SPA hash 路由）
+            String hashUrl = joinBase(baseUrl, "#" + target);
+            if (!hashUrl.equals(url)) {
+                playwrightSkill.browserNavigate(sessionId, hashUrl);
+                status = playwrightSkill.getPageStatus(sessionId);
+                cur = status.get("url");
+                if (cur != null && cur.contains(routeKey(target))) {
+                    return okNav(executionId, stepIndex, action, target, cur);
+                }
+            }
+            error = "导航后 URL 未命中目标路由，当前=" + cur;
+        } catch (Exception e) {
+            error = "导航失败: " + e.getMessage();
+        }
+        return ExecutionStep.builder()
+                .id(newStepId())
+                .executionId(executionId)
+                .stepIndex(stepIndex)
+                .action(action)
+                .target(target)
+                .strategy("navigate")
+                .result("failed")
+                .error(error)
+                .build();
+    }
+
+    private ExecutionStep okNav(String executionId, int stepIndex, String action, String target, String cur) {
+        return ExecutionStep.builder()
+                .id(newStepId())
+                .executionId(executionId)
+                .stepIndex(stepIndex)
+                .action(action)
+                .target(target)
+                .strategy("navigate")
+                .result("passed")
+                .coordinates("url=" + cur)
+                .build();
+    }
+
+    // v8.9.8(12.14-A): baseUrl + 路由拼接；处理 hash 路由（#/）与相对路径
+    private String joinBase(String baseUrl, String target) {
+        String t = target == null ? "" : target.trim();
+        if (t.startsWith("http://") || t.startsWith("https://")) {
+            return t;
+        }
+        if (baseUrl == null || baseUrl.isBlank()) {
+            return t;
+        }
+        String base = baseUrl.trim();
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        if (t.startsWith("/")) {
+            return base + t;
+        }
+        return base + "/" + t;
+    }
+
+    // 提取路由键用于 URL 命中校验（兼容 hash 路由 /#/collect）
+    private String routeKey(String target) {
+        String t = target == null ? "" : target.trim();
+        if (t.startsWith("/#")) {
+            return t.substring(2);
+        }
+        if (t.startsWith("#/")) {
+            return t.substring(1);
+        }
+        return t;
+    }
 
     /**
      * v7.6(E5/L6): state_assert 步骤——读页面状态 + 共享断言（与程序化模式一致），

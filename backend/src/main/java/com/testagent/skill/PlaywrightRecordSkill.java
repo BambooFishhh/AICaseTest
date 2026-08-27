@@ -18,6 +18,7 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +47,11 @@ public class PlaywrightRecordSkill {
     @Value("${app.output-dir:outputs}")
     private String outputDir;
 
+    // v8.9.7(临时): 移动设备模拟预设名（如 iPhone 14）。默认为空=桌面宽高模式；
+    // 仅显式配置时才透传给 Playwright MCP 做设备模拟，便于后续切回 B 端。
+    @Value("${app.execution.browser-device:}")
+    private String browserDevice;
+
     /**
      * 启动浏览器会话。
      * v7.11(E12): sessionId（通常为 executionId）传入 MCP Server 做多会话隔离，
@@ -59,20 +65,45 @@ public class PlaywrightRecordSkill {
     public String browserLaunch(String sessionId, boolean headless, int width, int height) {
         String videoDir = resolveOutputPath("recordings");
         try {
-            mcpClientManager.callTool("playwright", "browser_launch", Map.of(
-                    "session_id", sessionId,
-                    "headless", headless,
-                    "width", width,
-                    "height", height,
-                    "video_dir", videoDir
-            ));
-            log.info("Playwright 浏览器已启动: session={}, headless={}, size={}x{}, videoDir={}",
-                    sessionId, headless, width, height, videoDir);
+            Map<String, Object> params = new HashMap<>();
+            params.put("session_id", sessionId);
+            params.put("headless", headless);
+            params.put("width", width);
+            params.put("height", height);
+            params.put("video_dir", videoDir);
+            if (browserDevice != null && !browserDevice.isBlank()) {
+                params.put("device", browserDevice.trim());
+            }
+            mcpClientManager.callTool("playwright", "browser_launch", params);
+            log.info("Playwright 浏览器已启动: session={}, headless={}, size={}x{}, device={}, videoDir={}",
+                    sessionId, headless, width, height,
+                    browserDevice == null || browserDevice.isBlank() ? "desktop" : browserDevice, videoDir);
         } catch (Exception e) {
             log.error("Playwright 浏览器启动失败: {}", e.getMessage());
             throw new RuntimeException("Playwright 启动失败", e);
         }
         return sessionId;
+    }
+
+    // v8.9.7(临时): 向浏览器会话注入 localStorage 键值（token 型前端登录态，cookie 注入不适用）
+    public void setStorage(String sessionId, Map<String, Object> storage) {
+        try {
+            if (storage == null || storage.isEmpty()) {
+                return;
+            }
+            List<Map<String, Object>> items = new ArrayList<>();
+            storage.forEach((k, v) -> {
+                Map<String, Object> it = new HashMap<>();
+                it.put("key", k);
+                it.put("value", v == null ? "" : String.valueOf(v));
+                items.add(it);
+            });
+            mcpClientManager.callTool("playwright", "browser_set_storage",
+                    Map.of("session_id", sessionId, "storage", items));
+            log.info("Playwright 注入 localStorage: session={}, keys={}", sessionId, items.size());
+        } catch (Exception e) {
+            log.warn("注入 localStorage 失败 session={}: {}", sessionId, e.getMessage());
+        }
     }
 
     /**

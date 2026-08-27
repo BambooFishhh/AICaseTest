@@ -283,6 +283,12 @@ public class AgentTaskService {
         return agentTaskEventRepository.findByTaskIdOrderByCreatedAtAsc(taskId);
     }
 
+    // v8.9.8(12.11-P1): 项目最新生成任务（跨实例回放定位用）
+    public AgentTask latestGenerationTask(String projectId) {
+        return agentTaskRepository.findFirstByRequestIdAndTaskTypeOrderByCreatedAtDesc(
+                projectId, TYPE_GENERATION).orElse(null);
+    }
+
     public Map<String, Long> statusCounts() {
         Map<String, Long> counts = new LinkedHashMap<>();
         for (Object[] row : agentTaskRepository.countGroupByStatus()) {
@@ -371,6 +377,23 @@ public class AgentTaskService {
             agentTaskEventRepository.save(event);
         } catch (Exception e) {
             log.warn("Failed to record agent task event for {}: {}", task.getId(), e.getMessage());
+        }
+    }
+
+    // v8.9.8(12.11-P1): 持久化生成阶段事件（跨实例回放用）——payload 暂存 errorMessage(TEXT)
+    public void recordGenerationEvent(String taskId, String phase, String status, String payloadJson) {
+        try {
+            AgentTaskEvent event = new AgentTaskEvent();
+            event.setId(UUID.randomUUID().toString().substring(0, 12));
+            event.setTaskId(taskId);
+            event.setPhase(phase);
+            event.setStatus(status);
+            event.setAttempt(0);
+            event.setErrorMessage(payloadJson);
+            event.setCreatedAt(LocalDateTime.now());
+            agentTaskEventRepository.save(event);
+        } catch (Exception e) {
+            log.warn("Failed to record generation event {}: {}", taskId, e.getMessage());
         }
     }
 

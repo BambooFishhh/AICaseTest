@@ -4,6 +4,47 @@
 
 ---
 
+## v8.9.8 — litemall 实测驱动四卡修复（阶段 6 实测反馈落地）
+**日期**: 2026-08-27
+**基线**: v8.9.6
+**主题**: 基于 litemall（手机端商城，仅商城无后台）+ mimo-v2.5/qwen-embedding 全链路实测，落地计划书 12.9/12.7/12.8 实测结论对应的 12.11–12.14 四张修复卡。含浏览器移动模拟、登录态注入、执行导航、live 评测口径、SSE 断连宽限与首事件。
+
+### 工程变更
+
+| 文件 | 变更 | 说明 |
+|---|---|---|
+| `skill/PlaywrightRecordSkill.java`、`playwright-mcp-server/index.js`、`application.yml` | 修改 | **临时** 浏览器设备模拟：`browser_launch` 加 `device` 参数（`devices['iPhone 14']`），后端 `app.execution.browser-device` 可配，默认空=桌面可回退 |
+| `skill/PlaywrightRecordSkill.java`、`playwright-mcp-server/index.js`、`service/ExecutionService.java` | 修改 | **临时** `browser_set_storage` 工具 + `injectStorage`——给 Playwright 会话写 localStorage（token 型登录态如 `litemall_token`，cookie 注入不适用），导航后注入 |
+| `agent/ExecutionAgent.java`、`service/ExecutionService.java` | 修改 | **12.14-A** 执行器导航分支：`ui_action` 且（`uiSelector.type=route` 或"打开/进入/跳转"动词+路由）走 `browserNavigate`（baseUrl 拼接、URL 校验），不进点击流水线 |
+| `agent/TestGeneratorAgent.java` | 修改 | **12.14-B** 生成 prompt 加硬规则：目标页非首页的 UI 用例第一步必须是导航步骤 |
+| `eval/EvalRunner.java` | 修改 | **12.13** live 回测：expected.json 接口清单构造 BackendResult 注入生成（修 large 接口覆盖=0）；召回改 requirementIdMap id 匹配双口径 |
+| `service/TestCaseService.java` | 修改 | **12.11-P0** SSE 断连不再立即取消——进宽限期（`app.sse.reconnect-grace-seconds:90`）生成照常跑完，期满无重连才取消；**12.12** 即时 `started` 首事件；**12.11-P1** 生成期每条用例持久化到 `agent_task_events`（phase=case）供跨实例回放 |
+| `service/AgentTaskService.java` | 修改 | **12.11-P1** 新增 `recordGenerationEvent`（持久化生成事件）+ `latestGenerationTask`（定位回放任务） |
+| `controller/ProjectController.java` | 修改 | **12.12** 生成队列预检闸门（`app.generation.stream-max-queued:8` 超限快速 503）；**12.11-P1** 新增 `GET /generate-stream-replay` 跨实例回放端点 |
+| `service/ExecutionService.java` | 修改 | **12.14-A** 调用点透传 baseUrl；**12.14-C** 存量用例导航确定性兜底（`buildStepNodes` 按前端路由匹配前置导航，无匹配不硬造） |
+| `agent/TestGeneratorAgent.java` | 修改 | **12.13** 新增 `setMaxGeneratedCases` 支持 live 按数据集调闸门；**12.14-B** prompt 注入 `frontendRoutes`（导航路由唯一来源） |
+| `eval/EvalRunner.java` | 修改 | **12.13** 按数据集闸门分级（large 30，`-Deval.largeGate=` 覆盖） |
+| `frontend/src/api/testcase.js` | 修改 | **12.12** 监听 `started`/`queued` 事件映射进度文案 |
+| `docs/长期迭代计划书.md` / `docs/CHANGELOG.md` | 修改 | 12.11–12.14 状态更新（12.11/12.13=✅，12.12/12.14=🔄 含实现+验证记录） |
+
+### 实测结论（§9.6 落卡依据）
+- **12.9 回测**：`eval/results/20260827-013846-live-d2cbd90.json`——结构合格 1.0（修 bug 后）、召回 0.64/覆盖 0.45（large 覆盖 0，口径先修）。
+- **12.7 SSE 50 并发**：全部静默排队 15s 无首事件——吞吐上限=生成池 max6×LLM 流 6，需排队透明化。
+- **12.8 第 5 项**：票据跨实例互通 ✅；SSE 生成实例绑定+断连即取消（无续传）→ 12.11。
+- **12.14**：TC-491/TC-493 执行 failed 根因=用例缺导航首步（执行器无导航类型+prompt 未要求+清洗剔 path 选择器）。
+
+### v8.9.8 二次迭代实测（12.13/12.14 修复验证）
+- **12.13 复测**：`eval/results/20260827-052127-live-d2cbd90.json`——**接口覆盖 0.45→1.0**（large 覆盖=0 消除，证实口径假阳性）、结构 1.0、召回 0.71。
+- **12.14 导航验证**：重生成用例首步为真实路由（`/user` 等，来自 frontendRoutes 注入），执行 **st1 navigate passed**（不再停留首页）；剩余失败为断言/选择器质量。
+- **重要发现（IP 变更）**：`192.168.31.190` 为本机 WLAN 动态 IP，执行目标 URL 改用稳定的 Docker 宿主桥 `172.31.160.1:6255`（否则导航失败）。
+
+### 验证
+- 后端 `mvn compile`/`mvn test`：编译通过；491 通过 / 1 失败（`MemoryRuntimeStoreTryAcquireTest` 计时类 flaky，与改动无关）；前端 Vitest 10/10 通过。
+- 12.11-P1 重放端点探活通过；12.13 复测覆盖 0.45→1.0；12.14 导航 st1 passed。
+
+### 状态
+- **12.11/12.13 完成（✅）**；12.12/12.14 核心实现并验证（🔄，断言/队列位置/指标等细项待后续）。
+
 ## v8.9.6 — VueAnalyzer 共享池 + 并发压测补数（阶段 6 尾项收口）
 **日期**: 2026-08-26
 **基线**: v8.9.5

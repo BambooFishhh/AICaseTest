@@ -20,6 +20,13 @@ export async function streamGenerate(projectId, { onProgress, onCase, onRetryRes
   es.addEventListener('progress', (e) => {
     try { onProgress?.(JSON.parse(e.data).message) } catch {}
   })
+  // v8.9.8(12.12): started/queued 事件——即时反馈"已接受/排队"，消灭静默黑洞
+  es.addEventListener('started', (e) => {
+    try { onProgress?.(JSON.parse(e.data).message) } catch {}
+  })
+  es.addEventListener('queued', (e) => {
+    try { onProgress?.(JSON.parse(e.data).message) } catch {}
+  })
   es.addEventListener('case', (e) => {
     try { onCase?.(JSON.parse(e.data).testCase) } catch {}
   })
@@ -70,6 +77,13 @@ export async function streamGenerateAppend(
   const es = new EventSource(url)
 
   es.addEventListener('progress', (e) => {
+    try { onProgress?.(JSON.parse(e.data).message) } catch {}
+  })
+  // v8.9.8(12.12): started/queued 事件——即时反馈"已接受/排队"，消灭静默黑洞
+  es.addEventListener('started', (e) => {
+    try { onProgress?.(JSON.parse(e.data).message) } catch {}
+  })
+  es.addEventListener('queued', (e) => {
     try { onProgress?.(JSON.parse(e.data).message) } catch {}
   })
   es.addEventListener('case', (e) => {

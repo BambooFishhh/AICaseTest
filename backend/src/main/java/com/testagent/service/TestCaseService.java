@@ -40,6 +40,7 @@ import com.testagent.security.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -83,6 +84,24 @@ public class TestCaseService {
 
     // v3.3: 取消标志注册表（projectId → cancelled flag），供 cancel 端点触发
     private final ConcurrentHashMap<String, RuntimeFlag> cancellationFlags = new ConcurrentHashMap<>();
+
+    // v8.9.8(12.11-P0): SSE 断线宽限期——断连后不立即取消，生成照常跑；宽限期满无重连才取消
+    @Value("${app.sse.reconnect-grace-seconds:90}")
+    private long reconnectGraceSeconds = 90;
+    private final java.util.concurrent.ScheduledExecutorService sseGraceScheduler =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+
+    private void scheduleGracefulCancel(String projectId, RuntimeFlag cancelled, AtomicBoolean clientGone) {
+        if (clientGone == null || cancelled == null) {
+            return;
+        }
+        sseGraceScheduler.schedule(() -> {
+            if (clientGone.get() && !cancelled.isCancelled()) {
+                cancelled.cancel();
+                log.warn("SSE 宽限期结束无重连，取消生成: {}", projectId);
+            }
+        }, reconnectGraceSeconds, java.util.concurrent.TimeUnit.SECONDS);
+    }
 
     @Autowired
     private RuntimeStore runtimeStore;
@@ -268,20 +287,21 @@ public class TestCaseService {
         // v5.2: 取消标志写入 RuntimeStore（Redis/内存），支持跨实例取消
         RuntimeFlag cancelled = runtimeStore.newFlag("gen:cancel:" + projectId);
         // v3.3: 客户端断开同时置 cancelled（不只跳过 send，还要停止生成 + 跳过落库）
+        // v8.9.8(12.11-P0): 断连不再立即取消——进入宽限期，生成照常跑完，宽限期满无重连才取消
         emitter.onCompletion(() -> {
             clientGone.set(true);
-            cancelled.cancel();
-            log.info("SSE client disconnected: {}", projectId);
+            log.info("SSE client disconnected (grace {}s): {}", reconnectGraceSeconds, projectId);
+            scheduleGracefulCancel(projectId, cancelled, clientGone);
         });
         emitter.onTimeout(() -> {
             clientGone.set(true);
-            cancelled.cancel();
-            log.warn("SSE timeout: {}", projectId);
+            log.warn("SSE timeout (grace {}s): {}", reconnectGraceSeconds, projectId);
+            scheduleGracefulCancel(projectId, cancelled, clientGone);
         });
         emitter.onError(t -> {
             clientGone.set(true);
-            cancelled.cancel();
             log.warn("SSE error: {}", projectId, t);
+            scheduleGracefulCancel(projectId, cancelled, clientGone);
         });
         // v3.3: 注册取消标志（供 cancel 端点触发）
         cancellationFlags.put(projectId, cancelled);
@@ -302,6 +322,8 @@ public class TestCaseService {
                     projectId, projectId, "{}");
             agentTaskService.start(taskId);
             agentTaskService.checkpoint(taskId, "generate", null);
+            // v8.9.8(12.12): 即时首事件——避免排队/启动期间 15s 无任何推送（静默黑洞）
+            sendSseEvent(emitter, clientGone, "started", Map.of("message", "生成已接受，正在启动..."));
 
             // 进度回调 → 推送 progress 事件 + 同步写 project.progress（兼容轮询）
             TestGeneratorAgent.ProgressCallback progressCb = msg -> {
@@ -312,11 +334,18 @@ public class TestCaseService {
             // v7.1(G2): 实际计数推送草稿数——比 report.generated-focusDropped 更可信，
             // 两者差值即流式/全量解析错位量（G8 观测钩子）
             java.util.concurrent.atomic.AtomicInteger pushedCount = new java.util.concurrent.atomic.AtomicInteger();
+            final String replayTaskId = taskId;   // v8.9.8(12.11-P1): 供 lambda 引用(持久化回放)
             TestGeneratorAgent.CaseCallback caseCb = new TestGeneratorAgent.CaseCallback() {
                 @Override
                 public void onCase(TestCase tc) {
                     pushedCount.incrementAndGet();
                     sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
+                    // v8.9.8(12.11-P1): 持久化用例事件(跨实例回放)
+                    try {
+                        agentTaskService.recordGenerationEvent(replayTaskId, "case", "PUSHED",
+                                objectMapper.writeValueAsString(TestCaseDTO.from(tc)));
+                    } catch (Exception ignore) {
+                    }
                 }
 
                 // v8.4fix: 流式重试时通知前端清空已渲染草稿，避免重试重推造成界面重复用例

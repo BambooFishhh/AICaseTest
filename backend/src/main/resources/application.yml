@@ -253,7 +253,9 @@ app:
     password: ${APP_ADMIN_PASSWORD}
   # v7.9(E10): 复制执行权限收敛——false 保持 VIEW 即可（v4.3 现状）；true 要求 OPERATE
   execution:
-    copy-execute-require-operate: ${APP_COPY_EXECUTE_REQUIRE_OPERATE:false}
+      copy-execute-require-operate: ${APP_COPY_EXECUTE_REQUIRE_OPERATE:false}
+      # v8.9.7(临时): 浏览器设备模拟预设（如 iPhone 14），默认空=桌面；仅需移动端时注入
+      browser-device: ${APP_EXECUTION_BROWSER_DEVICE:}
   # v4.2: 线程池与并发配额
   executor:
     keep-alive-seconds: ${EXECUTOR_KEEP_ALIVE_SECONDS:60}

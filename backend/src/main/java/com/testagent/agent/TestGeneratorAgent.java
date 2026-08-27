@@ -81,6 +81,13 @@ public class TestGeneratorAgent {
     @Value("${app.generation.max-generated-cases:120}")
     private int maxGeneratedCases = 120;
 
+    // v8.9.8(12.13): 允许 live 评测按数据集动态调闸门（large 放大）
+    public void setMaxGeneratedCases(int n) {
+        if (n > 0) {
+            this.maxGeneratedCases = n;
+        }
+    }
+
     // v7.14(G25): context.endpoints/businessRules 完整详情容量上限——G17 弱过滤（>0 即过）
     // 全放行后无总量控制，大项目 220 接口 × 全量详情 = 128KB 灌 prompt。字段初始化默认值
     // 兜底：单测直接 new 不走容器，纯 @Value 下 int 为 0 会把上下文截没。
@@ -480,12 +487,16 @@ public class TestGeneratorAgent {
             - frontendSelectors：structuredSteps 的 ui_action 类型步骤可附 uiSelector（{type, value}）
             - frontendPageFlows：生成页面跳转验证用例（from→to，验证导航需求）
             - frontendComponentStates：生成 UI 交互用例（弹窗打开/关闭、分步流程）
+              - frontendRoutes：UI 用例导航首步的路由值（path+name）只允许从中选取，禁止虚构路由
 
             ## structuredSteps / testData / executionHints 要求（必须严格遵守）
             - structuredSteps 必须是非空数组，按真实操作顺序 3-10 步展开：进入页面→定位元素→输入/点击→断言
             - v8.2: 涉及前置状态准备的用例，准备步骤标 "phase":"setup"，验证/断言步骤标 "phase":"verify"
               （如：setup=创建订单并支付到已支付状态，verify=本期新发货逻辑的执行与断言）
             - 页面操作优先用 ui_action 类型步骤描述（点哪个按钮、输入什么），不要只写接口调用
+            - v8.9.7: 每个 UI 用例（approach=ui）的**第 1 步必须是"打开目标页面/路由"**的 ui_action
+              （target 用真实路由，如 /collect、/footprint、/goods/:id、/order），
+              后续步骤才能定位/点击该页元素——严禁假设执行器已停留在目标页（否则从首页开始找不到元素）
             - v7.15(A): ui_action 的 target 必须是页面元素/区域的人话描述（如"登录按钮"），
               严禁出现 HTTP 方法+路径格式（如 "GET /wx/home/index"、"POST /api/order"）；
               接口信息只能放在 apiEndpoints 关联字段或 type=api_call 的步骤中
@@ -2017,10 +2028,27 @@ public class TestGeneratorAgent {
             context.put("frontendComponentStates", frontendResult.getComponentStates());
         }
 
-        // 页面跳转关系
-        if (frontendResult.getPageFlows() != null && !frontendResult.getPageFlows().isEmpty()) {
-            context.put("frontendPageFlows", frontendResult.getPageFlows());
-        }
+// 页面跳转关系
+          if (frontendResult.getPageFlows() != null && !frontendResult.getPageFlows().isEmpty()) {
+              context.put("frontendPageFlows", frontendResult.getPageFlows());
+          }
+
+          // v8.9.8(12.14-B⑨): 注入真实路由清单——导航首步的路由值只能从这里选取，禁止虚构
+          if (frontendResult.getRoutes() != null && !frontendResult.getRoutes().isEmpty()) {
+              List<Map<String, Object>> routes = new ArrayList<>();
+              for (Object r : frontendResult.getRoutes()) {
+                  if (r instanceof Map<?, ?> m) {
+                      Map<String, Object> rr = new LinkedHashMap<>();
+                      rr.put("path", m.get("path"));
+                      rr.put("name", m.get("name"));
+                      routes.add(rr);
+                      if (routes.size() >= 60) {
+                          break;   // 截取上限防 prompt 膨胀
+                      }
+                  }
+              }
+              context.put("frontendRoutes", routes);
+          }
     }
 
     // v6.1fix: 按命中的组件名过滤前端确定性结果（forms/selectors/states/flows），只保留与需求相关的 UI 元素

@@ -3,6 +3,7 @@ package com.testagent.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.testagent.entity.ExecutionRecord;
 import com.testagent.entity.ExecutionStep;
 import com.testagent.entity.Project;
@@ -52,6 +53,10 @@ public class ExecutionService {
     private TestCaseRepository testCaseRepository;
     @Autowired
     private ProjectRepository projectRepository;
+
+    // v8.9.8(12.14-C): 读前端分析路由做存量用例导航兜底
+    @Autowired
+    private com.testagent.repository.CodeAnalysisRepository codeAnalysisRepository;
     @Autowired
     private PlaywrightRecordSkill playwrightSkill;
     @Autowired
@@ -493,6 +498,8 @@ public class ExecutionService {
             if (targetUrl != null && !targetUrl.isBlank()) {
                 playwrightSkill.browserNavigate(sessionId, targetUrl);
             }
+            // v8.9.7(临时): 注入项目级 localStorage（token 型前端登录态，如 litemall_token）——须先导航到目标源
+            injectStorage(testCase.getProjectId(), sessionId);
 
             // 3. 解析 structuredSteps（自动合并项目执行环境配置的前置步骤）
             JsonNode stepNodes = buildStepNodes(testCase);
@@ -514,7 +521,7 @@ public class ExecutionService {
                     touchHeartbeat(executionId, testCase.getProjectId());
                     JsonNode stepNode = stepNodes.get(i);
                     try {
-                        ExecutionStep step = executionAgent.executeStep(sessionId, stepNode, testCaseContext, i + 1, executionId);
+                        ExecutionStep step = executionAgent.executeStep(sessionId, stepNode, testCaseContext, i + 1, executionId, targetUrl);
                         steps.add(step);
                         executionStepRepository.save(step);
                         agentTaskService.checkpoint(executionId, "step_" + (i + 1), null);
@@ -732,6 +739,8 @@ public class ExecutionService {
             if (targetUrl != null && !targetUrl.isBlank()) {
                 playwrightSkill.browserNavigate(sessionId, targetUrl);
             }
+            // v8.9.7(临时): 注入项目级 localStorage（token 型前端登录态，如 litemall_token）——须先导航到目标源
+            injectStorage(testCase.getProjectId(), sessionId);
 
             // 3. 解析 structuredSteps
             JsonNode stepNodes = buildStepNodes(testCase);
@@ -1128,6 +1137,29 @@ public class ExecutionService {
         }
     }
 
+    // v8.9.7(临时): 注入项目级 localStorage 键值（token 型前端登录态，如 litemall_token）
+    private void injectStorage(String projectId, String sessionId) {
+        try {
+            Project project = projectRepository.findById(projectId).orElse(null);
+            if (project == null || project.getSettings() == null || project.getSettings().isBlank()) {
+                return;
+            }
+            JsonNode settings = objectMapper.readTree(project.getSettings());
+            JsonNode storage = settings.path("executionStorage");
+            if (storage.isArray() && !storage.isEmpty()) {
+                Map<String, Object> map = new java.util.LinkedHashMap<>();
+                for (JsonNode item : storage) {
+                    if (item.isObject() && item.hasNonNull("key")) {
+                        map.put(item.path("key").asText(), item.path("value").asText(null));
+                    }
+                }
+                playwrightSkill.setStorage(sessionId, map);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to inject localStorage for project {}", projectId, e);
+        }
+    }
+
     // 录屏节奏：步骤之间留出停顿，避免回放看起来一闪而过
     private void pauseForRecording() {
         try {
@@ -1176,10 +1208,86 @@ public class ExecutionService {
                     all.add(step);
                 }
             }
+            // v8.9.8(12.14-C): 存量用例确定性兜底——含 ui_action 但首步非导航时，按标题/模块匹配路由前置导航
+            if (steps.isArray() && !steps.isEmpty()) {
+                JsonNode first = steps.get(0);
+                boolean hasUi = false;
+                for (JsonNode s : steps) {
+                    if ("ui_action".equals(s.path("type").asText(""))) {
+                        hasUi = true;
+                        break;
+                    }
+                }
+                boolean firstNav = "ui_action".equals(first.path("type").asText(""))
+                        && first.path("target").asText("").matches("^/[\\w:{}$-].*");
+                if (hasUi && !firstNav) {
+                    JsonNode nav = buildNavFallback(testCase, steps);
+                    if (nav != null && !nav.isNull()) {
+                        all.insert(0, nav);
+                    }
+                }
+            }
         } catch (Exception e) {
             log.warn("Failed to parse structuredSteps for case {}", testCase.getId(), e);
         }
         return all;
+    }
+
+    // v8.9.8(12.14-C): 从前端分析路由匹配生成导航兜底步骤；匹配不上返回 null（不硬造）
+    private JsonNode buildNavFallback(TestCase testCase, JsonNode steps) {
+        try {
+            var analysis = codeAnalysisRepository
+                    .findFirstByProjectIdOrderByCreatedAtDesc(testCase.getProjectId()).orElse(null);
+            if (analysis == null || analysis.getFrontendResult() == null) {
+                return null;
+            }
+            JsonNode front = objectMapper.readTree(analysis.getFrontendResult());
+            JsonNode routes = front.path("routes");
+            if (!routes.isArray() || routes.isEmpty()) {
+                return null;
+            }
+            // 候选关键词：用例标题/模块/首步 action/target
+            String hay = String.join(" ", testCase.getTitle() == null ? "" : testCase.getTitle(),
+                    testCase.getModule() == null ? "" : testCase.getModule(),
+                    steps.get(0).path("action").asText(""), steps.get(0).path("target").asText(""));
+            JsonNode best = null;
+            int bestScore = 0;
+            for (JsonNode r : routes) {
+                String path = r.path("path").asText("");
+                String name = r.path("name").asText("");
+                int score = 0;
+                for (String kw : new String[]{name, path, path.replace("/", "")}) {
+                    if (!kw.isBlank() && hay.contains(kw)) {
+                        score += kw.length();
+                    }
+                }
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = r;
+                }
+            }
+            if (best == null || bestScore <= 0) {
+                log.info("[12.14-C] 用例 {} 无路由匹配，不硬造导航: {}", testCase.getId(), testCase.getTitle());
+                return null;
+            }
+            String path = best.path("path").asText("");
+            String name = best.path("name").asText("");
+            ObjectNode nav = objectMapper.createObjectNode();
+            nav.put("order", 0);
+            nav.put("type", "ui_action");
+            nav.put("action", "打开" + (name.isBlank() ? path : name) + "页面");
+            nav.put("target", path);
+            nav.put("expected", "进入" + (name.isBlank() ? path : name) + "页面");
+            ObjectNode sel = objectMapper.createObjectNode();
+            sel.put("type", "route");
+            sel.put("value", path);
+            nav.set("uiSelector", sel);
+            log.info("[12.14-C] 用例 {} 前置导航兜底: {}", testCase.getId(), path);
+            return nav;
+        } catch (Exception e) {
+            log.warn("[12.14-C] 导航兜底失败: {}", e.getMessage());
+            return null;
+        }
     }
 
     // v4.2: 执行取消标志检查
