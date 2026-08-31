@@ -59,6 +59,37 @@ public final class ExecutionAssert {
             "and", "or", "the", "of", "to", "page", "title", "spa");
 
     /**
+     * v9.2: 抽象断言特征——无引号文案锚点且含这些泛化表述时，页面文本匹配必然失败
+     * （"加载完成/不再显示loading/至少一个商品项"没有可比较的具体文案），按无法验证处理。
+     */
+    private static final Pattern ASSERT_VAGUE = Pattern.compile(
+            "加载完成|正在加载|loading|不再显示|至少一个|正常加载|正常展示|正确展示|正确显示|无空白|无错误提示");
+
+    /** expected 是否含引号引用的页面可见文案（强断言锚点） */
+    public static boolean hasQuotedAnchor(String expected) {
+        return expected != null && !extractQuoted(expected).isEmpty();
+    }
+
+    /** v9.2: 引号文案内的占位符特征——'共 N 件收藏' / {orderId} 这类字面量页面不会出现 */
+    private static final Pattern QUOTE_PLACEHOLDER = Pattern.compile("\\b[A-Z]\\b|\\{[^}]*\\}");
+
+    /** 引号短语原文（供 lint 检查占位符） */
+    public static List<String> quotedPhrases(String text) {
+        return text == null ? List.of() : extractQuoted(text);
+    }
+
+    /** 引号文案中含占位符的短语列表（空列表 = 无占位符问题） */
+    public static List<String> quotedPlaceholders(String text) {
+        List<String> hits = new ArrayList<>();
+        for (String q : quotedPhrases(text)) {
+            if (QUOTE_PLACEHOLDER.matcher(q).find()) {
+                hits.add(q);
+            }
+        }
+        return hits;
+    }
+
+    /**
      * 断言 expected 是否在当前页面状态上成立。
      *
      * @param expected  步骤预期结果文本
@@ -71,6 +102,11 @@ public final class ExecutionAssert {
         }
         if (pageState == null) {
             return "skipped";  // 页面状态读取失败时不误报失败
+        }
+        // v9.2: 抽象断言诚实降级——无引号文案锚点的泛化表述（加载完成/至少一个等）
+        // 没有可匹配的具体文案，文本断言必然落空，按"无法验证"处理而非误报失败
+        if (!hasQuotedAnchor(expected) && ASSERT_VAGUE.matcher(expected).find()) {
+            return "skipped";
         }
 
         // 层 1: URL/标题语义
@@ -115,9 +151,13 @@ public final class ExecutionAssert {
         }
         String pageText = (title + " " + snippet).toLowerCase();
 
-        // 引号短语：完整包含
+        // 引号短语：完整包含；含占位符（N/X/{var}）的短语按"占位符=数字"正则语义匹配
         for (String q : quoted) {
-            if (!pageText.contains(q.toLowerCase())) {
+            if (QUOTE_PLACEHOLDER.matcher(q).find()) {
+                if (!placeholderPhraseRegex(q).matcher(pageText).find()) {
+                    return "failed";
+                }
+            } else if (!pageText.contains(q.toLowerCase())) {
                 return "failed";
             }
         }
@@ -142,6 +182,20 @@ public final class ExecutionAssert {
             }
         }
         return "passed";
+    }
+
+    /** v9.2: 含占位符的引号短语 → 正则：占位符（N/X/{var}）匹配数字，字面段原样匹配（大小写不敏感）。
+     *  如 '共 N 件收藏' → /共 \d+ 件收藏/，页面显示"共 1 件收藏"即通过。 */
+    private static java.util.regex.Pattern placeholderPhraseRegex(String phrase) {
+        String[] parts = QUOTE_PLACEHOLDER.split(phrase);
+        StringBuilder sb = new StringBuilder("(?i)");
+        for (int i = 0; i < parts.length; i++) {
+            sb.append(java.util.regex.Pattern.quote(parts[i].toLowerCase()));
+            if (i < parts.length - 1) {
+                sb.append("\\d+");
+            }
+        }
+        return java.util.regex.Pattern.compile(sb.toString());
     }
 
     /** 引号内短语（「」/“”/''/""），取匹配到的非空分组 */

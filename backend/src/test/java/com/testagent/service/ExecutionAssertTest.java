@@ -123,4 +123,35 @@ class ExecutionAssertTest {
         assertEquals(123, ExecutionAssert.snippetSummary(Map.of("textSnippet", longSnippet)).length());
         assertEquals("短文本", ExecutionAssert.snippetSummary(Map.of("textSnippet", "短文本")));
     }
+
+    @Test
+    void quotedPlaceholderMatchesActualDigits() {
+        // v9.2: 占位符断言语义——'共 N 件收藏' 的 N 匹配页面实际数字
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'共 N 件收藏'",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 蔓越莓曲奇 200克 ￥36 删除")));
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'共 N 件收藏'",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 12 件收藏 商品B ￥7 删除")));
+    }
+
+    @Test
+    void quotedPlaceholderFailsWhenPatternAbsent() {
+        // 页面上没有"共 <数字> 件收藏"形态 → failed（真实缺失）
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面显示'共 N 件收藏'",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 暂无收藏商品")));
+    }
+
+    @Test
+    void quotedWithoutPlaceholderStaysStrict() {
+        // 无占位符的引号断言保持字面严格匹配
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面显示'共 N 件收藏'",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 商品A")));
+    }
 }

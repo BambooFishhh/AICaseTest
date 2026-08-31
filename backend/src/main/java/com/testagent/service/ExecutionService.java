@@ -794,6 +794,31 @@ public class ExecutionService {
                         switch (type) {
                             case "ui_action":
                                 JsonNode selectorNode = node.path("uiSelector");
+                                if ("route".equals(selectorNode.path("type").asText(""))) {
+                                    // v9.2: route 选择器 = 页面导航（hash 路由应用先 history 形式未命中自动尝试 hash 形式）
+                                    if (targetUrl == null || targetUrl.isBlank()) {
+                                        stepBuilder.strategy("skipped")
+                                                .result("skipped")
+                                                .error("导航步骤缺少目标 URL（环境/项目未配置地址）");
+                                        skipped++;
+                                        break;
+                                    }
+                                    String hitUrl = navigateToRoute(sessionId, targetUrl,
+                                            selectorNode.path("value").asText(""));
+                                    if (hitUrl != null) {
+                                        stepBuilder.strategy("navigate")
+                                                .result("passed")
+                                                .coordinates("url=" + hitUrl);
+                                        passed++;
+                                    } else {
+                                        stepBuilder.strategy("navigate")
+                                                .result("failed")
+                                                .error("导航后 URL 未命中目标路由: "
+                                                        + selectorNode.path("value").asText(""));
+                                        failed++;
+                                    }
+                                    break;
+                                }
                                 if (selectorNode.has("type") && selectorNode.has("value")) {
                                     String selType = selectorNode.path("type").asText();
                                     String selValue = selectorNode.path("value").asText();
@@ -805,6 +830,23 @@ public class ExecutionService {
                                     stepBuilder.strategy("dom");
                                     stepBuilder.result("passed");
                                     passed++;
+                                } else if (target != null
+                                        && target.trim().matches("^/[\\w:{}$-].*")
+                                        && targetUrl != null && !targetUrl.isBlank()) {
+                                    // v9.2: 无 uiSelector 但 target 为路由形态的 ui_action（导航首步）——
+                                    // 导航是确定性操作，按导航兜底执行，与 Agent 模式路径形态判定同语义
+                                    String hitUrl = navigateToRoute(sessionId, targetUrl, target.trim());
+                                    if (hitUrl != null) {
+                                        stepBuilder.strategy("navigate")
+                                                .result("passed")
+                                                .coordinates("url=" + hitUrl);
+                                        passed++;
+                                    } else {
+                                        stepBuilder.strategy("navigate")
+                                                .result("failed")
+                                                .error("导航后 URL 未命中目标路由: " + target.trim());
+                                        failed++;
+                                    }
                                 } else {
                                     stepBuilder.strategy("skipped")
                                             .result("skipped")
@@ -1288,6 +1330,81 @@ public class ExecutionService {
             log.warn("[12.14-C] 导航兜底失败: {}", e.getMessage());
             return null;
         }
+    }
+
+    // v9.2: route 选择器导航——先 history 形式（base/route），未命中自动尝试 hash 形式（base/#/route，
+    // hash 路由 SPA）。返回命中后的最终 URL；两种形式都未命中返回 null。
+    private String navigateToRoute(String sessionId, String baseUrl, String route) {
+        String key = routeKeyOf(route);
+        String first = joinUrl(baseUrl, route);
+        try {
+            playwrightSkill.browserNavigate(sessionId, first);
+            String cur = playwrightSkill.getPageStatus(sessionId).get("url");
+            if (urlHitsRoute(cur, key)) {
+                return cur;
+            }
+            String hashUrl = joinUrl(baseUrl, "#" + route);
+            if (!hashUrl.equals(first)) {
+                playwrightSkill.browserNavigate(sessionId, hashUrl);
+                cur = playwrightSkill.getPageStatus(sessionId).get("url");
+                if (urlHitsRoute(cur, key)) {
+                    return cur;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("route 导航失败 {}: {}", route, e.getMessage());
+        }
+        return null;
+    }
+
+    private String joinUrl(String baseUrl, String target) {
+        String t = target == null ? "" : target.trim();
+        if (t.startsWith("http://") || t.startsWith("https://")) {
+            return t;
+        }
+        if (baseUrl == null || baseUrl.isBlank()) {
+            return t;
+        }
+        String base = baseUrl.trim();
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        if (t.startsWith("/")) {
+            return base + t;
+        }
+        return base + "/" + t;
+    }
+
+    private String routeKeyOf(String target) {
+        String t = target == null ? "" : target.trim();
+        if (t.startsWith("/#")) {
+            return t.substring(2);
+        }
+        if (t.startsWith("#/")) {
+            return t.substring(1);
+        }
+        return t;
+    }
+
+    /**
+     * v9.2: URL 是否真的命中目标路由——hash 路由应用必须看 # 后面的路由段。
+     * history 形式导航到 hash 路由 SPA 时 URL 呈 base/collect#/（path 段残留路由、hash 停首页），
+     * 全串 contains 会把这种"没导航到"误判为命中。
+     */
+    private boolean urlHitsRoute(String url, String key) {
+        if (url == null || url.isBlank() || key == null || key.isBlank()) {
+            return false;
+        }
+        String routePart;
+        int hash = url.indexOf('#');
+        if (hash >= 0) {
+            routePart = url.substring(hash + 1);
+        } else {
+            String noScheme = url.contains("://") ? url.substring(url.indexOf("://") + 3) : url;
+            int slash = noScheme.indexOf('/');
+            routePart = slash >= 0 ? noScheme.substring(slash) : "";
+        }
+        return routePart.contains(key);
     }
 
     // v4.2: 执行取消标志检查

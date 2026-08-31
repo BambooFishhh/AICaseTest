@@ -336,7 +336,7 @@ public class ExecutionAgent {
             playwrightSkill.browserNavigate(sessionId, url);
             Map<String, String> status = playwrightSkill.getPageStatus(sessionId);
             String cur = status.get("url");
-            if (cur != null && cur.contains(routeKey(target))) {
+            if (urlHitsRoute(cur, routeKey(target))) {
                 return okNav(executionId, stepIndex, action, target, cur);
             }
             // v8.9.8: hash 路由兜底——history 路由拼不到时尝试 baseUrl/#/target（SPA hash 路由）
@@ -345,7 +345,7 @@ public class ExecutionAgent {
                 playwrightSkill.browserNavigate(sessionId, hashUrl);
                 status = playwrightSkill.getPageStatus(sessionId);
                 cur = status.get("url");
-                if (cur != null && cur.contains(routeKey(target))) {
+                if (urlHitsRoute(cur, routeKey(target))) {
                     return okNav(executionId, stepIndex, action, target, cur);
                 }
             }
@@ -407,6 +407,28 @@ public class ExecutionAgent {
             return t.substring(1);
         }
         return t;
+    }
+
+    /**
+     * v9.2: URL 是否真的命中目标路由——hash 路由应用必须看 # 后面的路由段。
+     * 修复假通过：导航到 history 形式（base/collect）时，hash 路由 SPA 会回落到首页，
+     * URL 变成 base/collect#/——path 段残留 "/collect" 但 hash 为空，页面实际停在首页，
+     * 旧 contains 全串判定误判命中，导致 hash 兜底永不触发。
+     */
+    boolean urlHitsRoute(String url, String key) {
+        if (url == null || url.isBlank() || key == null || key.isBlank()) {
+            return false;
+        }
+        String routePart;
+        int hash = url.indexOf('#');
+        if (hash >= 0) {
+            routePart = url.substring(hash + 1);
+        } else {
+            String noScheme = url.contains("://") ? url.substring(url.indexOf("://") + 3) : url;
+            int slash = noScheme.indexOf('/');
+            routePart = slash >= 0 ? noScheme.substring(slash) : "";
+        }
+        return routePart.contains(key);
     }
 
     /**
