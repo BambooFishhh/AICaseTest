@@ -290,6 +290,8 @@ const breadcrumbs = computed(() => {
 function crumbLink(idx, crumb) {
   if (crumb === '项目列表') return '/projects'
   if (crumb === '项目详情' && route.params.id) return `/projects/${route.params.id}`
+  // v9.3: 执行结果/批次结果的面包屑上一级——与页面返回按钮同口径
+  if (crumb === '测试用例' && route.params.id) return `/projects/${route.params.id}/testcases`
   return ''
 }
 

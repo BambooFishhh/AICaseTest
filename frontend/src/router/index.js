@@ -63,13 +63,14 @@ const routes = [
     path: '/projects/:id/executions/:eid',
     name: 'ExecutionResult',
     component: () => import('@/views/ExecutionResult.vue'),
-    meta: { title: '执行结果', breadcrumb: ['项目列表', '项目详情', '执行结果'] }
+    // v9.3: 执行从用例列表发起，面包屑上一级=测试用例（与页面返回按钮同口径）
+    meta: { title: '执行结果', breadcrumb: ['项目列表', '测试用例', '执行结果'] }
   },
   {
     path: '/projects/:id/batches/:batchId',
     name: 'BatchResult',
     component: () => import('@/views/BatchResult.vue'),
-    meta: { title: '批次执行结果', breadcrumb: ['项目列表', '项目详情', '批次执行结果'] }
+    meta: { title: '批次执行结果', breadcrumb: ['项目列表', '测试用例', '批次执行结果'] }
   },
   {
     path: '/projects/:id/state-machines',
