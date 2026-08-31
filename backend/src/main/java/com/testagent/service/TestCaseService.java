@@ -620,6 +620,8 @@ public class TestCaseService {
             }
             // v5.12: 追加生成落库后补记 AI 评审历史
             testCaseReviewAgent.recordHistoryForCases(toAppend, "generation");
+            // v9.3: 追加的用例按模块归组重编展示序号，防止分组渲染跳号
+            testCasePersistenceService.resequenceProjectSeq(projectId);
 
             // v5.4: 追加用例写入语义索引
             semanticService.indexCases(projectId, toAppend);
@@ -1199,6 +1201,8 @@ public class TestCaseService {
         }
         // v5.6: JSON 导入同步语义索引
         semanticService.indexCases(projectId, importedCases);
+        // v9.3: 按模块归组重编展示序号，防止分组渲染跳号
+        testCasePersistenceService.resequenceProjectSeq(projectId);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("imported", imported);
@@ -1247,6 +1251,8 @@ public class TestCaseService {
         }
         // v5.6: XMind 导入同步语义索引
         semanticService.indexCases(projectId, importedCases);
+        // v9.3: 按模块归组重编展示序号，防止分组渲染跳号
+        testCasePersistenceService.resequenceProjectSeq(projectId);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("imported", imported);
@@ -1289,6 +1295,8 @@ public class TestCaseService {
         }
         // v5.6: 复制到目标项目后同步语义索引
         semanticService.indexCases(targetProjectId, copiedCases);
+        // v9.3: 按模块归组重编展示序号，防止分组渲染跳号
+        testCasePersistenceService.resequenceProjectSeq(targetProjectId);
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("copied", copied);
