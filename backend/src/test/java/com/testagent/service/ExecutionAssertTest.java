@@ -253,4 +253,32 @@ class ExecutionAssertTest {
                 page("http://host/#/footprint", "litemall 商城", "浏览足迹 暂无足迹"));
         assertFalse(normal.contains("app_error"), "正常页面不应标注应用错误");
     }
+
+    @Test
+    void urlClauseQuoteMatchesAgainstUrlNotBody() {
+        // v9.5fix 实测回归：litemall #4——"页面URL包含'/goods/'" 实际 URL 命中却 failed。
+        // 根因：v9.4 子句模型把含引号的 URL 子句排除出层1 token 提取，引号路径被拿去
+        // 匹配页面正文（正文快照不含 URL）必然误判；现 URL 语义子句的引号短语与 url/title 比对
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面URL包含'/goods/'，页面显示商品名称和详细信息",
+                page("http://host/#/goods/1116011", "litemall 商城",
+                        "蔓越莓曲奇 200克 ￥36 加入购物车")));
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面URL包含'/goods/'",
+                page("http://host/#/user", "litemall 商城", "user123 欢迎回来")));
+        // 非 URL 子句的引号短语仍与页面正文比对
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'蔓越莓曲奇'，URL包含'/goods/'",
+                page("http://host/#/goods/1116011", "litemall 商城",
+                        "蔓越莓曲奇 200克 ￥36")));
+    }
+
+    @Test
+    void arithmeticPlaceholderMatchesAnyCount() {
+        // v9.5fix: '共 N-1 件收藏' 的增减量无法从页面文本独立验证，按普通 N 处理（匹配任意数字）
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面顶部显示'共 N-1 件收藏'",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 商品A")));
+    }
 }

@@ -66,6 +66,10 @@ public final class ExecutionAssert {
                     + "|类似|例如|如[^，。；]{0,16}等|空状态|为空|无商品|无记录|无内容|无数据|详情|信息"
                     + "|等基本|等统计|等描述|等文案|等提示|等数值");
 
+    /** v9.5fix: URL 语义子句——含这些词的子句，其引号短语（'/goods/' 等路径）应与 url/title
+     *  比对而非页面正文（正文快照不含 URL，按正文匹配必然误判） */
+    private static final Pattern ASSERT_URL_CLAUSE = Pattern.compile("URL|url|地址|重定向|跳转至|跳转到|路径");
+
     /** 叙述性前缀（长词优先剥离） */
     private static final String[] ASSERT_PREFIXES = {
             "页面上出现", "页面出现", "页面显示", "标题显示", "跳转到", "页面", "标题", "出现", "显示", "提示", "跳转", "返回", "包含"};
@@ -141,8 +145,10 @@ public final class ExecutionAssert {
             List<String> clauseQuotes = extractQuoted(clause);
             if (!clauseQuotes.isEmpty()) {
                 boolean negative = ASSERT_NEGATIVE.matcher(clause).find();
+                // v9.5fix: URL 语义子句的引号短语与 url/title 比对
+                boolean urlTarget = ASSERT_URL_CLAUSE.matcher(clause).find();
                 for (String q : clauseQuotes) {
-                    quotedChecks.add(new Object[]{q, negative});
+                    quotedChecks.add(new Object[]{q, negative, urlTarget});
                 }
                 continue;
             }
@@ -200,19 +206,22 @@ public final class ExecutionAssert {
         String pageText = (title + " " + snippet).toLowerCase();
 
         // 引号短语：正极性完整包含（含占位符时按"占位符=数字"正则语义匹配）；负极性必须不出现
+        String urlTitleText = (pageState.getOrDefault("url", "") + " " + title).toLowerCase();
         for (Object[] qc : quotedChecks) {
             String q = (String) qc[0];
             boolean negative = (Boolean) qc[1];
+            // v9.5fix: URL 语义子句的引号短语（'/goods/' 等路径）与 url/title 比对
+            String haystack = (Boolean) qc[2] ? urlTitleText : pageText;
             if (negative) {
-                // v9.4: 负向断言——"不显示'X'/不再显示'X'" 的语义是 X 不应出现在页面文本
-                if (pageText.contains(q.toLowerCase())) {
+                // v9.4: 负向断言——"不显示'X'/不再显示'X'" 的语义是 X 不应出现在比对目标文本
+                if (haystack.contains(q.toLowerCase())) {
                     return "failed";
                 }
             } else if (QUOTE_PLACEHOLDER.matcher(q).find()) {
-                if (!placeholderPhraseRegex(q).matcher(pageText).find()) {
+                if (!placeholderPhraseRegex(q).matcher(haystack).find()) {
                     return "failed";
                 }
-            } else if (!pageText.contains(q.toLowerCase())) {
+            } else if (!haystack.contains(q.toLowerCase())) {
                 return "failed";
             }
         }
@@ -242,6 +251,9 @@ public final class ExecutionAssert {
     /** v9.2: 含占位符的引号短语 → 正则：占位符（N/X/{var}）匹配数字，字面段原样匹配（大小写不敏感）。
      *  如 '共 N 件收藏' → /共 \d+ 件收藏/，页面显示"共 1 件收藏"即通过。 */
     private static java.util.regex.Pattern placeholderPhraseRegex(String phrase) {
+        // v9.5fix: 算术占位符降级——'共 N-1 件收藏'/'共 N+1 件收藏' 的增减量无法从页面文本
+        // 独立验证，按普通 N 处理（匹配任意数字），避免必然失败的假断言
+        phrase = phrase.replaceAll("(?i)\\bN\\s*[+-]\\s*1\\b", "N");
         String[] parts = QUOTE_PLACEHOLDER.split(phrase);
         StringBuilder sb = new StringBuilder("(?i)");
         for (int i = 0; i < parts.length; i++) {
