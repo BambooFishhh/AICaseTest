@@ -402,7 +402,7 @@
         v-else
         :data="treeData"
         :size="tableSize"
-        row-key="id"
+        :row-key="testCaseRowKey"
         :tree-props="{ children: 'children' }"
         :row-class-name="rowClassName"
         default-expand-all
@@ -815,17 +815,14 @@
             <el-input v-model="row.url" placeholder="http://localhost:5173" />
           </template>
         </el-table-column>
-        <el-table-column label="前置步骤 JSON" min-width="250">
-          <template #default="{ row }">
+        <el-table-column label="前置步骤" min-width="190">
+          <template #default="{ row, $index }">
             <div class="env-pre-cell">
-              <el-input
-                v-model="row.preStepsText"
-                type="textarea"
-                :rows="2"
-                placeholder='[{"action":"输入用户名","type":"input","inputValue":"admin123",...}]'
-              />
-              <el-button size="small" text type="primary" @click="applyAdminLoginPreSteps(row)">
-                填入管理后台登录
+              <span class="env-pre-summary" :class="{ 'is-empty': !preStepsCount(row) }">
+                {{ preStepsSummary(row) }}
+              </span>
+              <el-button size="small" text type="primary" :icon="EditPen" @click="openPreStepsEditor(row, $index)">
+                编辑脚本
               </el-button>
             </div>
           </template>
@@ -845,6 +842,33 @@
         <el-button @click="envDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="savingEnvs" @click="saveEnvs">保存</el-button>
       </div>
+    </el-dialog>
+
+    <!-- v9.1: 前置步骤脚本编辑器——大弹窗替代内联小文本框 -->
+    <el-dialog
+      v-model="preStepsDialog.visible"
+      :title="`前置步骤脚本 · ${preStepsDialog.envName || '未命名环境'}`"
+      width="760px"
+      append-to-body
+    >
+      <el-input
+        v-model="preStepsDialog.text"
+        type="textarea"
+        :rows="18"
+        class="presteps-editor"
+        placeholder='[{"action":"输入用户名","target":"用户名输入框","type":"input","inputValue":"admin123","uiSelector":{"type":"css","value":"input[placeholder*=用户名]"}}]'
+      />
+      <div class="form-tip">
+        JSON 数组，每步含 action / target / type（input / ui_action / state_assert）等字段；执行用例前按顺序执行，常用于登录态准备
+      </div>
+      <template #footer>
+        <div class="presteps-footer">
+          <el-button :icon="MagicStick" @click="applyAdminLoginPreSteps">填入管理后台登录</el-button>
+          <div style="flex: 1"></div>
+          <el-button @click="preStepsDialog.visible = false">取消</el-button>
+          <el-button type="primary" @click="confirmPreSteps">确定</el-button>
+        </div>
+      </template>
     </el-dialog>
 
     <!-- 生成参数对话框 -->
@@ -985,7 +1009,7 @@ import {
   Clock, Filter, CopyDocument, Operation, Connection, MagicStick, EditPen, Select
 } from '@element-plus/icons-vue'
 import {
-  listTestCases, streamGenerate, streamGenerateAppend,
+  listTestCases, streamGenerate, streamGenerateAppend, attachGenerate,
   cancelGenerate, createTestCase, deleteTestCase,
   batchDeleteTestCases, importXmind, reviewTestCases,
   exportTestCases, importTestCases, copyToProject, updateTestCaseExecutionStatus, semanticSearch,
@@ -1024,6 +1048,8 @@ const progressText = computed(
 const streaming = ref(false)
 const streamProgress = ref('')
 const streamedCases = ref([])
+// v9.2: 流式草稿渲染键序号（草稿无持久化 id，row-key 需要）
+let draftRenderSeq = 0
 const cancelling = ref(false)
 let streamEs = null
 const currentGenMode = ref(null)
@@ -1032,8 +1058,10 @@ const streamingAlertTitle = computed(() => {
   if (!streaming.value) return ''
   const count = streamedCases.value.length
   const countText = count === 0 ? '正在接收 LLM 流式响应...' : `已收到 ${count} 条`
+  const dup = duplicateDraftCount.value
+  const dupText = dup > 0 ? `（${dup} 条与现有用例同名，保存时跳过）` : ''
   if (currentGenMode.value === 'append') {
-    return `正在追加生成测试用例... ${countText}`
+    return `正在追加生成测试用例... ${countText}${dupText}`
   }
   return `正在生成测试用例... ${countText}`
 })
@@ -1263,12 +1291,26 @@ const stats = computed(() => {
   return s
 })
 
+// v9.2: 追加模式下与库内现有用例同名的草稿数（落库时按同名跳过，展示层同步隐藏防重影）
+const duplicateDraftCount = computed(() => {
+  if (!streaming.value || currentGenMode.value !== 'append') return 0
+  const existingKeys = new Set(testCases.value.map((tc) => streamedTitleKey(tc)))
+  return streamedCases.value.filter((d) => existingKeys.has(streamedTitleKey(d))).length
+})
+
 const displayTestCases = computed(() => {
   let base
   if (streaming.value) {
-    base = currentGenMode.value === 'append'
-      ? [...streamedCases.value, ...testCases.value]
-      : streamedCases.value
+    if (currentGenMode.value === 'append') {
+      // v9.2: 同名草稿不重复展示——库内旧用例保留（落库语义一致：同名跳过追加）
+      const existingKeys = new Set(testCases.value.map((tc) => streamedTitleKey(tc)))
+      const freshDrafts = streamedCases.value.filter(
+        (d) => !existingKeys.has(streamedTitleKey(d))
+      )
+      base = [...freshDrafts, ...testCases.value]
+    } else {
+      base = streamedCases.value
+    }
   } else {
     base = testCases.value
   }
@@ -1305,6 +1347,13 @@ const treeData = computed(() => {
 
 function rowClassName({ row }) {
   return row.isModule ? 'module-row' : 'case-row'
+}
+
+// v9.2: 行唯一键——模块行用 id；流式草稿用渲染键；落库用例用持久化 id。
+// 修复：row-key="id" 时草稿行 key 全为 undefined，el-table 树形更新按 key 合并导致重影
+function testCaseRowKey(row) {
+  if (row.isModule) return row.id
+  return row.renderKey || row.id || 'row-' + (row.projectSeq ?? '') + '-' + (row.title ?? '')
 }
 
 function typeTagType(type) {
@@ -1857,6 +1906,50 @@ function removeEnv(idx) {
   envForm.environments.splice(idx, 1)
 }
 
+// ===== v9.1: 前置步骤脚本大编辑器 =====
+const preStepsDialog = reactive({ visible: false, index: -1, envName: '', text: '' })
+
+function preStepsCount(row) {
+  try {
+    const parsed = JSON.parse(row.preStepsText || '[]')
+    return Array.isArray(parsed) ? parsed.length : 0
+  } catch {
+    return -1 // JSON 非法，提示修复
+  }
+}
+
+function preStepsSummary(row) {
+  const n = preStepsCount(row)
+  if (n < 0) return 'JSON 格式错误'
+  return n > 0 ? `已配置 ${n} 步` : '未配置'
+}
+
+function openPreStepsEditor(row, index) {
+  preStepsDialog.index = index
+  preStepsDialog.envName = row.name
+  preStepsDialog.text = row.preStepsText || ''
+  preStepsDialog.visible = true
+}
+
+function confirmPreSteps() {
+  const text = preStepsDialog.text.trim()
+  if (text) {
+    try {
+      const parsed = JSON.parse(text)
+      if (!Array.isArray(parsed)) {
+        ElMessage.error('前置步骤必须是 JSON 数组')
+        return
+      }
+    } catch {
+      ElMessage.error('前置步骤 JSON 格式不正确')
+      return
+    }
+  }
+  const row = envForm.environments[preStepsDialog.index]
+  if (row) row.preStepsText = preStepsDialog.text
+  preStepsDialog.visible = false
+}
+
 async function saveEnvs() {
   const cleaned = []
   for (const e of envForm.environments) {
@@ -1898,8 +1991,9 @@ async function saveEnvs() {
   }
 }
 
-function applyAdminLoginPreSteps(env) {
-  env.preStepsText = JSON.stringify([
+function applyAdminLoginPreSteps() {
+  // v9.1: 作用于前置步骤编辑器当前内容
+  preStepsDialog.text = JSON.stringify([
     {
       action: '输入用户名',
       target: '用户名输入框',
@@ -2127,6 +2221,9 @@ function upsertStreamedCase(tc) {
   const key = streamedTitleKey(tc)
   const idx = streamedCases.value.findIndex((d) => streamedTitleKey(d) === key)
   if (idx >= 0) streamedCases.value.splice(idx, 1)
+  // v9.2: 流式草稿无持久化 id，而表格 row-key 依赖行唯一键——不发稳定 key 会在
+  // 流式高频更新时因 undefined key 冲突产生渲染重影（组计数 N 但渲染行数 > N）
+  tc.renderKey = 'draft-' + (++draftRenderSeq)
   streamedCases.value.unshift(tc)
 }
 
@@ -2148,7 +2245,20 @@ async function handleRegenerate() {
   regenerating.value = true
 
   try {
-    streamEs = await streamGenerate(projectId, {
+    streamEs = await streamGenerate(projectId, generationStreamHandlers())
+  } catch {
+    // 换取 SSE ticket 失败（多为登录态失效），重置生成中状态
+    streaming.value = false
+    currentGenMode.value = null
+    streamProgress.value = ''
+    generationError.value = '生成连接初始化失败'
+    return
+  }
+}
+
+// v9.1(2.1): 生成流回调集——发起生成与断线/刷新重接共用同一套处理
+function generationStreamHandlers() {
+  return {
     onProgress: (msg) => {
       streamProgress.value = msg
     },
@@ -2204,35 +2314,31 @@ async function handleRegenerate() {
       ElMessage.error('用例生成失败')
     },
     onDisconnect: () => {
-      // v7.12(E16): 连接层断开（网络瞬断/代理超时）——后端生成仍在进行，
-      // 不误报失败，降级为项目状态轮询（与刷新恢复 resumeGenerationIfActive 同构）
+      // v9.1(2.1): 连接层断开不再取消后端任务，生成照常完成并落库——
+      // 降级为项目状态轮询，完成后整表重载
       streaming.value = false
       currentGenMode.value = null
       streamProgress.value = ''
       regenerating.value = false
       cancelling.value = false
       ElMessage.info('生成连接中断，已切换为进度轮询')
-      projectStore.startPolling(projectId, (next, prev) => {
-        if (prev !== 'generating' || next === prev) return
-        if (next === 'completed') {
-          ElMessage.success('用例生成完成')
-          Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
-        } else if (next === 'failed') {
-          ElMessage.error('用例生成失败')
-          loadList()
-        }
-      })
+      fallbackPollWhileGenerating()
     }
-    })
-  } catch {
-    // 换取 SSE ticket 失败（多为登录态失效），重置生成中状态
-    streaming.value = false
-    currentGenMode.value = null
-    streamProgress.value = ''
-    regenerating.value = false
-    generationError.value = '生成连接初始化失败'
-    return
   }
+}
+
+// v9.1(2.1): 生成期间的状态轮询兜底（连接断开且重接失败时跟踪到终态）
+function fallbackPollWhileGenerating() {
+  projectStore.startPolling(projectId, (next, prev) => {
+    if (prev !== 'generating' || next === prev) return
+    if (next === 'completed') {
+      ElMessage.success('用例生成完成')
+      Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
+    } else if (next === 'failed') {
+      ElMessage.error('用例生成失败')
+      loadList()
+    }
+  })
 }
 
 const showAppendDialog = ref(false)
@@ -2476,23 +2582,26 @@ onMounted(async () => {
   }
 })
 
-// v6.1: 刷新/重新进入页面后，若项目仍在生成用例，恢复轮询与完成提示
+// v9.1(2.1): 刷新/重进页面后若仍在生成——重接生成任务：
+// 回放已持久化的进度与已推送草稿，任务未完则续播实况（连接断开不再取消后端任务）
 async function resumeGenerationIfActive() {
   try {
     const res = await getProject(projectId)
     if (res.data?.status !== 'generating') return
-    ElMessage.info('项目正在生成用例，进度将自动刷新')
-    // 走轮询恢复进度，不置 streaming=true（避免出现无 SSE 连接却可取消的状态）
-    projectStore.startPolling(projectId, (next, prev) => {
-      if (prev !== 'generating' || next === prev) return
-      if (next === 'completed') {
-        ElMessage.success('用例生成完成')
-        Promise.all([loadList(), loadAllForStats(), loadCoverageMatrix()])
-      } else if (next === 'failed') {
-        ElMessage.error('用例生成失败')
-        loadList()
-      }
-    })
+    streaming.value = true
+    currentGenMode.value = 'regenerate'
+    streamedCases.value = []
+    streamProgress.value = '正在重新接入生成任务...'
+    ElMessage.info('检测到生成任务仍在运行，已重新接入')
+    try {
+      streamEs = await attachGenerate(projectId, generationStreamHandlers())
+    } catch {
+      // attach 建连失败（ticket 失效等）→ 回落状态轮询
+      streaming.value = false
+      currentGenMode.value = null
+      streamProgress.value = ''
+      fallbackPollWhileGenerating()
+    }
   } catch {
     // 状态获取失败则忽略
   }
@@ -3009,12 +3118,34 @@ onUnmounted(() => {
 
 .env-pre-cell {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
 
-  .el-textarea {
-    width: 100%;
+  .env-pre-summary {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text-secondary);
+
+    &.is-empty {
+      color: var(--text-tertiary);
+      font-style: italic;
+    }
   }
+}
+
+// v9.1: 前置步骤脚本编辑器弹窗
+.presteps-editor {
+  :deep(.el-textarea__inner) {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+}
+
+.presteps-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .env-actions {

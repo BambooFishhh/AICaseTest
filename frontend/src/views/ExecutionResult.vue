@@ -953,8 +953,11 @@ onUnmounted(() => {
 }
 
 .screenshot-image {
-  width: 100%;
-  max-height: 260px;
+  /* v9.2: 截图为手机竖版（iPhone 14 视口 390x664 @3x = 1170x1992），
+     容器按同比例显示，避免竖图塞进横宽容器后缩成竖条、两侧大片黑边"展示不全" */
+  height: 420px;
+  aspect-ratio: 390 / 664;
+  max-width: 100%;
   border: 1px solid var(--card-border-light);
   border-radius: var(--radius-sm);
   background: #000;
@@ -990,8 +993,12 @@ onUnmounted(() => {
 }
 
 .video-element {
-  width: 100%;
-  max-height: 480px;
+  /* v9.2: 录屏与截图同为手机竖版，按同比例展示并居中 */
+  height: 480px;
+  aspect-ratio: 390 / 664;
+  max-width: 100%;
+  display: block;
+  margin: 0 auto;
   background: #000;
   border-radius: var(--radius-md);
 }
