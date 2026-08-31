@@ -45,6 +45,10 @@ public final class UiLanguageLinter {
     /** 规则6(v9.2): 步骤类型本身接口化——type=api_call（执行器一律 skip，生成即废步骤） */
     private static final String API_CALL_STEP = "api_call";
 
+    /** 规则7(v9.6): 泛化跳转断言——触发跳转/开始跳转/页面跳转但无 URL/引号锚点/目标页 */
+    private static final Pattern GENERIC_JUMP = Pattern.compile(
+            "触发跳转|开始跳转|跳转成功|(?:页面|自动)跳转(?!至|到)");
+
     public static List<String> lint(TestCase tc) {
         List<String> violations = new ArrayList<>();
         if (tc == null) {
@@ -130,6 +134,13 @@ public final class UiLanguageLinter {
         if (api.find()) {
             violations.add(field + " '" + truncate(text) + "' 疑似接口化表述（" + api.group()
                     + "），应写页面可感知现象");
+            return;
+        }
+        Matcher jump = GENERIC_JUMP.matcher(text);
+        if (jump.find() && !text.contains("URL") && !text.contains("包含")
+                && !com.testagent.service.ExecutionAssert.hasQuotedAnchor(text)) {
+            violations.add(field + " '" + truncate(text) + "' 跳转断言为不可验证泛化表述（"
+                    + jump.group() + "），应写 页面URL包含'/xxx' 或目标页可见标题");
             return;
         }
         Matcher http = HTTP_CODE.matcher(text);

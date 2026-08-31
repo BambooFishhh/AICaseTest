@@ -4,6 +4,17 @@
 
 ---
 
+## v9.6 — 评审质量检查与选择器作用域（12.18/12.19）
+**日期**: 2026-08-31
+**基线**: v9.5 + `8de42fc`（URL 引号断言回归 / N-1 占位符 / 禁手势生成规则已上线，未单独入档）
+**主题**: litemall 27 条用例评审复盘落地——评审层补「语义重复 + 预期与动作一致性」检查项；enrich 选择器按路由/组件作用域收敛，消灭跨页误配。
+
+- **12.18 评审质量检查**：新增 `ReviewQualityChecker` 静态检查（零 LLM 成本）——同模块同类型、结构化步骤/断言高度重叠的不同标题用例标记语义重复并进入评审问题；删除/取消类动作只断言页面标题、跳转断言写「触发跳转/页面跳转」无锚点泛化表述均标记 fix。`ruleReview` 结果写入 `executionHints.reviewChecks.semanticDuplicates / expectedActionConsistency`；`ai-review.md` 与代码 fallback prompt 同步增加两项检查维度；`UiLanguageLinter` 增加跳转泛化规则。
+- **12.19 选择器作用域**：`enrichStructuredSteps` 由全局选择器池改为按当前路由/组件作用域匹配——路由来自 route 型 `uiSelector` 与 `/xxx` 形态 target；组件路由映射取 `componentSummaries(component→route)` + `routes` 兜底；带参路由（`/goods/456` 命中 `/goods/:id`）按参数归一匹配；路由未知或无可映射组件时宁缺勿错，不再跨页固化错误选择器。
+- **生成侧硬规则**：跳转类断言必须写「页面URL包含'/xxx'」或目标页可见标题；删除/取消类动作的预期必须落在动作结果（列表消失/总数更新/提示文案）上。
+
+**验证**：后端 562/562 绿（新增 `TestGeneratorAgentSelectorScopeTest` 4 例、`TestCaseReviewQualityTest` 5 例、`UiLanguageLinterTest` 泛化跳转 1 例）；前端 `npm run build` 通过（无源码变更）。
+
 ## v9.5 — 执行失败归因优化 + 选择器池扩充 + 数据依赖治理（12.16/12.17）
 **日期**: 2026-08-31
 **基线**: v9.4（断言修复与面包屑口径）

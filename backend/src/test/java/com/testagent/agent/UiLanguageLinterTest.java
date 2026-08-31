@@ -151,6 +151,15 @@ class UiLanguageLinterTest {
     }
 
     @Test
+    void genericJumpWithoutAnchorIsFlagged() {
+        // v9.6: 触发跳转/页面跳转没有 URL 或目标页锚点时不可验证
+        TestCase tc = caseWith("[\"点击后触发页面跳转\"]", "[]");
+        List<String> violations = UiLanguageLinter.lint(tc);
+        assertEquals(1, violations.size());
+        assertTrue(violations.get(0).contains("泛化表述"));
+    }
+
+    @Test
     void nullAndEmptyFieldsAreSafe() {
         TestCase tc = new TestCase();
         assertEquals(0, UiLanguageLinter.lint(tc).size());

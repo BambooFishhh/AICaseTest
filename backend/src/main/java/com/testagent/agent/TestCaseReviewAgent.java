@@ -110,6 +110,7 @@ public class TestCaseReviewAgent {
 
     private List<TestCase> ruleReview(List<TestCase> cases, Map<String, Object> coverage) {
         List<TestCase> result = new ArrayList<>();
+        Map<String, List<String>> semanticDuplicates = ReviewQualityChecker.semanticDuplicates(cases);
         for (TestCase tc : cases) {
             List<Map<String, Object>> steps = JsonHelper.parseListMap(tc.getStructuredSteps());
             if (steps.isEmpty()) {
@@ -125,6 +126,20 @@ public class TestCaseReviewAgent {
                 continue;
             }
             Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
+            // v9.6: 静态质量检查——语义重复 + 预期与动作一致性，先行打标记供 LLM 评审与前端提示
+            Map<String, Object> reviewChecks = new LinkedHashMap<>();
+            String title = tc.getTitle() == null ? "" : tc.getTitle().trim();
+            List<String> dupIssues = semanticDuplicates.getOrDefault(title, List.of());
+            if (!dupIssues.isEmpty()) {
+                reviewChecks.put("semanticDuplicates", dupIssues);
+            }
+            List<String> consistencyIssues = ReviewQualityChecker.expectedActionConsistency(tc);
+            if (!consistencyIssues.isEmpty()) {
+                reviewChecks.put("expectedActionConsistency", consistencyIssues);
+            }
+            if (!reviewChecks.isEmpty()) {
+                hints.put("reviewChecks", reviewChecks);
+            }
             Map<String, Object> refs = readCoverageRefs(hints);
             if (isEmptyRefs(refs)) {
                 refs = inferCoverageRefs(tc, coverage);
@@ -235,6 +250,11 @@ public class TestCaseReviewAgent {
                 你是测试用例评审专家。逐条检查候选用例：
                 - status：pass（通过）/ fix（需修正）/ reject（应删除）
                 - issues：列出可执行性、覆盖率、预期可验证性、重复等具体问题
+                - v9.6 语义重复：同模块同类型且步骤/断言高度重叠的用例（如"取消收藏后总数减少" vs
+                  "取消收藏后总数正确更新"、"正常加载并展示足迹列表" vs "加载并展示足迹（商品）列表"），
+                  必须标记 fix，issues 说明与哪条重复并建议合并
+                - v9.6 预期与动作一致性：删除/取消类动作的预期必须落在动作结果上
+                  （列表消失/总数更新/提示文案），只断言页面标题或"页面跳转/触发跳转"无锚点泛化表述必须标记 fix
                 - coverageRefs 只能引用 coverageChecklist 中真实存在的 id：
                   transitionIds 用 "from->to"；endpointIds 用 "METHOD /path"；ruleIds 用 "rule-N"；requirementIds 原样使用 coverageChecklist.requirements[].id
                 - suggestedChanges：给出可自动采纳的修正（title/module/type/priority/coverageRefs），没有修正则填 null

@@ -558,6 +558,9 @@ public class TestGeneratorAgent {
               畸形提交会在被测系统留下脏数据，污染后续所有用例的执行结果
             - 12.17: 执行器不支持滑动/长按等手势——禁止生成"左滑/右滑/上滑/长按"类步骤
               （如移动端左滑取消收藏），改用替代路径（如进入商品详情页点击取消收藏）
+            - v9.6: 跳转类断言必须写"页面URL包含'/xxx'"或目标页可见标题，禁止
+              "触发跳转/页面跳转/开始跳转"等无锚点泛化表述；删除/取消类动作的预期
+              必须验证动作结果（列表消失/总数更新/提示文案），不得只断言页面标题
 
             ## coverageRefs 覆盖要求（v5.12）
             - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}
@@ -1320,31 +1323,32 @@ public class TestGeneratorAgent {
      * 前端选择器补齐：LLM 未给 uiSelector 时，根据 action/target 文案从前端分析结果中
      * 匹配最可能的 DOM 选择器/表单字段，补到 ui_action 步骤上，让执行更精确。
      */
-    private void enrichStructuredSteps(FrontendResult frontendResult, TestCase tc) {
+    void enrichStructuredSteps(FrontendResult frontendResult, TestCase tc) {
         List<Map<String, Object>> steps = JsonHelper.parseListMap(tc.getStructuredSteps());
         if (steps.isEmpty() || frontendResult == null) return;
 
-        // 汇总可选选择器池——v7.12(G22): 只收 DOM 选择器。
-        // 表单字段 {name, type: 输入框类型, label} 没有可执行 value，混池打分胜出后
-        // 会写入 uiSelector = {type: "text"(input 类型), value: null} 的废选择器固化进用例资产
-        List<Map<String, Object>> pool = new ArrayList<>();
-        if (frontendResult.getDomSelectors() != null) {
-            for (Map<String, Object> sel : frontendResult.getDomSelectors()) {
-                Object sels = sel.get("selectors");
-                if (sels instanceof List) {
-                    for (Object s : (List<?>) sels) {
-                        if (s instanceof Map) {
-                            Map<String, Object> m = new LinkedHashMap<>((Map<String, Object>) s);
-                            m.putIfAbsent("component", sel.get("component"));
-                            pool.add(m);
-                        }
+        // v9.6: 选择器池按组件分组，并按路由/组件做作用域收敛——不再全局混池，
+        // 避免"我的页收藏入口"被配成"商品详情页收藏图标"这类跨页错误资产固化进用例
+        Map<String, List<Map<String, Object>>> selectorsByComponent = groupSelectorsByComponent(frontendResult);
+        if (selectorsByComponent.isEmpty()) return;
+        Map<String, String> componentRoutes = buildComponentRouteMap(frontendResult);
+
+        String currentRoute = null;
+        for (Map<String, Object> step : steps) {
+            // 先跟踪当前路由：route 型选择器与 /xxx 形态 target 都视为导航
+            if ("ui_action".equals(step.get("type"))) {
+                Object selObj = step.get("uiSelector");
+                if (selObj instanceof Map
+                        && "route".equals(((Map<?, ?>) selObj).get("type"))) {
+                    currentRoute = normalizeRoute(String.valueOf(((Map<?, ?>) selObj).get("value")));
+                } else {
+                    Object target = step.get("target");
+                    String targetStr = target == null ? "" : String.valueOf(target).trim();
+                    if (targetStr.startsWith("/")) {
+                        currentRoute = normalizeRoute(targetStr);
                     }
                 }
             }
-        }
-        if (pool.isEmpty()) return;
-
-        for (Map<String, Object> step : steps) {
             if (!"ui_action".equals(step.get("type"))) continue;
             Object selObj = step.get("uiSelector");
             if (selObj instanceof Map
@@ -1354,7 +1358,8 @@ public class TestGeneratorAgent {
             }
             String action = step.get("action") == null ? "" : String.valueOf(step.get("action"));
             String target = step.get("target") == null ? "" : String.valueOf(step.get("target"));
-            Map<String, Object> best = bestSelector(pool, action + " " + target);
+            Map<String, Object> best = bestSelectorForRoute(
+                    selectorsByComponent, componentRoutes, currentRoute, action + " " + target);
             if (best != null) {
                 Map<String, Object> uiSelector = new LinkedHashMap<>();
                 uiSelector.put("type", best.get("type"));
@@ -1366,6 +1371,130 @@ public class TestGeneratorAgent {
             }
         }
         tc.setStructuredSteps(sanitizeUiSelectors(toJson(steps)));
+    }
+
+    /**
+     * v9.6: 把 domSelectors 按组件分组，供路由作用域匹配。
+     */
+    private Map<String, List<Map<String, Object>>> groupSelectorsByComponent(FrontendResult fr) {
+        Map<String, List<Map<String, Object>>> byComponent = new LinkedHashMap<>();
+        if (fr.getDomSelectors() == null) {
+            return byComponent;
+        }
+        for (Map<String, Object> entry : fr.getDomSelectors()) {
+            Object componentObj = entry.get("component");
+            Object selectorsObj = entry.get("selectors");
+            if (componentObj == null || !(selectorsObj instanceof List)) {
+                continue;
+            }
+            String component = String.valueOf(componentObj);
+            if (component.isBlank()) {
+                continue;
+            }
+            List<Map<String, Object>> list = byComponent.computeIfAbsent(component,
+                    k -> new ArrayList<>());
+            for (Object s : (List<?>) selectorsObj) {
+                if (s instanceof Map) {
+                    Map<String, Object> sel = new LinkedHashMap<>((Map<String, Object>) s);
+                    sel.putIfAbsent("component", component);
+                    list.add(sel);
+                }
+            }
+        }
+        return byComponent;
+    }
+
+    /**
+     * v9.6: 组件 → 路由映射，来自 componentSummaries（component/route），
+     * routes 作为兜底（路由文件记录的 component 文件名）。
+     */
+    private Map<String, String> buildComponentRouteMap(FrontendResult fr) {
+        Map<String, String> map = new LinkedHashMap<>();
+        if (fr.getComponentSummaries() != null) {
+            for (Map<String, Object> summary : fr.getComponentSummaries()) {
+                String component = String.valueOf(summary.get("component"));
+                String route = String.valueOf(summary.getOrDefault("route", ""));
+                if (!component.isBlank() && !"null".equals(component)) {
+                    map.put(component, normalizeRoute(route));
+                }
+            }
+        }
+        if (fr.getRoutes() != null) {
+            for (Map<String, Object> route : fr.getRoutes()) {
+                String path = String.valueOf(route.get("path"));
+                String file = String.valueOf(route.getOrDefault("file", ""));
+                if (!file.isBlank()) {
+                    String component = file.replaceFirst("\\.[^.]+$", "");
+                    map.putIfAbsent(component, normalizeRoute(path));
+                }
+            }
+        }
+        return map;
+    }
+
+    /**
+     * v9.6: 路由作用域内选最佳选择器——当前路由未知或没有对应组件时宁缺勿错。
+     */
+    private Map<String, Object> bestSelectorForRoute(
+            Map<String, List<Map<String, Object>>> byComponent,
+            Map<String, String> componentRoutes,
+            String route,
+            String text) {
+        if (route == null || route.isBlank() || byComponent.isEmpty()) {
+            return null;
+        }
+        List<Map<String, Object>> scoped = new ArrayList<>();
+        for (Map.Entry<String, List<Map<String, Object>>> entry : byComponent.entrySet()) {
+            String componentRoute = componentRoutes.getOrDefault(entry.getKey(), "");
+            if (routeMatches(componentRoute, route)) {
+                scoped.addAll(entry.getValue());
+            }
+        }
+        if (scoped.isEmpty()) {
+            return null;
+        }
+        return bestSelector(scoped, text);
+    }
+
+    /**
+     * v9.6: 路由归一后比对；带参路由（/goods/:id 或 /goods/{id}）按参数通配匹配，
+     * 让具体商品 URL（/goods/456）也能命中对应页面组件池。
+     */
+    private boolean routeMatches(String componentRoute, String currentRoute) {
+        if (componentRoute.isBlank() || currentRoute.isBlank()) {
+            return false;
+        }
+        String a = normalizeRoute(componentRoute);
+        String b = normalizeRoute(currentRoute);
+        if (a.equals(b)) {
+            return true;
+        }
+        if (a.contains("*")) {
+            String regex = "\\Q" + a.replace("*", "\\E[^/]+\\Q") + "\\E";
+            return b.matches(regex);
+        }
+        if (b.contains("*")) {
+            String regex = "\\Q" + b.replace("*", "\\E[^/]+\\Q") + "\\E";
+            return a.matches(regex);
+        }
+        return false;
+    }
+
+    private String normalizeRoute(String route) {
+        if (route == null) {
+            return "";
+        }
+        String r = route.trim().toLowerCase();
+        // hash 路由形态去前缀：#/collect、/#/collect 都归一为 /collect
+        r = r.replaceFirst("^/?#/?", "");
+        if (!r.startsWith("/")) {
+            r = "/" + r;
+        }
+        while (r.length() > 1 && r.endsWith("/")) {
+            r = r.substring(0, r.length() - 1);
+        }
+        r = r.replaceAll(":[^/]+|\\{[^}]+}", "*");
+        return r;
     }
 
     // v7.15(B): uiSelector 类型白名单——执行器 buildCssSelector 仅支持以下类型，

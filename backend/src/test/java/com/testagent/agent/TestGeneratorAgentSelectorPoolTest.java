@@ -57,6 +57,9 @@ class TestGeneratorAgentSelectorPoolTest {
     void domSelectorMatchWritesExecutableUiSelector() {
         // DOM 选择器命中 → uiSelector 携带选择器语义（type=css、value 可执行非空）
         FrontendResult fr = FrontendResult.builder()
+                .componentSummaries(List.of(Map.of(
+                        "component", "SubmitOrder",
+                        "route", "/order/confirm")))
                 .domSelectors(List.of(Map.of(
                         "component", "SubmitOrder",
                         "selectors", List.of(Map.of(
@@ -68,11 +71,13 @@ class TestGeneratorAgentSelectorPoolTest {
 
         TestCase tc = new TestCase();
         tc.setTitle("DOM 选择器入池");
-        tc.setStructuredSteps("[{\"order\":1,\"type\":\"ui_action\",\"action\":\"click\",\"target\":\"SubmitOrder 按钮\"}]");
+        tc.setStructuredSteps("[{\"order\":1,\"type\":\"ui_action\",\"action\":\"打开确认订单页\","
+                + "\"target\":\"/order/confirm\",\"uiSelector\":{\"type\":\"route\",\"value\":\"/order/confirm\"}},"
+                + "{\"order\":2,\"type\":\"ui_action\",\"action\":\"click\",\"target\":\"SubmitOrder 按钮\"}]");
 
         enrich(fr, tc);
 
-        Map<String, Object> step = steps(tc).get(0);
+        Map<String, Object> step = steps(tc).get(1);
         Object selObj = step.get("uiSelector");
         assertTrue(selObj instanceof Map, "DOM 选择器命中应写入 uiSelector");
         Map<?, ?> uiSelector = (Map<?, ?>) selObj;

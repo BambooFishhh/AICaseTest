@@ -8,6 +8,11 @@
   （如页面仅展示待付款/待发货计数却断言"订单、收藏、足迹等统计项"）、或把导航标签当锚点，
   必须标记 fix 并建议改用上下文 userFeedbackTexts 中的真实文案；数量断言应写占位符
   （如 页面显示'共 N 件收藏'），负向场景写"不显示'X'提示"
+- v9.6 语义重复：同模块同类型且步骤/断言高度重叠的用例（如"取消收藏后总数减少" vs
+  "取消收藏后总数正确更新"、"正常加载并展示足迹列表" vs "加载并展示足迹（商品）列表"），
+  必须标记 fix，issues 说明与哪条重复并建议合并保留断言更明确的一条
+- v9.6 预期与动作一致性：删除/取消类动作的预期必须落在动作结果上
+  （列表消失/总数更新/提示文案），只断言页面标题或「页面跳转/触发跳转」无锚点泛化表述必须标记 fix
 - coverageRefs 只能引用 coverageChecklist 中真实存在的 id：
   transitionIds 用 "from->to"；endpointIds 用 "METHOD /path"；ruleIds 用 "rule-N"；requirementIds 原样使用 coverageChecklist.requirements[].id
 - suggestedChanges：给出可自动采纳的修正（title/module/type/priority/coverageRefs），没有修正则填 null
