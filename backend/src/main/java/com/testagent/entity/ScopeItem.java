@@ -8,7 +8,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-// v8.1: 范围内元素——本期新增/变更接口、受波及状态机或手动标注项
+// v8.1: 范围内元素——本期新增/变更接口、受波及状态机或手动标注项；v8.9.8 扩展前端页面维度（PAGE）
 @Entity
 @Table(name = "scope_item")
 @Data
@@ -16,6 +16,7 @@ public class ScopeItem {
 
     public static final String TYPE_ENDPOINT = "ENDPOINT";
     public static final String TYPE_STATE_MACHINE = "STATE_MACHINE";
+    public static final String TYPE_PAGE = "PAGE";
 
     public static final String KIND_ADDED = "ADDED";
     public static final String KIND_MODIFIED = "MODIFIED";
@@ -32,10 +33,10 @@ public class ScopeItem {
     @Column(name = "definition_id", length = 8)
     private String definitionId;
 
-    // ENDPOINT / STATE_MACHINE
+    // ENDPOINT / STATE_MACHINE / PAGE
     private String itemType;
 
-    // ENDPOINT: "GET /admin/order/list"；STATE_MACHINE: 状态机 id
+    // ENDPOINT: "GET /admin/order/list"；STATE_MACHINE: 状态机 id；PAGE: 前端路由 path 或变更文件路径
     @Column(name = "item_ref", length = 512)
     private String itemRef;
 

@@ -81,6 +81,9 @@ public class AnalysisService {
     @Autowired
     private RuntimeStore runtimeStore;
 
+    @Autowired
+    private ScopeService scopeService;
+
     // v5.3: 分析结果缓存（分析完成后失效）
     @Cacheable(value = "analysis", key = "#projectId")
     public CodeAnalysis getAnalysis(String projectId) {
@@ -268,6 +271,16 @@ public class AnalysisService {
                 }
             }
 
+            // v9.0: 分析完成即自动识别本期范围（基线自动回退主干，识别出条目即锁定）——
+            // 免手动创建/确认；放在 analyzed 状态之前，前端看到「已分析」时范围已就绪。
+            // 失败只告警不抛出，避免拖垮分析完成状态
+            report(progressCb, "正在基于主干自动识别本期范围...");
+            try {
+                scopeService.autoSyncAfterAnalysis(projectId);
+            } catch (Exception e) {
+                log.warn("[Scope] 分析后自动识别本期范围失败（不影响分析结果）: {}", e.getMessage());
+            }
+
             updateProjectStatus(projectId, "analyzed");
             report(progressCb, "分析完成");
             log.info("Analysis completed for project {}", projectId);
@@ -324,6 +337,12 @@ public class AnalysisService {
                     sm.setProjectId(projectId);
                     stateMachineRepository.save(sm);
                 }
+            }
+            // v9.0: 与完整分析一致，续跑完成也自动刷新本期范围
+            try {
+                scopeService.autoSyncAfterAnalysis(projectId);
+            } catch (Exception e) {
+                log.warn("[Scope] 分析续跑后自动识别本期范围失败（不影响分析结果）: {}", e.getMessage());
             }
             updateProjectStatus(projectId, "analyzed");
             agentTaskService.succeed(taskId);

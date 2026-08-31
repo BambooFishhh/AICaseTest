@@ -116,7 +116,7 @@ class CoverageServicePreparseTest {
         ScopeSlicingService.ScopeSlice slice = new ScopeSlicingService.ScopeSlice(
                 "def-1", "S35", "v1.0",
                 java.util.Set.of(), List.of(),
-                Map.of("sm-1", sprintTransitions), Map.of(), List.of());
+                Map.of("sm-1", sprintTransitions), Map.of(), List.of(), java.util.Set.of());
         when(slicing.loadForGeneration("p1")).thenReturn(slice);
         ReflectionTestUtils.setField(service, "scopeSlicingService", slicing);
         ReflectionTestUtils.setField(service, "scopeItemRepository",

@@ -38,6 +38,44 @@ public class GitDiffService {
     }
 
     /**
+     * v8.9.8: 默认基线自动探测——常规迭代基线即主干，免去每次手选。
+     * 首选 origin/HEAD 指向的远端默认分支（克隆时确定的主干），
+     * 回退本地 master → main；均无则返回 null（调用方提示手动输入）。
+     */
+    public String detectDefaultBaseline(String sourcePath) {
+        Path dir = requireRepo(sourcePath);
+        String originHead = tryRunGit(dir,
+                List.of("symbolic-ref", "--short", "refs/remotes/origin/HEAD"), 4000);
+        if (originHead != null && !originHead.isBlank()) {
+            return originHead.trim();
+        }
+        for (String candidate : List.of("master", "main")) {
+            String exists = tryRunGit(dir,
+                    List.of("rev-parse", "--verify", "--quiet", "refs/heads/" + candidate), 4000);
+            if (exists != null && !exists.isBlank()) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * v8.9.8: HEAD 提交时间戳（epoch 秒）——供范围识别校验分析结果时效性；失败返回 null。
+     */
+    public Long headCommitEpoch(String sourcePath) {
+        Path dir = requireRepo(sourcePath);
+        String out = tryRunGit(dir, List.of("log", "-1", "--format=%ct", "HEAD"), 200);
+        if (out == null || out.isBlank()) {
+            return null;
+        }
+        try {
+            return Long.parseLong(out.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
      * 基线候选：本地分支 / 远端分支 / tag / 当前 HEAD。
      */
     public Map<String, Object> listRefs(String sourcePath) {

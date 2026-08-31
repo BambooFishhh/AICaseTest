@@ -13,7 +13,7 @@
             <el-icon :size="20"><CollectionTag /></el-icon>
             本期范围
           </h2>
-          <p class="panel-subtitle">Git 基线 diff 识别本期变更接口与受影响状态机 · 确认后作为生成目标与覆盖率分母</p>
+          <p class="panel-subtitle">分析完成后自动基于主干 diff 识别并锁定 · 作为生成目标与覆盖率分母（已确认范围可手动增删条目）</p>
         </div>
         <el-button :icon="Close" circle text @click="$emit('update:modelValue', false)" />
       </div>
@@ -23,7 +23,7 @@
         <div class="wizard-card">
           <el-steps :active="0" align-center class="wizard-steps">
             <el-step title="代码分析" description="已完成 ✓" status="finish" />
-            <el-step title="创建并确认范围" description="当前步骤" status="process" />
+            <el-step title="自动识别范围" description="分析完成后自动完成（当前为手动兜底）" status="process" />
             <el-step title="生成用例" description="只聚焦本期变更" />
           </el-steps>
 
@@ -45,8 +45,10 @@
                 <el-form-item label="基线（上期结束点）" class="grow">
                   <el-select
                     v-model="createForm.baselineRef"
-                    filterable allow-create default-first-option
-                    placeholder="选 tag / 分支 / 直接输 commit"
+                    filterable allow-create clearable default-first-option
+                    :placeholder="gitRefs?.defaultBaseline
+                      ? `默认 ${gitRefs.defaultBaseline}（可改）`
+                      : '选 tag / 分支 / 直接输 commit'"
                     style="width: 100%"
                     :loading="refsLoading"
                   >
@@ -65,7 +67,7 @@
                   创建
                 </el-button>
               </div>
-              <div class="form-hint">范围 = 基线 → 当前代码 的变更。基线应选上一期结束的 tag 或 commit，不要选会移动的分支指针。</div>
+              <div class="form-hint">范围 = 基线 → 当前代码 的变更。基线留空默认用仓库主干（{{ gitRefs?.defaultBaseline || 'origin 默认分支' }}）；发布迭代可改选上一期 tag 或 commit，不要选会移动的分支指针。</div>
             </el-form>
           </div>
         </div>
@@ -74,7 +76,7 @@
       <!-- 创建中横幅 -->
       <div v-if="creating" class="progress-banner">
         <el-icon class="is-loading"><Loading /></el-icon>
-        正在识别本期变更：执行 Git diff → 匹配接口与状态机 → LLM 辅助映射（约 1-2 分钟，可离开此页稍后回来）
+        正在识别本期变更：执行 Git diff → 匹配接口/状态机/页面 → LLM 辅助映射（约 1-2 分钟，可离开此页稍后回来）
       </div>
 
       <!-- 范围主体 -->
@@ -93,7 +95,7 @@
               <template v-if="def.status === 'draft'">
                 <el-button size="small" :icon="Refresh" @click.stop="handleRecompute(def)">重算</el-button>
                 <el-popconfirm
-                    title="确认后范围锁定为只读，确定？"
+                    title="确认后作为生成目标与覆盖率分母，确定？"
                     width="220"
                     :disabled="!def.itemCount"
                     @confirm="handleConfirm(def)"
@@ -107,15 +109,12 @@
                       范围暂无条目，无法确认。请先「重算」识别或手动添加条目。
                     </template>
                   </el-popconfirm>
-                <el-popconfirm title="删除该范围定义及全部条目？" width="200" @confirm="handleDelete(def)">
-                  <template #reference>
-                    <el-button size="small" type="danger" plain :icon="Delete">删除</el-button>
-                  </template>
-                </el-popconfirm>
               </template>
-              <el-tag v-else type="success" effect="plain" size="small">
-                <el-icon><Lock /></el-icon> 只读
-              </el-tag>
+              <el-popconfirm title="删除该范围定义及全部条目？" width="200" @confirm="handleDelete(def)">
+                <template #reference>
+                  <el-button size="small" type="danger" plain :icon="Delete">删除</el-button>
+                </template>
+              </el-popconfirm>
             </div>
           </div>
 
@@ -124,6 +123,7 @@
             <div class="chip chip-total"><span class="num">{{ allItems(def.id).length }}</span>条目</div>
             <div class="chip"><span class="num">{{ countBy(def.id, 'ENDPOINT') }}</span>接口</div>
             <div class="chip"><span class="num">{{ countBy(def.id, 'STATE_MACHINE') }}</span>状态机</div>
+            <div class="chip"><span class="num">{{ countBy(def.id, 'PAGE') }}</span>页面</div>
             <div class="chip chip-auto"><span class="num">{{ countOrigin(def.id, 'AUTO_DIFF') }}</span>Git 识别</div>
             <div class="chip chip-llm"><span class="num">{{ countOrigin(def.id, 'LLM_MAPPED') }}</span>LLM 映射</div>
             <div class="chip chip-manual"><span class="num">{{ countOrigin(def.id, 'MANUAL') }}</span>手动</div>
@@ -135,6 +135,7 @@
               <el-radio-button value="">全部</el-radio-button>
               <el-radio-button value="ENDPOINT">接口</el-radio-button>
               <el-radio-button value="STATE_MACHINE">状态机</el-radio-button>
+              <el-radio-button value="PAGE">页面</el-radio-button>
             </el-radio-group>
             <el-input
               v-model="keyword"
@@ -145,7 +146,6 @@
               class="kw-input"
             />
             <el-button
-              v-if="def.status === 'draft'"
               size="small"
               type="primary"
               plain
@@ -166,8 +166,8 @@
           >
             <el-table-column label="类型" width="92" align="center">
               <template #default="{ row: item }">
-                <el-tag :type="item.itemType === 'ENDPOINT' ? 'primary' : 'warning'" size="small" effect="light">
-                  {{ item.itemType === 'ENDPOINT' ? '接口' : '状态机' }}
+                <el-tag :type="typeTag(item.itemType)" size="small" effect="light">
+                  {{ typeLabel(item.itemType) }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -185,9 +185,24 @@
               </template>
             </el-table-column>
             <el-table-column prop="note" label="说明" min-width="200" show-overflow-tooltip />
-            <el-table-column v-if="def.status === 'draft'" label="" width="60" align="center">
+            <el-table-column label="" width="60" align="center">
               <template #default="{ row: item }">
-                <el-button text type="danger" size="small" :icon="Delete" @click="handleRemoveItem(def, item)" />
+                <!-- v9.0: 已确认范围删条目会改变覆盖率分母，二次确认；草稿态直接删 -->
+                <el-popconfirm
+                  v-if="def.status !== 'draft'"
+                  title="已确认范围删除条目会改变覆盖率分母，确定？"
+                  width="250"
+                  @confirm="handleRemoveItem(def, item)"
+                >
+                  <template #reference>
+                    <el-button text type="danger" size="small" :icon="Delete" />
+                  </template>
+                </el-popconfirm>
+                <el-button
+                  v-else
+                  text type="danger" size="small" :icon="Delete"
+                  @click="handleRemoveItem(def, item)"
+                />
               </template>
             </el-table-column>
           </el-table>
@@ -202,11 +217,13 @@
           <el-radio-group v-model="itemDialog.itemType">
             <el-radio-button value="ENDPOINT">接口</el-radio-button>
             <el-radio-button value="STATE_MACHINE">状态机</el-radio-button>
+            <el-radio-button value="PAGE">页面</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item :label="itemDialog.itemType === 'ENDPOINT' ? '引用' : '状态机ID'">
+        <el-form-item :label="itemDialog.itemType === 'ENDPOINT' ? '引用' : itemDialog.itemType === 'PAGE' ? '路由/路径' : '状态机ID'">
           <el-input v-model="itemDialog.itemRef"
-            :placeholder="itemDialog.itemType === 'ENDPOINT' ? 'GET /wx/order/list' : '状态机 id'" />
+            :placeholder="itemDialog.itemType === 'ENDPOINT' ? 'GET /wx/order/list'
+              : itemDialog.itemType === 'PAGE' ? '/collect 或页面文件路径' : '状态机 id'" />
         </el-form-item>
         <el-form-item label="变更类型">
           <el-select v-model="itemDialog.changeKind" style="width:100%">
@@ -228,7 +245,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  CollectionTag, Close, Plus, Refresh, Check, Delete, Search, Loading, Lock
+  CollectionTag, Close, Plus, Refresh, Check, Delete, Search, Loading
 } from '@element-plus/icons-vue'
 import {
   getScopeList, createScope, getGitRefs, getScopeItems,
@@ -258,6 +275,12 @@ const itemDialog = reactive({
 
 function kindLabel(kind) {
   return { ADDED: '新增', MODIFIED: '变更', AFFECTED: '受影响' }[kind] || kind
+}
+function typeLabel(type) {
+  return { ENDPOINT: '接口', STATE_MACHINE: '状态机', PAGE: '页面' }[type] || type
+}
+function typeTag(type) {
+  return { ENDPOINT: 'primary', STATE_MACHINE: 'warning', PAGE: 'success' }[type] || 'info'
 }
 function originLabel(origin) {
   return { AUTO_DIFF: 'Git 识别', LLM_MAPPED: 'LLM 映射', MANUAL: '手动' }[origin] || origin
@@ -307,6 +330,10 @@ async function loadGitRefs() {
   try {
     const res = await getGitRefs(props.projectId)
     gitRefs.value = res.data
+    // v8.9.8: 常规迭代基线即主干——自动预填默认基线，用户无需手选（可改）
+    if (!createForm.baselineRef && gitRefs.value?.defaultBaseline) {
+      createForm.baselineRef = gitRefs.value.defaultBaseline
+    }
   } catch {
     gitRefs.value = false
   } finally {
@@ -325,8 +352,9 @@ watch(() => props.modelValue, (open) => {
 
 /** v8.3fix: 提交即收起表单、横幅接管进度——不再让用户在弹窗里干等 1-2 分钟 */
 async function handleCreate() {
-  if (!createForm.name.trim() || !createForm.baselineRef.trim()) {
-    ElMessage.warning('请填写范围名称与基线')
+  // v8.9.8: 基线可留空，后端自动回退仓库默认主干（异常仓库会报错提示手填）
+  if (!createForm.name.trim()) {
+    ElMessage.warning('请填写范围名称')
     return
   }
   creating.value = true
@@ -341,9 +369,13 @@ async function handleCreate() {
       ElMessage.success('本期范围草稿已创建')
     }
     createForm.name = ''
-    createForm.baselineRef = ''
+    createForm.baselineRef = gitRefs.value?.defaultBaseline || ''
     emit('changed')
     await loadList()
+    // 分析旧于最新提交时提示重分析后重算，避免映射表过期导致系统性漏识别
+    if (res.data?.analysisStale) {
+      ElMessage.warning('代码分析旧于最新提交，识别可能漏项——建议重新分析后点「重算」')
+    }
   } catch (e) {
     // 单例冲突等业务错误由拦截器提示；保留表单内容供修正
   } finally {

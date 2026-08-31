@@ -33,12 +33,20 @@ import java.util.stream.Collectors;
 
 /**
  * v8.1: 范围识别流水线——Git diff 文件集 → 接口/状态机映射 → LLM 补充 → 人工确认。
+ * v9.0: 分析完成后自动识别并锁定（autoSyncAfterAnalysis，重新分析 = 刷新范围）；
+ * 已确认范围放开条目增删，锁定语义收敛为「重算/重复确认受限，条目可人工调整」。
  */
 @Service
 public class ScopeService {
 
     private static final Logger log = LoggerFactory.getLogger(ScopeService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /** v8.9.8: 视为前端变更文件的扩展名（JS/TS 太噪不逐文件入范围） */
+    private static final List<String> FRONTEND_FILE_EXTS =
+            List.of(".vue", ".jsx", ".tsx", ".svelte", ".wxml", ".axml", ".html");
+    /** PAGE 条目上限——防组件库批量重构撑爆范围清单 */
+    private static final int PAGE_ITEMS_CAP = 30;
 
     @Autowired
     private ProjectRepository projectRepository;
@@ -56,6 +64,9 @@ public class ScopeService {
     private StateMachineRepository stateMachineRepository;
     @Autowired
     private ScopeMappingAgent scopeMappingAgent;
+
+    /** v9.0: 分析后自动创建的范围名（全自动流程下用户不命名） */
+    private static final String AUTO_SCOPE_NAME = "本期范围";
 
     // ==================== 查询 ====================
 
@@ -87,6 +98,8 @@ public class ScopeService {
         }
         Map<String, Object> refs = gitDiffService.listRefs(project.getSourcePath());
         refs.put("git", true);
+        // v8.9.8: 供前端预填基线默认值（留空创建时后端同样回退此值）
+        refs.put("defaultBaseline", gitDiffService.detectDefaultBaseline(project.getSourcePath()));
         return refs;
     }
 
@@ -98,8 +111,22 @@ public class ScopeService {
         if (name == null || name.isBlank()) {
             throw BusinessException.invalidParam("范围名称不能为空");
         }
-        if (baselineRef == null || baselineRef.isBlank()) {
-            throw BusinessException.invalidParam("基线引用不能为空");
+        // v8.9.8: 基线留空时自动回退仓库默认主干（origin/HEAD → master → main），
+        // 常规迭代基线即主干，免手选；探测不到才要求显式输入（异常仓库不静默掩盖）
+        String baseline = baselineRef == null ? "" : baselineRef.trim();
+        Project project = requireProject(projectId);
+        if (baseline.isBlank()) {
+            if (project.getSourcePath() == null || project.getSourcePath().isBlank()
+                    || !gitDiffService.isGitRepo(project.getSourcePath())) {
+                throw BusinessException.invalidParam("非 Git 仓库无法自动探测基线，请手动填写基线引用");
+            }
+            String detected = gitDiffService.detectDefaultBaseline(project.getSourcePath());
+            if (detected == null) {
+                throw BusinessException.invalidParam(
+                        "未探测到默认基线（无 origin/HEAD 且无 master/main 分支），请手动填写基线引用");
+            }
+            baseline = detected;
+            log.info("[Scope] 基线留空，自动回退默认主干: {}", baseline);
         }
         // v8.3fix: 单例约束——一个项目同一时间只允许一个本期范围（草稿或已确认），
         // 多个并存会让覆盖率分母与生成目标集产生歧义（此前 latestConfirmed 静默取最新）
@@ -112,7 +139,6 @@ public class ScopeService {
             throw BusinessException.invalidState("该项目已存在本期范围「" + cur.getName()
                     + "」（" + stateLabel + "）。刷新识别请用「重算」；开启新迭代请先删除旧范围");
         }
-        Project project = requireProject(projectId);
         if (project.getSourcePath() == null || project.getSourcePath().isBlank()) {
             throw BusinessException.invalidParam("项目未配置源码路径，无法自动识别");
         }
@@ -124,11 +150,18 @@ public class ScopeService {
             throw BusinessException.invalidState("请先完成代码分析，再创建本期范围");
         }
 
+        // v8.9.8: 时效性护栏——分析结果旧于 HEAD 提交时，映射表与当前代码不一致会系统性漏识别，
+        // 不阻断（存量分析仍有参考价值）但向前端透出提示，引导重分析后重算（recompute）
+        boolean analysisStale = isAnalysisStale(projectId, project);
+        if (analysisStale) {
+            log.warn("[Scope] 代码分析结果旧于 HEAD 提交，识别可能漏项——建议重新分析后点「重算」");
+        }
+
         ScopeDefinition def = new ScopeDefinition();
         def.setId(newId());
         def.setProjectId(projectId);
         def.setName(name.trim());
-        def.setBaselineRef(baselineRef.trim());
+        def.setBaselineRef(baseline);
         def.setStatus(ScopeDefinition.STATUS_DRAFT);
         definitionRepository.save(def);
 
@@ -136,6 +169,7 @@ public class ScopeService {
             log.info("[Scope] 草稿 {} 创建（非 Git 仓库，跳过自动识别，等待手动添加条目）", def.getId());
             Map<String, Object> r = toMap(def);
             r.put("autoIdentified", false);
+            r.put("analysisStale", analysisStale);
             return r;
         }
 
@@ -143,13 +177,77 @@ public class ScopeService {
         log.info("[Scope] 草稿 {} 创建完成: {} 条范围项", def.getId(), created);
         Map<String, Object> r = toMap(def);
         r.put("autoIdentified", true);
+        r.put("analysisStale", analysisStale);
         return r;
+    }
+
+    /**
+     * v9.0: 分析完成后自动识别本期范围——基线自动回退默认主干（origin/HEAD → master → main），
+     * 识别出条目即确认锁定，配合前端隐藏确认入口的全自动流程（重新分析 = 刷新范围）。
+     * 系统内部调用：不走 assertOperateAccess（@Async 分析线程无安全上下文，走公开方法必 40303），
+     * 一切失败由调用方兜底（AnalysisService 只告警），不影响分析完成状态。
+     */
+    @Transactional
+    public void autoSyncAfterAnalysis(String projectId) {
+        Project project = projectRepository.findById(projectId).orElse(null);
+        if (project == null || project.getSourcePath() == null || project.getSourcePath().isBlank()
+                || !gitDiffService.isGitRepo(project.getSourcePath())) {
+            return;   // 无源码/非 Git 仓库：维持手动兜底路径
+        }
+        CodeAnalysis analysis = latestAnalysis(projectId);
+        if (analysis == null) {
+            log.warn("[Scope] 自动识别跳过 {}: 缺少代码分析结果", projectId);
+            return;
+        }
+        // 重建语义：删除旧范围（含已确认）后重新识别——重新分析即刷新范围
+        List<ScopeDefinition> existing =
+                definitionRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+        for (ScopeDefinition old : existing) {
+            itemRepository.deleteByDefinitionId(old.getId());
+            definitionRepository.delete(old);
+        }
+        String baseline = gitDiffService.detectDefaultBaseline(project.getSourcePath());
+        if (baseline == null || baseline.isBlank()) {
+            log.warn("[Scope] 自动识别跳过 {}: 未探测到默认基线（无 origin/HEAD 且无 master/main），请手动创建范围",
+                    projectId);
+            return;
+        }
+        ScopeDefinition def = new ScopeDefinition();
+        def.setId(newId());
+        def.setProjectId(projectId);
+        def.setName(AUTO_SCOPE_NAME);
+        def.setBaselineRef(baseline);
+        def.setStatus(ScopeDefinition.STATUS_DRAFT);
+        definitionRepository.save(def);
+        try {
+            runIdentification(def, project, analysis);
+        } catch (BusinessException e) {
+            // 典型：基线与 HEAD 无差异——不建范围，引导走手动兜底
+            log.info("[Scope] 自动识别未产出范围 {}: {}", projectId, e.getMessage());
+            definitionRepository.delete(def);
+            return;
+        }
+        long count = itemRepository.countByDefinitionId(def.getId());
+        if (count > 0) {
+            def.setStatus(ScopeDefinition.STATUS_CONFIRMED);
+            definitionRepository.save(def);
+            log.info("[Scope] 自动识别完成 {}: 范围 {} 已锁定（{} 条，基线 {}）",
+                    projectId, def.getId(), count, baseline);
+        } else {
+            log.warn("[Scope] 自动识别 0 条 {}: 保留草稿待手动补充（查看 → 本期范围）", projectId);
+        }
     }
 
     /** 识别流水线：diff → 接口映射 → 状态机影响面 → LLM 补充。返回新建条目数 */
     private int runIdentification(ScopeDefinition def, Project project, CodeAnalysis analysis) {
         List<Map<String, String>> changed = gitDiffService.diffFiles(
                 project.getSourcePath(), def.getBaselineRef(), def.getHeadRef());
+        if (changed.isEmpty()) {
+            // v8.9.8: 基线与 HEAD 无差异——典型场景是当前 HEAD 就在基线主干上（未拉迭代分支），
+            // 静默建空范围会让用户误以为本期无变更，直接报错引导
+            throw BusinessException.invalidState("基线「" + def.getBaselineRef()
+                    + "」与当前代码无差异：请确认已切换到迭代分支/代码已更新，或手动指定更早的基线");
+        }
         try {
             def.setChangedFiles(objectMapper.writeValueAsString(changed));
         } catch (Exception ignored) {
@@ -219,8 +317,89 @@ public class ScopeService {
                     "LLM 映射: " + str(s.get("reason"))));
         }
 
+        // [4] v8.9.8: 前端变更映射——diff 本就含前端文件，此前只消费 backendResult 导致
+        // 纯前端迭代识别为 0 条；现按路由文件命中出 PAGE 条目，未命中路由的前端文件聚合为一条兜底项
+        Map<String, Object> frontendResult = parseFrontendResult(analysis);
+        items.addAll(mapFrontendChanges(def.getId(), frontendResult, addedPaths, modifiedPaths));
+
         itemRepository.saveAll(items);
         return items.size();
+    }
+
+    /** 前端变更 → PAGE 条目：路由文件命中逐路由出项，其余前端文件聚合一条（避免逐文件噪声） */
+    private List<ScopeItem> mapFrontendChanges(String definitionId, Map<String, Object> frontendResult,
+                                               Set<String> addedPaths, Set<String> modifiedPaths) {
+        List<ScopeItem> out = new ArrayList<>();
+        Set<String> matchedFiles = new LinkedHashSet<>();
+        Set<String> addedRoutePaths = new LinkedHashSet<>();
+        for (Map<String, Object> route : castList(frontendResult.get("routes"))) {
+            String file = str(route.get("file"));
+            String kind = matchKind(file, addedPaths, modifiedPaths);
+            if (kind == null) {
+                continue;
+            }
+            matchedFiles.add(file);
+            String routePath = str(route.get("path"));
+            if (routePath.isEmpty() || !addedRoutePaths.add(routePath)) {
+                continue;   // 同一路由可能被多个文件定义，去重后只出一条（kind 取首个命中）
+            }
+            String name = str(route.get("name"));
+            out.add(buildItem(definitionId, ScopeItem.TYPE_PAGE, routePath,
+                    kind, ScopeItem.ORIGIN_AUTO_DIFF,
+                    "命中路由文件: " + file + (name.isEmpty() ? "" : "（" + name + "）")));
+            if (out.size() >= PAGE_ITEMS_CAP) {
+                return out;
+            }
+        }
+        // 未命中任何路由的前端变更文件（页面组件/样式等）：聚合一条，保证纯前端迭代范围非空可确认；
+        // 组件级细节由生成侧 RAG/componentSummaries 承接，范围模型只到页面粒度
+        int unmatched = 0;
+        for (String p : addedPaths) {
+            if (isFrontendFile(p, matchedFiles)) {
+                unmatched++;
+            }
+        }
+        for (String p : modifiedPaths) {
+            if (isFrontendFile(p, matchedFiles)) {
+                unmatched++;
+            }
+        }
+        if (unmatched > 0 && out.size() < PAGE_ITEMS_CAP) {
+            out.add(buildItem(definitionId, ScopeItem.TYPE_PAGE, "frontend-files",
+                    ScopeItem.KIND_MODIFIED, ScopeItem.ORIGIN_AUTO_DIFF,
+                    unmatched + " 个前端变更文件未匹配到路由定义"));
+        }
+        return out;
+    }
+
+    private boolean isFrontendFile(String path, Set<String> matchedFiles) {
+        String lower = path.toLowerCase();
+        for (String ext : FRONTEND_FILE_EXTS) {
+            if (lower.endsWith(ext)) {
+                for (String mf : matchedFiles) {
+                    if (pathMatch(mf, path)) {
+                        return false;   // 已被路由命中消费，不重复计入兜底项
+                    }
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 分析结果时效性：分析创建时间 < HEAD 提交时间 → 映射表可能旧于代码 */
+    private boolean isAnalysisStale(String projectId, Project project) {
+        CodeAnalysis analysis = latestAnalysis(projectId);
+        if (analysis == null || analysis.getCreatedAt() == null) {
+            return false;   // 无分析时映射本就为空，谈不上过期（另有前置提示）
+        }
+        Long headEpoch = gitDiffService.headCommitEpoch(project.getSourcePath());
+        if (headEpoch == null) {
+            return false;
+        }
+        long analysisEpoch = analysis.getCreatedAt()
+                .atZone(java.time.ZoneId.systemDefault()).toEpochSecond();
+        return analysisEpoch < headEpoch;
     }
 
     /** 归一化后缀双向匹配（兼容 sourcePath 指向仓库子目录） */
@@ -302,7 +481,7 @@ public class ScopeService {
                                        String itemType, String itemRef, String changeKind, String note) {
         projectAccessService.assertOperateAccess(projectId);
         ScopeDefinition def = requireDefinitionOfProject(projectId, definitionId);
-        assertDraft(def);
+        // v9.0: 已确认范围亦允许条目增删——自动锁定后人工剔除噪声条目/补充遗漏（覆盖率分母随之变化）
         validateTypeAndKind(itemType, changeKind);
         if (itemRef == null || itemRef.isBlank()) {
             throw BusinessException.invalidParam("条目引用不能为空");
@@ -317,7 +496,7 @@ public class ScopeService {
     public void removeItem(String projectId, String definitionId, String itemId) {
         projectAccessService.assertOperateAccess(projectId);
         ScopeDefinition def = requireDefinitionOfProject(projectId, definitionId);
-        assertDraft(def);
+        // v9.0: 与 addItem 一致，已确认范围允许删除条目（前端删除时二次确认提示分母变化）
         itemRepository.findById(itemId).ifPresent(item -> {
             if (item.getDefinitionId().equals(def.getId())) {
                 itemRepository.delete(item);
@@ -378,11 +557,28 @@ public class ScopeService {
     }
 
     private Map<String, Object> parseBackendResult(CodeAnalysis analysis) {
+        // v8.9.8: 显式判空——此前靠 try 块捕 NPE 兜底，隐晦且日志误导（“解析失败”实为无分析）
+        if (analysis == null || analysis.getBackendResult() == null) {
+            return Map.of();
+        }
         try {
             Map<String, Object> map = JsonHelper.parseMap(analysis.getBackendResult());
             return map == null ? Map.of() : map;
         } catch (Exception e) {
             log.warn("[Scope] 解析 backendResult 失败: {}", e.getMessage());
+            return Map.of();
+        }
+    }
+
+    private Map<String, Object> parseFrontendResult(CodeAnalysis analysis) {
+        if (analysis == null || analysis.getFrontendResult() == null) {
+            return Map.of();
+        }
+        try {
+            Map<String, Object> map = JsonHelper.parseMap(analysis.getFrontendResult());
+            return map == null ? Map.of() : map;
+        } catch (Exception e) {
+            log.warn("[Scope] 解析 frontendResult 失败: {}", e.getMessage());
             return Map.of();
         }
     }
@@ -413,7 +609,8 @@ public class ScopeService {
 
     private void validateTypeAndKind(String itemType, String changeKind) {
         boolean validType = ScopeItem.TYPE_ENDPOINT.equals(itemType)
-                || ScopeItem.TYPE_STATE_MACHINE.equals(itemType);
+                || ScopeItem.TYPE_STATE_MACHINE.equals(itemType)
+                || ScopeItem.TYPE_PAGE.equals(itemType);
         boolean validKind = ScopeItem.KIND_ADDED.equals(changeKind)
                 || ScopeItem.KIND_MODIFIED.equals(changeKind)
                 || ScopeItem.KIND_AFFECTED.equals(changeKind);
@@ -427,7 +624,7 @@ public class ScopeService {
 
     private void assertDraft(ScopeDefinition def) {
         if (!ScopeDefinition.STATUS_DRAFT.equals(def.getStatus())) {
-            throw BusinessException.invalidState("已确认的范围为只读状态，不允许修改");
+            throw BusinessException.invalidState("已确认范围仅支持条目增删，不允许重算或重复确认");
         }
     }
 

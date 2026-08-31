@@ -62,11 +62,15 @@ public class ScopeSlicingService {
 
         Set<String> targetEndpointIds = new LinkedHashSet<>();
         Set<String> targetSmIds = new LinkedHashSet<>();
+        Set<String> targetPageRefs = new LinkedHashSet<>();
         for (ScopeItem item : items) {
             if (ScopeItem.TYPE_ENDPOINT.equals(item.getItemType())) {
                 targetEndpointIds.add(normalizeEndpointId(item.getItemRef()));
             } else if (ScopeItem.TYPE_STATE_MACHINE.equals(item.getItemType())) {
                 targetSmIds.add(item.getItemRef());
+            } else if (ScopeItem.TYPE_PAGE.equals(item.getItemType())) {
+                // v8.9.8: 页面维度进生成目标集——供前端路由注入按范围收敛（UI 用例只覆盖本期页面）
+                targetPageRefs.add(item.getItemRef());
             }
         }
 
@@ -110,12 +114,13 @@ public class ScopeSlicingService {
             setupHints.addAll(deriveSetupHints(sm, transitions, sprint));
         }
 
-        log.info("[Scope] 切片完成 {}: 目标接口 {}, 状态机 {}（sprint 转换累计 {}）",
+        log.info("[Scope] 切片完成 {}: 目标接口 {}, 状态机 {}（sprint 转换累计 {}），目标页面 {}",
                 def.getId(), endpointDetails.size(), sprintBySm.size(),
-                sprintBySm.values().stream().mapToInt(List::size).sum());
+                sprintBySm.values().stream().mapToInt(List::size).sum(), targetPageRefs.size());
 
         return new ScopeSlice(def.getId(), def.getName(), def.getBaselineRef(),
-                targetEndpointIds, endpointDetails, sprintBySm, historicalBySm, setupHints);
+                targetEndpointIds, endpointDetails, sprintBySm, historicalBySm, setupHints,
+                targetPageRefs);
     }
 
     /**
@@ -422,11 +427,12 @@ public class ScopeSlicingService {
                              List<Map<String, Object>> targetEndpointsDetail,
                              Map<String, List<Map<String, Object>>> sprintTransitionsBySmId,
                              Map<String, List<Map<String, Object>>> historicalTransitionsBySmId,
-                             List<Map<String, Object>> setupHints) {
+                             List<Map<String, Object>> setupHints,
+                             Set<String> targetPageRefs) {
 
         public static final ScopeSlice EMPTY =
                 new ScopeSlice(null, null, null, Set.of(), List.of(),
-                        Map.of(), Map.of(), List.of());
+                        Map.of(), Map.of(), List.of(), Set.of());
 
         public boolean isEmpty() {
             return definitionId == null;
