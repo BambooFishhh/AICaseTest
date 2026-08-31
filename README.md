@@ -1,6 +1,47 @@
 # AICaseTest — AI 驱动的测试用例生成系统
 
-一个基于代码分析 + 状态机提取 + LLM 的智能测试用例生成平台。自动分析项目代码结构，提取业务状态机，生成结构化、AI 可执行的测试用例，并通过 Playwright 自动执行、录屏取证、覆盖率度量、语义检索与数据治理，形成"分析 → 生成 → 执行 → 回归"的完整闭环。
+![version](https://img.shields.io/badge/version-v9.3-blue) ![backend-tests](https://img.shields.io/badge/backend%20tests-542%20passing-brightgreen) ![java](https://img.shields.io/badge/Java-17-orange) ![springboot](https://img.shields.io/badge/Spring%20Boot-3.2-6DB33F) ![vue](https://img.shields.io/badge/Vue-3-42B883) ![license](https://img.shields.io/badge/license-MIT-lightgrey)
+
+一个基于代码分析 + 状态机提取 + LLM 的智能测试用例生成平台。自动分析项目代码结构，提取业务状态机，生成结构化、**AI 可执行**的测试用例，并通过 Playwright 自动执行、录屏取证、覆盖率度量、语义检索与数据治理，形成"分析 → 范围 → 生成 → 执行 → 回归"的完整闭环。
+
+**核心亮点**
+
+- 🔍 **全链路可信**：分析器 ground truth 证据校验、状态机转换证据比对、断言失败带期望/实际差异——每一步都不假通过
+- 🎯 **本期范围聚焦**：Git 基线 diff 自动识别本期变更接口/页面，分析完成自动锁定范围，生成只聚焦本次迭代
+- 🗣️ **用例人话化**：步骤全 UI 话术（页面元素操作），Skill + Linter + 评审三层防接口化回潮
+- 🤖 **真实浏览器执行**：Playwright 驱动 + hash 路由感知导航 + 占位符断言语义匹配，截图/录屏/HTML 报告全证据链
+- 🔁 **生成与连接解耦**：断网/刷新不取消生成，事件持久化 + attach 无缝续播
+- 📊 **可观测与高可用**：Prometheus 指标、Grafana 看板告警、任务租约恢复、多供应商降级路由、双实例就绪
+
+## 架构总览
+
+```mermaid
+flowchart LR
+    subgraph client["浏览器"]
+        FE["Vue 3 + Element Plus"]
+    end
+    subgraph backend["Spring Boot 3.2 后端"]
+        API["REST API / SSE"]
+        GEN["生成 Agent 链路"]
+        EXEC["执行 Agent 链路"]
+    end
+    LLM["LLM<br/>mimo-v2.5 / Embedding"]
+    MILVUS["Milvus 2.4<br/>语义去重 / RAG"]
+    DB[("MySQL 8<br/>Flyway")]
+    REDIS[("Redis 7<br/>运行态 / 队列")]
+    PW["Playwright MCP<br/>真实浏览器 + 录屏"]
+
+    FE -->|REST + SSE| API
+    API --> GEN
+    API --> EXEC
+    GEN --> LLM
+    GEN --> MILVUS
+    EXEC --> PW
+    PW -->|截图 / WebM 录屏| EXEC
+    API --> DB
+    API --> REDIS
+    EXEC --> DB
+```
 
 ## 技术栈
 
@@ -137,7 +178,7 @@ npx playwright install chromium
 
 项目自 **vT1** 起建立独立工程基线版本线，测试与运维基线如下：
 
-- 后端单元/集成测试：34 个（含 Testcontainers MySQL/Redis；本地无 Docker 自动跳过）
+- 后端单元/集成测试：**542 个**（v9.3 全量回归绿；含 Testcontainers MySQL/Redis；本地无 Docker 自动跳过）
 - 前端单元测试：7 个（Vitest：状态文案、进度组件、auth store）
 - 覆盖率门禁：后端 JaCoCo（verify 阶段）、前端 Vitest v8 阈值
 - CI：后端 `mvn test` + 前端 `npm run build` + `docker compose config` 校验
@@ -183,7 +224,17 @@ AICaseTest/
 
 ## 版本现状
 
-当前版本：**v8.9.5（水平扩容交付 + 双实例演练 + 容量基线首组数据，阶段 6 收官）**，生产线基线为 vP5（压测与容量）。
+当前版本：**v9.3（litemall 实测回归修复：断言占位符元描述 / 编号模块归组重编 / 面包屑口径）**，主线基线 v9.x，工程基线 vP5（压测与容量）。
+
+- v9.3 要点：litemall 实测三处回归修复——**断言误判**（占位符元描述子句"且N为实际商品列表数量"不再当页面文案匹配；Java `\b` 是 Unicode 感知的、"且N为"中 N 形不成词边界，改显式 lookaround；顺带修复 `{orderId}` 变量名被抽成英文 token）；**编号乱序**（列表按 module 分组渲染而编号按生成产出序分配，LLM 按覆盖端点产出导致组内跳号——各落库路径收口时按模块归组重编 projectSeq，存量数据 SQL 同规则重编）；**面包屑口径**（执行结果/批次结果上一级改「测试用例」与返回按钮同口径）。后端 542 测试全绿。
+
+- v9.2 要点：**用例人话化根因修复**——`skills/test-generation-prd-footer.md`（v5.13 旧文件覆盖代码 prompt，历史约束从未生效）重写与代码 fallback 同步；FEW_SHOT_EXAMPLES 全 UI 化（旧示例含 api_call 教坏模型，示例即行为）；UiLanguageLinter 扩展五项检查 + 评审层拒绝全 api_call 用例；确定性后处理 normalizeModules（模块归一）/injectRouteSelectors（路由选择器注入）。**执行器**：URL 命中判定感知 hash 路由（修复 `base/collect#/` 假通过）、route 选择器确定性导航 history→hash 兜底、抽象断言诚实降级 skipped、占位符语义匹配（'共 N 件收藏' N 按数字）。**前端**：流式重影修复（草稿 renderKey）、追加同名草稿隐藏、执行结果媒体竖版展示。
+
+- v9.1 要点：**生成与 SSE 彻底解耦**（替代 v8.9.8 宽限机制）——断连/刷新永不取消生成；事件广播器多订阅者；progress/case 事件持久化 `agent_task_events`；新端点 `generate-stream-attach` 回放持久化事件 + 无缝续播实况；前端 resumeGenerationIfActive 重写为 attach。
+
+- v9.0 要点：**本期范围全自动**——分析完成自动锁定默认主干 diff 范围（autoSyncAfterAnalysis 双路径挂钩，重新分析=重建范围）；detectDefaultBaseline 三级探测（origin/HEAD→master→main）；G17 顺序修复（范围激活时接口全量进上下文，11/11，"接口覆盖不全"根因）；已确认范围放开增删，前端降级查看入口。
+
+- v8.9.8 要点：litemall 实测驱动四卡修复（12.11–12.14）——浏览器移动模拟（iPhone 14 设备参数）、localStorage 登录态注入、执行导航分支、live 评测口径修复（接口覆盖 0.45→1.0）、SSE 首事件与事件持久化雏形。
 
 - v8.9.5 要点：计划书「阶段 6」任务 12.8+12.7——**水平扩容指南**（拓扑/环境清单/LLM 限流聚合公式/Nginx ip_hash 与重连方案对比）；**双实例演练实证**：ShedLock 表分容器持锁实时刷新、JWT 跨实例直用、DB 状态互通（B 创建 A 可见），SSE 重连完整链路待 mock LLM 补做；**容量基线首组**：短请求 300 发 0 失败 Avg=12.4ms/P95=26ms，印证 Web 层非瓶颈。12.9 真实回测遵指示跳过。后端 491 测试全绿。
 
@@ -309,6 +360,11 @@ AICaseTest/
 | v8.9.4 | 凭据卫生（票据 Redis 双实现+作用域白名单/媒体短票据切换/admin 弱回退清零） | ✅ 完成 |
 | v8.9.5 | 水平扩容交付+双实例演练+容量基线首组（扩容指南/三机制实证/短请求 P95=26ms） | ✅ 完成 |
 | v8.9.6 | VueAnalyzer 共享池+并发压测补数（vueLlmExecutor 受管池/1200 请求 RPS=202 P95=82ms） | ✅ 完成 |
+| v8.9.8 | litemall 实测四卡修复（移动模拟/登录态注入/执行导航/live 评测口径/SSE 首事件） | ✅ 完成 |
+| v9.0 | 范围全自动（分析完成自动锁定/默认主干探测/G17 顺序修复/前端查看入口） | ✅ 完成 |
+| v9.1 | 生成与 SSE 解耦（断连不取消/事件持久化/attach 无缝续播） | ✅ 完成 |
+| v9.2 | 用例人话化+执行器修复（skill 重写/Linter 五项/评审拒绝 api_call/hash 导航/占位符断言/流式重影） | ✅ 完成 |
+| v9.3 | 实测回归修复（占位符元描述剔除/编号模块归组重编/面包屑口径） | ✅ 完成 |
 | vT1 | 测试与运维基线（独立工程版本线） | ✅ 完成 |
 | vT2 | 服务层与集成测试（JWT/工具类/JPA） | ✅ 完成 |
 | vT3 | 前端测试基线（Vitest/Vue Test Utils） | ✅ 完成 |
@@ -325,6 +381,17 @@ AICaseTest/
 | vP5 | 压测与容量（k6 基线/线程池调优/大数据量分页与索引验证） | ✅ 完成 |
 
 详细版本历史见 [docs/迭代历程.md](docs/迭代历程.md)，逐版本变更记录见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
+
+## 文档导航
+
+每个功能版本在 `docs/vX.Y.Z/` 下维护**三件套**：`PRD_vX.Y.Z_*.md`（需求与验收）+ `后端技术评审_vX.Y.Z.md` + `前端技术评审_vX.Y.Z.md`（变更点/文件清单/API 契约/验证结果），最新版本：
+
+- [docs/v9.3/](docs/v9.3/) — litemall 实测回归修复（断言误判/编号乱序/面包屑）
+- [docs/v9.2/](docs/v9.2/) — 用例人话化 + 执行器导航与断言修复
+- [docs/v9.1/](docs/v9.1/) — 生成与 SSE 解耦
+- [docs/v9.0/](docs/v9.0/) — 本期范围全自动
+
+其它文档：[API 概览](docs/API概览.md) · [运维手册](docs/运维手册.md) · [水平扩容指南](docs/水平扩容指南.md) · [容量基线报告](docs/容量基线报告.md) · [长期迭代计划书](docs/长期迭代计划书.md) · [Spring AI 迁移说明](docs/spring-ai-migration.md)
 
 ## API 文档
 

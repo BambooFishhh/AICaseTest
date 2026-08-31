@@ -4,6 +4,55 @@
 
 ---
 
+## v9.3 — litemall 实测回归修复（断言误判 / 编号乱序 / 面包屑口径）
+**日期**: 2026-08-31
+**基线**: v9.2
+**主题**: litemall 实测暴露的三处回归修复。三件套见 [docs/v9.3/](v9.3/)。
+
+- **断言**：占位符元描述子句（"且N为实际商品列表数量"）不再当页面文案——`stripPlaceholderClauses` 剔除后提取中文段/英文 token，引号短语由占位符正则独立权威校验；子句占位符检测改显式 lookaround（Java `\b` 是 Unicode 感知的，"且N为"中 N 两侧都是汉字形不成词边界）；顺带修复 `{orderId}` 变量名被抽成英文 token 的同类误判（`ExecutionAssert`）
+- **编号**：项目内展示序号按模块归组重编 `resequenceProjectSeq`——LLM 按覆盖端点产出导致同模块编号被打散（分组渲染组内 1,2,13,14 观感乱序），重编后组内编号连续；挂钩 replaceAll/追加/JSON 导入/XMind 导入/复制五路径，存量数据同规则 SQL 重编（`TestCasePersistenceService`）
+- **前端**：执行结果/批次结果面包屑上一级改「测试用例」（与返回按钮同口径，crumbLink 补映射）
+
+**验证**：后端全量 542/542 绿（新增 ExecutionAssertTest 4 例 + TestCasePersistenceResequenceTest 3 例）；litemall 实测断言通过、编号组内连续。
+
+## v9.2 — 用例人话化 + 执行器导航与断言修复
+**日期**: 2026-08-31
+**基线**: v9.1
+**主题**: 用例语言质量根因修复（skill 漂移）+ 执行器 hash 导航/断言增强 + 前端流式重影修复。三件套见 [docs/v9.2/](v9.2/)。
+
+- **生成**：skill 根因修复——`skills/test-generation-prd-footer.md`（v5.13 旧文件覆盖代码 prompt，新约束从未生效）重写与代码 fallback 同步；FEW_SHOT_EXAMPLES 全 UI 化（旧示例含 api_call 教坏模型）；确定性后处理 `normalizeModules`（候选互包含+批内词干投票）/`injectRouteSelectors`（路由 target 注入 route 选择器）；范围上下文顺序修复（endpoint context=范围目标集合全量绕过 G17）
+- **Linter/评审**：UiLanguageLinter 扩展（接口化话术/变量占位符/api_call/缺引号锚点/引号内占位符）；评审层拒绝全 api_call 用例；ai-review.md 加 v9.2 检查项
+- **执行器**：URL 命中判定感知 hash 路由（修复 `base/collect#/` 假通过）；结构化模式 route 选择器走 `navigateToRoute`（history 形式未命中自动尝试 hash 形式），Agent 模式 hash 兜底；抽象断言诚实降级 skipped；占位符语义匹配（'共 N 件收藏' N 按数字正则匹配）
+- **前端**：TestCaseList 草稿 renderKey 修复 el-table 流式重影（row-key undefined 冲突）；追加模式同名草稿隐藏+横幅计数；执行结果截图/录屏改手机竖版比例；执行环境前置步骤改大弹窗编辑器
+
+**验证**：新增 TestGeneratorAgentModuleNormalizeTest/ExecutionAgentNavigationTest 及 Linter/Assert 扩展；全量回归绿；litemall 实测用例全 UI 话术、hash 导航命中、断言数字匹配通过。
+
+## v9.1 — 生成与 SSE 解耦（断连不取消 + attach 续播）
+**日期**: 2026-08-31
+**基线**: v9.0
+**主题**: 生成任务与 SSE 连接生命周期彻底解耦（12.11 彻底方案，替代 v8.9.8 宽限机制）。三件套见 [docs/v9.1/](v9.1/)。
+
+- 删宽限机制：断连/刷新**永不取消**生成；事件广播器多订阅者（发起连接=首个订阅者，attach 重接=后续订阅者，单连接失败仅摘除自身）
+- progress/case 事件持久化到 `agent_task_events`（`AgentTaskService.recordGenerationEvent`），跨实例可回放
+- 新端点 `GET .../testcases/generate-stream-attach`：RUNNING+本地广播器→续播实况；终态/无任务/他实例→回放持久化事件后按终态收尾
+- 前端 `resumeGenerationIfActive` 重写为 attach 模式（testcase.js/ProjectDetail.vue），重进页面进度与草稿无损恢复
+
+**验证**：GenerationReattachTest 6 例绿（分支路由全覆盖）；实测断网/刷新重进无损续播。
+
+## v9.0 — 本期范围全自动
+**日期**: 2026-08-31
+**基线**: v8.9.8
+**主题**: 范围链路自动化收口（计划书 12.15 落地）。三件套见 [docs/v9.0/](v9.0/)。
+
+- 分析完成自动锁定范围：`ScopeService.autoSyncAfterAnalysis` + AnalysisService 双路径挂钩，重新分析=重建范围
+- `GitDiffService.detectDefaultBaseline`：origin/HEAD → master → main 三级探测，git-refs 接口透出 `defaultBaseline`
+- **G17 顺序修复**（接口覆盖不全根因）：范围激活时 endpoint context=范围目标集合全量（11/11），不再经关键词过滤误杀
+- 已确认范围放开条目增删；前端「本期范围」降级为查看入口；空范围禁用「确认锁定」（含 ac55fb0 UX 缺口修复）
+
+**验证**：GitDiffServiceTest 4 例 + ScopeServiceAutoSyncTest + ScopeServiceFrontendMappingTest 3 例绿；litemall 实测分析完成自动锁定 11/11 接口范围。
+
+---
+
 ## v8.9.8 — litemall 实测驱动四卡修复（阶段 6 实测反馈落地）
 **日期**: 2026-08-27
 **基线**: v8.9.6
