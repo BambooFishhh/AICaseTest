@@ -34,8 +34,6 @@ class TestGeneratorAgentSelectorScopeTest {
                                                 "label", "我的收藏"))),
                         Map.of("component", "GoodsDetail", "file", "GoodsDetail.vue",
                                 "selectors", List.of(
-                                        Map.of("type", "css", "value", ".collect-icon", "element", "i",
-                                                "label", "收藏"),
                                         Map.of("type", "text", "value", "收藏", "label", "收藏")))))
                 .build();
     }
@@ -114,6 +112,25 @@ class TestGeneratorAgentSelectorScopeTest {
         List<Map<String, Object>> steps = JsonHelper.parseListMap(tc.getStructuredSteps());
         assertFalse(steps.get(1).containsKey("uiSelector"),
                 "当前路由没有对应组件选择器时不得跨池补选择器");
+    }
+
+    @Test
+    void fakeSelectorNotInRealPoolIsDroppedAndReplaced() throws Exception {
+        TestCase tc = caseWith(
+                List.of(
+                        Map.of("order", 1, "type", "ui_action", "action", "打开商品详情页",
+                                "target", "/goods/456", "expected", "页面加载",
+                                "uiSelector", Map.of("type", "route", "value", "/goods/456")),
+                        Map.of("order", 2, "type", "ui_action", "action", "点击收藏图标",
+                                "target", "收藏图标", "expected", "状态变化",
+                                "uiSelector", Map.of("type", "css", "value", ".collect-icon"))));
+
+        agent.enrichStructuredSteps(frontendResult(), tc);
+
+        List<Map<String, Object>> steps = JsonHelper.parseListMap(tc.getStructuredSteps());
+        Map<String, Object> selector = (Map<String, Object>) steps.get(1).get("uiSelector");
+        assertEquals("text", selector.get("type"), "编造 css 选择器应被剔除并换成真实池 text 选择器");
+        assertEquals("收藏", selector.get("value"));
     }
 
     private TestCase caseWith(List<Map<String, Object>> steps) throws Exception {

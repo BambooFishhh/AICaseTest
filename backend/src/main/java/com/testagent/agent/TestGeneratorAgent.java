@@ -1350,14 +1350,30 @@ public class TestGeneratorAgent {
                 }
             }
             if (!"ui_action".equals(step.get("type"))) continue;
-            Object selObj = step.get("uiSelector");
-            if (selObj instanceof Map
-                    && ((Map<?, ?>) selObj).get("value") != null
-                    && !String.valueOf(((Map<?, ?>) selObj).get("value")).isBlank()) {
-                continue; // 已有选择器
-            }
             String action = step.get("action") == null ? "" : String.valueOf(step.get("action"));
             String target = step.get("target") == null ? "" : String.valueOf(step.get("target"));
+            Set<String> scopedKeys = scopedSelectorKeys(
+                    selectorsByComponent, componentRoutes, currentRoute);
+            Object selObj = step.get("uiSelector");
+            if (selObj instanceof Map) {
+                Map<?, ?> sel = (Map<?, ?>) selObj;
+                Object value = sel.get("value");
+                if (value != null && !String.valueOf(value).isBlank()) {
+                    String selType = String.valueOf(sel.get("type"));
+                    if ("route".equals(selType)) {
+                        continue; // 导航选择器始终有效，不参与 DOM 池校验
+                    }
+                    // v9.7: LLM 编造/跨页 css/text 选择器不固化——按当前路由真实选择器池校验，
+                    // 不在池内则剔除，交给 Agent 模式上下文定位，避免 10s 定位超时写死进用例
+                    if (!scopedKeys.isEmpty() && !scopedKeys.contains(selectorKey(selType, String.valueOf(value)))) {
+                        log.warn("v9.7 drop fake/off-route selector {}:{} on route {} (step: {})",
+                                selType, value, currentRoute, action);
+                        step.remove("uiSelector");
+                    } else {
+                        continue; // 已有且命中真实池：保留
+                    }
+                }
+            }
             Map<String, Object> best = bestSelectorForRoute(
                     selectorsByComponent, componentRoutes, currentRoute, action + " " + target);
             if (best != null) {
@@ -1454,6 +1470,35 @@ public class TestGeneratorAgent {
             return null;
         }
         return bestSelector(scoped, text);
+    }
+
+    /**
+     * v9.7: 当前路由作用域内真实选择器键集合（type:value），用于校验 LLM 自填选择器。
+     */
+    private Set<String> scopedSelectorKeys(
+            Map<String, List<Map<String, Object>>> byComponent,
+            Map<String, String> componentRoutes,
+            String route) {
+        Set<String> keys = new HashSet<>();
+        if (route == null || route.isBlank()) {
+            return keys;
+        }
+        for (Map.Entry<String, List<Map<String, Object>>> entry : byComponent.entrySet()) {
+            String componentRoute = componentRoutes.getOrDefault(entry.getKey(), "");
+            if (routeMatches(componentRoute, route)) {
+                for (Map<String, Object> sel : entry.getValue()) {
+                    keys.add(selectorKey(
+                            String.valueOf(sel.getOrDefault("type", "")),
+                            String.valueOf(sel.getOrDefault("value", ""))));
+                }
+            }
+        }
+        return keys;
+    }
+
+    private String selectorKey(String type, String value) {
+        String v = value == null ? "" : value;
+        return type + ":" + v.trim().toLowerCase();
     }
 
     /**

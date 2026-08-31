@@ -44,6 +44,10 @@ public final class ReviewQualityChecker {
     private static final Pattern TITLE_ONLY = Pattern.compile(
             "页面显示'[^']+'标题|页面标题显示'[^']+'|页面标题为'[^']+'|标题显示'[^']+'");
 
+    /** v9.7: 执行器不支持的手势——生成/评审一律拒绝，防止左滑类用例再次落库 */
+    private static final Pattern GESTURE_STEP = Pattern.compile(
+            "左滑|右滑|上滑|长按|swipe|long\\s*press", Pattern.CASE_INSENSITIVE);
+
     /** 行为签名的通用噪声词，归一后不参与相似度计算 */
     private static final Pattern GENERIC_NOISE = Pattern.compile(
             "正确|正常|成功|失败|并|且|与|的|了|后|时|再|页面|入口|展示|跳转|点击|进入|显示|按钮|"
@@ -123,6 +127,20 @@ public final class ReviewQualityChecker {
             }
         }
         return issues;
+    }
+
+    /** v9.7: 结构化步骤含滑动/长按手势则判违规（执行器无该技能，12.17 硬规则后置兜底） */
+    public static boolean hasGestureViolation(TestCase tc) {
+        if (tc == null) {
+            return false;
+        }
+        for (Map<String, Object> step : JsonHelper.parseListMap(tc.getStructuredSteps())) {
+            if (GESTURE_STEP.matcher(str(step.get("action"))).find()
+                    || GESTURE_STEP.matcher(str(step.get("target"))).find()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean sameModuleType(TestCase a, TestCase b) {

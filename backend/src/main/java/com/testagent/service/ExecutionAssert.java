@@ -203,12 +203,14 @@ public final class ExecutionAssert {
         if (snippet.isBlank()) {
             return "skipped";  // 无 DOM 文本快照（textSnippet 缺失/为空）→ 文本断言不可执行，title 不是页面正文
         }
-        String pageText = (title + " " + snippet).toLowerCase();
+        // v9.7: DOM 文本快照按行/标签拼接，用户中心这类换行分隔的"user123 欢迎回来"、
+        // "0 待付款 1 待发货"必须在断言前归一空白，否则字面引号锚点因换行误判失败
+        String pageText = normalizeSpace(title + " " + snippet).toLowerCase();
 
         // 引号短语：正极性完整包含（含占位符时按"占位符=数字"正则语义匹配）；负极性必须不出现
-        String urlTitleText = (pageState.getOrDefault("url", "") + " " + title).toLowerCase();
+        String urlTitleText = normalizeSpace(pageState.getOrDefault("url", "") + " " + title).toLowerCase();
         for (Object[] qc : quotedChecks) {
-            String q = (String) qc[0];
+            String q = normalizeSpace((String) qc[0]);
             boolean negative = (Boolean) qc[1];
             // v9.5fix: URL 语义子句的引号短语（'/goods/' 等路径）与 url/title 比对
             String haystack = (Boolean) qc[2] ? urlTitleText : pageText;
@@ -246,6 +248,11 @@ public final class ExecutionAssert {
             }
         }
         return "passed";
+    }
+
+    /** v9.7: 页面文本/引号短语归一——连续空白（含换行、标签边界）折叠为单个空格 */
+    private static String normalizeSpace(String text) {
+        return text == null ? "" : text.trim().replaceAll("\\s+", " ");
     }
 
     /** v9.2: 含占位符的引号短语 → 正则：占位符（N/X/{var}）匹配数字，字面段原样匹配（大小写不敏感）。

@@ -117,6 +117,12 @@ public class TestCaseReviewAgent {
                 log.warn("Review reject (no structuredSteps): {}", tc.getTitle());
                 continue;
             }
+            // v9.7: 手势步骤硬拒绝——prompt 规则已被证明会偶发漏守（实测才出现左滑用例），
+            // 评审层作为最后一道闸，绝不把执行器跑不了的步骤固化进用例资产
+            if (ReviewQualityChecker.hasGestureViolation(tc)) {
+                log.warn("Review reject (手势步骤执行器不支持): {}", tc.getTitle());
+                continue;
+            }
             // v9.2: 全部步骤均为 api_call 的用例直接拒绝——UI 执行器对 api_call 一律 skip，
             // 这类用例执行价值为零（接口信息应进 apiEndpoints 关联字段，步骤必须页面操作）
             boolean allApiCall = !steps.isEmpty() && steps.stream().allMatch(

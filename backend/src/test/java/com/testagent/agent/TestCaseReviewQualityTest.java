@@ -94,6 +94,19 @@ class TestCaseReviewQualityTest {
         assertTrue(issues.isEmpty(), "带目标页引号锚点的跳转断言不得误报");
     }
 
+    @Test
+    void gestureStepIsDetectedAsViolation() throws Exception {
+        TestCase swipe = caseWith("我的收藏", "positive", "左滑取消收藏",
+                List.of(Map.of("type", "ui_action", "action", "对目标商品执行左滑操作",
+                        "target", "商品项左滑后出现的删除按钮")));
+        TestCase normal = caseWith("我的收藏", "positive", "详情页取消收藏",
+                List.of(Map.of("type", "ui_action", "action", "点击商品详情页的收藏按钮",
+                        "target", "收藏按钮")));
+
+        assertTrue(ReviewQualityChecker.hasGestureViolation(swipe), "左滑步骤必须判违规");
+        assertTrue(!ReviewQualityChecker.hasGestureViolation(normal), "普通点击不得误判");
+    }
+
     private TestCase caseWith(String module, String type, String title,
                               List<Map<String, Object>> steps) throws Exception {
         TestCase tc = new TestCase();

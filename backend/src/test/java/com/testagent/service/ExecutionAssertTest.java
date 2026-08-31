@@ -274,6 +274,24 @@ class ExecutionAssertTest {
     }
 
     @Test
+    void whitespaceNewlineBetweenAnchorTokensStillMatches() {
+        // v9.7 实测回归：用户中心页面文本按行拼接，'user123 欢迎回来' 与
+        // '0 待付款 1 待发货' 的字面锚点因换行被拆开，必须归一空白后匹配
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示用户欢迎语（如'user123 欢迎回来'）",
+                page("http://host/#/user", "litemall 商城",
+                        "user123\n欢迎回来\n0\n待付款\n1\n待发货\n0\n待收货\n0\n待评价")));
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示订单统计（如'0 待付款 1 待发货'）",
+                page("http://host/#/user", "litemall 商城",
+                        "user123 欢迎回来 0 待付款 1 待发货 0 待收货")));
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面显示'user123 欢迎回来'",
+                page("http://host/#/user", "litemall 商城",
+                        "guest\n请先登录")));
+    }
+
+    @Test
     void arithmeticPlaceholderMatchesAnyCount() {
         // v9.5fix: '共 N-1 件收藏' 的增减量无法从页面文本独立验证，按普通 N 处理（匹配任意数字）
         assertEquals("passed", ExecutionAssert.assertExpected(
