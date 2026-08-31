@@ -85,6 +85,20 @@ public class VueAnalyzer {
     // v7.6(G20层3): 前端用户反馈文案——ElMessage.error("...") / Message.error(...) / this.$message.error(...)
     private static final Pattern FEEDBACK_TEXT_PATTERN = Pattern.compile(
             "(?:ElMessage|Message|\\$message)\\.(error|success|warning|info)\\s*\\(\\s*['\"`]([^'\"`]+)['\"`]");
+    // v12.16-B: 移动端组件库的 Toast 反馈——Toast('...') / Toast.success('...') / $toast('...')，
+    // litemall 类 H5 应用不用 ElMessage，此前 userFeedbackTexts 提取为空导致断言无真实文案可引
+    private static final Pattern TOAST_TEXT_PATTERN = Pattern.compile(
+            "(?:Toast|\\$toast|toast)\\s*(?:\\.\\s*(?:success|error|warning|info))?\\s*\\(\\s*['\"`]([^'\"`]{2,60})['\"`]");
+
+    // v12.16-A: 语义 class 词根——按钮/图标类操作元素（组件库应用常无 id/ref/testid 可抓）
+    static final Pattern SEMANTIC_CLASS_TOKEN = Pattern.compile(
+            "(?:^|-|_)(btn|button|icon|delete|del|remove|add|edit|submit|cancel|confirm|cart|buy"
+                    + "|collect|fav|like|share|search|login|logout|close|check|select|switch|all|back)(?:$|-|_)");
+    /** v12.16-A: button/a 及组件库按钮（el-button/van-button）的直接可见文本（不含内嵌标签，限长控噪） */
+    static final Pattern VISIBLE_TEXT_ELEMENT = Pattern.compile(
+            "<(button|a|el-button|van-button)\\b[^>]*>([^<>]{1,24}?)</\\1>", Pattern.CASE_INSENSITIVE);
+    /** v12.16-A: 每组件 class/text 选择器上限，防止布局类噪音淹没池子 */
+    static final int TEXT_SELECTOR_CAP_PER_COMPONENT = 8;
 
     public FrontendResult analyze(String frontendDir) {
         File dir = new File(frontendDir);
@@ -290,17 +304,25 @@ public class VueAnalyzer {
             while (m.find()) {
                 String type = m.group(1);
                 String text = m.group(2).trim();
-                if (text.isEmpty() || text.length() > 100) {
-                    continue;
+                if (!text.isEmpty() && text.length() <= 100 && seen.add(type + "|" + text)) {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("type", type);
+                    item.put("text", text);
+                    item.put("file", file.getName());
+                    texts.add(item);
                 }
-                if (!seen.add(type + "|" + text)) {
-                    continue;
+            }
+            // v12.16-B: Toast 型反馈文案（移动端组件库）
+            Matcher t = TOAST_TEXT_PATTERN.matcher(content);
+            while (t.find()) {
+                String text = t.group(1).trim();
+                if (!text.isEmpty() && text.length() <= 100 && seen.add("toast|" + text)) {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("type", "toast");
+                    item.put("text", text);
+                    item.put("file", file.getName());
+                    texts.add(item);
                 }
-                Map<String, Object> item = new HashMap<>();
-                item.put("type", type);
-                item.put("text", text);
-                item.put("file", file.getName());
-                texts.add(item);
             }
         }
         if (texts.size() > 100) {
@@ -652,7 +674,9 @@ public class VueAnalyzer {
     }
 
     /**
-     * 提取 template 中的 DOM 选择器（data-testid/id/ref/aria-label）。
+     * 提取 template 中的 DOM 选择器（data-testid/id/ref/aria-label/name）。
+     * v12.16-A: 补充语义 class 与可见文本选择器——移动端/组件库应用常无 id/ref/testid，
+     * 按钮与图标靠 class/文本定位；text 型由执行器经 Playwright text= 引擎确定性点击。
      */
     private List<Map<String, Object>> extractDomSelectors(File dir, List<String> warnings) {
         List<Map<String, Object>> result = new ArrayList<>();
@@ -665,7 +689,8 @@ public class VueAnalyzer {
                     {"data-testid", "\\bdata-testid\\s*=\\s*\"([^\"]+)\""},
                     {"id", "\\bid\\s*=\\s*\"([^\"]+)\""},
                     {"ref", "\\bref\\s*=\\s*\"([^\"]+)\""},
-                    {"aria-label", "\\baria-label\\s*=\\s*\"([^\"]+)\""}
+                    {"aria-label", "\\baria-label\\s*=\\s*\"([^\"]+)\""},
+                    {"name", "\\bname\\s*=\\s*\"([^\"]+)\""}
             };
 
             for (File file : vueFiles) {
@@ -701,6 +726,44 @@ public class VueAnalyzer {
                         sel.put("element", element);
                         selectors.add(sel);
                     }
+                }
+
+                // v12.16-A: 语义 class——class token 含操作词根时产出 .token 选择器（每组件限量控噪）
+                Matcher classAttr = Pattern.compile("class=\"([^\"]+)\"")
+                        .matcher(content.substring(searchStart, searchEnd));
+                int classAdded = 0;
+                while (classAttr.find() && classAdded < TEXT_SELECTOR_CAP_PER_COMPONENT) {
+                    for (String token : classAttr.group(1).split("\\s+")) {
+                        if (token.length() >= 4 && SEMANTIC_CLASS_TOKEN.matcher(token).find()) {
+                            Map<String, Object> sel = new HashMap<>();
+                            sel.put("type", "css");
+                            sel.put("value", "." + token);
+                            sel.put("element", findEnclosingElement(content, searchStart + classAttr.start()));
+                            sel.put("label", token);
+                            selectors.add(sel);
+                            classAdded++;
+                            break;
+                        }
+                    }
+                }
+
+                // v12.16-A: 可见文本选择器——button/a 的直接文本（执行器走 text= 引擎），
+                // 这是"删除/全选/登录"类纯文本按钮唯一的确定性定位途径
+                Matcher textEl = VISIBLE_TEXT_ELEMENT
+                        .matcher(content.substring(searchStart, searchEnd));
+                int textAdded = 0;
+                while (textEl.find() && textAdded < TEXT_SELECTOR_CAP_PER_COMPONENT) {
+                    String visible = textEl.group(2).trim();
+                    if (visible.isEmpty() || visible.length() > 12 || !visible.matches(".*[\\u4e00-\\u9fa5a-zA-Z0-9].*")) {
+                        continue;
+                    }
+                    Map<String, Object> sel = new HashMap<>();
+                    sel.put("type", "text");
+                    sel.put("value", visible);
+                    sel.put("element", textEl.group(1));
+                    sel.put("label", visible);
+                    selectors.add(sel);
+                    textAdded++;
                 }
 
                 if (selectors.isEmpty()) {
@@ -1475,6 +1538,8 @@ public class VueAnalyzer {
         // 2. 构建 prompt
         String systemPrompt = "你是前端代码分析专家。正则已提取了部分结果，请你阅读源码，补充正则遗漏的内容。\n"
             + "只返回正则没提取到的，不要重复已有结果。\n"
+            + "supplementalSelectors 的 type 只允许 css/name/text：text=button/a 的可见文本（优先，如\"删除\"\"登录\"），"
+            + "css=语义 class（如 .delete-btn），name=表单字段 name 属性；禁止编造源码中不存在的文本或 class。\n"
             + "返回纯 JSON（不要 markdown 代码块）：\n"
             + "{\"supplementalForms\":[{\"component\":\"\",\"fields\":[{\"name\":\"\",\"type\":\"\",\"label\":\"\",\"required\":false,\"rules\":[]}],\"file\":\"\"}],"
             + "\"supplementalStates\":[{\"component\":\"\",\"type\":\"\",\"stateVar\":\"\",\"trigger\":\"\",\"file\":\"\"}],"
@@ -1501,6 +1566,41 @@ public class VueAnalyzer {
 
         // 4. 解析 JSON 并合并
         parseAndMergeSupplements(response, forms, componentStates, domSelectors, pageFlows, warnings);
+
+        // v12.16-B: 选择器定向补采——首轮 4 合 1 调用模型注意力分散，经常不产出选择器
+        // （litemall 实测补充为 0）；池子为空时用"只要选择器"的窄 prompt 二次补采提高遵从率
+        if (totalSelectorCount(domSelectors) == 0) {
+            log.info("DOM selector pool empty after LLM supplement, running focused selector pass");
+            String focusedSystem = "你是前端代码分析专家。从 Vue 组件 template 源码中提取可执行点击/输入的选择器。\n"
+                + "type 只允许三种：text=button/a 的可见文本（优先，如\"删除\"\"登录\"）；css=语义 class（如 .delete-btn）；name=表单字段 name 属性。\n"
+                + "返回纯 JSON（不要 markdown）：{\"supplementalSelectors\":[{\"component\":\"\",\"selectors\":[{\"type\":\"\",\"value\":\"\",\"element\":\"\"}],\"file\":\"\"}]}\n"
+                + "每个组件最多 10 条，按操作重要性排序，禁止编造源码中不存在的文本或 class。";
+            String focusedPrompt = "源码：\n" + sourceSnippets + "\n请提取选择器。";
+            try {
+                String focusedResponse = llmService.chat(focusedSystem, focusedPrompt, 0.2);
+                parseAndMergeSupplements(focusedResponse, new ArrayList<>(), new ArrayList<>(),
+                        domSelectors, new ArrayList<>(), warnings);
+            } catch (Exception e) {
+                log.warn("Focused selector supplement failed: {}", e.getMessage());
+            }
+        }
+
+        // v12.16-B: 空池显式告警——选择器池为 0 时执行器 DOM 路径不可用，不能再静默
+        if (totalSelectorCount(domSelectors) == 0) {
+            warnings.add("未提取到任何 DOM 选择器（模板无 id/ref/testid/name/语义 class/可见文本按钮），"
+                    + "执行器 DOM 点击路径不可用，将全部依赖视觉定位");
+        }
+    }
+
+    /** v12.16-B: 选择器池总量（组件数 × 每组件条数） */
+    private int totalSelectorCount(List<Map<String, Object>> domSelectors) {
+        int n = 0;
+        for (Map<String, Object> entry : domSelectors) {
+            if (entry.get("selectors") instanceof List<?> list) {
+                n += list.size();
+            }
+        }
+        return n;
     }
 
     // v1.12: 收集 .vue 文件源码摘要；v7.13: 上限配置化（原 12000/800/700 → 96000/3000/3000）

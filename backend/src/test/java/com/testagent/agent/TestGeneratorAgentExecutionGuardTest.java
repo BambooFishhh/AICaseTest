@@ -83,17 +83,20 @@ class TestGeneratorAgentExecutionGuardTest {
     }
 
     @Test
-    void textAndPathTypesAlsoStripped() {
+    void textTypeNowExecutablePathStillStripped() {
+        // v12.16-A: text 升级为合法类型（Playwright text= 引擎，分析器产出按钮可见文本）；
+        // path 仍是非法类型（非 locator 引擎）照旧剔除
         String steps = """
                 [
                   {"order":1,"action":"点按钮","target":"提交按钮","type":"ui_action",
-                   "uiSelector":{"type":"text","value":"提 交"}},
+                   "uiSelector":{"type":"text","value":"提交"}},
                   {"order":2,"action":"进页面","target":"首页","type":"ui_action",
                    "uiSelector":{"type":"path","value":"/"}}
                 ]
                 """;
         String out = agent.sanitizeUiSelectors(steps);
-        assertFalse(out.contains("uiSelector"), "text/path 均为非法类型，应全部剔除");
+        assertTrue(out.contains("text"), "text 已是可执行类型，应保留");
+        assertFalse(out.contains("path"), "path 仍为非法类型，应剔除");
     }
 
     @Test

@@ -383,6 +383,12 @@ public class PlaywrightRecordSkill {
             case "xpath":
                 // Playwright 支持 xpath= 前缀
                 return "xpath=" + selectorValue;
+            case "text":
+                // v12.16-A: Playwright text 引擎——按钮/链接可见文本的确定性定位
+                // （子串匹配、大小写不敏感；分析器提取的 button/a 可见文本经此透传）
+                return "text=" + selectorValue;
+            case "name":
+                return "[name='" + selectorValue + "']";
             default:
                 return selectorValue;
         }

@@ -1233,6 +1233,16 @@ public class ExecutionService {
                                         all.add(p);
                                     }
                                 }
+                                // v12.17-A: 数据准备步骤——每条用例执行前运行，语义必须是"幂等重置式"
+                                // （先清空/复原再重建目标状态，如"清空收藏→收藏 1 件"），保证每条用例
+                                // 从相同已知状态出发、与执行顺序无关。批次并发入队下"整批跑一次 seed"
+                                // 存在竞态，故采用 per-case 幂等准备而非 batch 级
+                                JsonNode preData = env.path("preDataSteps");
+                                if (preData.isArray()) {
+                                    for (JsonNode p : preData) {
+                                        all.add(p);
+                                    }
+                                }
                                 break;
                             }
                         }

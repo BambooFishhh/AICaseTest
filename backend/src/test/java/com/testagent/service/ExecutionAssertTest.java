@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -235,5 +236,21 @@ class ExecutionAssertTest {
         assertEquals("skipped", ExecutionAssert.assertExpected(
                 "提示消失后，足迹列表内容与总数均未发生变化",
                 page("http://host/#/footprint", "litemall 商城", "浏览足迹 共 7 条足迹")));
+    }
+
+    @Test
+    void describeFlagsAppErrorWhenSystemErrorPresent() {
+        // v12.17-C: 页面出现"系统内部错误"时标注 app_error——litemall 足迹接口 500 被
+        // 混在断言失败里会误读为用例写得不好，需与被测应用侧问题区分
+        String desc = ExecutionAssert.describe(
+                "页面显示'暂无足迹'",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹 共 7 条足迹 暂无足迹 系统内部错误"));
+        assertTrue(desc.contains("app_error"), "应含应用错误标注: " + desc);
+
+        String normal = ExecutionAssert.describe(
+                "页面显示'暂无足迹'",
+                page("http://host/#/footprint", "litemall 商城", "浏览足迹 暂无足迹"));
+        assertFalse(normal.contains("app_error"), "正常页面不应标注应用错误");
     }
 }

@@ -552,6 +552,10 @@ public class TestGeneratorAgent {
               执行器按数字语义匹配
               ④ 负向场景的断言写"不显示'X'提示"（执行器按"X 不出现"验证），不要写
               "操作无响应/页面无变化"这类无法验证的表述
+            - 12.17: 用例独立性——删除/修改/取消类用例必须自带准备步骤（结构化步骤里先执行
+              "添加/收藏"再执行"删除/取消"），不得假设系统里已有可操作数据；参数异常类负向
+              用例优先断言前端校验拦截（提交前校验的页面提示文案），不真实提交畸形数据——
+              畸形提交会在被测系统留下脏数据，污染后续所有用例的执行结果
 
             ## coverageRefs 覆盖要求（v5.12）
             - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}
@@ -1365,8 +1369,9 @@ public class TestGeneratorAgent {
     // v7.15(B): uiSelector 类型白名单——执行器 buildCssSelector 仅支持以下类型，
     // text/path/ref 等 LLM 编造类型会转成无效 CSS 必然定位失败；解析与补齐后统一清洗，
     // 非法 uiSelector 整体剔除（后续 enrichStructuredSteps 可再按前端分析结果补真实选择器）
+    // v12.16-A: 放开 text（Playwright text= 引擎，按钮可见文本）与 name（表单字段）
     private static final Set<String> EXECUTABLE_SELECTOR_TYPES =
-            Set.of("id", "css", "class", "data-testid", "aria-label", "xpath");
+            Set.of("id", "css", "class", "data-testid", "aria-label", "xpath", "text", "name");
 
     String sanitizeUiSelectors(String stepsJson) {
         if (stepsJson == null || stepsJson.isBlank()) {
@@ -1399,6 +1404,23 @@ public class TestGeneratorAgent {
     // v7.10(L12): 包级可见，供单测直接验证阈值与唯一最高分语义
     Map<String, Object> bestSelector(List<Map<String, Object>> pool, String text) {
         String lower = text.toLowerCase();
+        // v12.16-A: text 选择器快速通道——action+target 完整包含按钮可见文本且唯一命中时直接采用。
+        // 短中文文本（"删除"2 字）在原打分制下低于 3 分阈值必被拒，而 text 类恰是纯文本按钮
+        // 唯一的确定性定位途径；多个按钮含同文本属歧义，宁空不赌
+        Map<String, Object> textHit = null;
+        int textHits = 0;
+        for (Map<String, Object> s : pool) {
+            if ("text".equals(s.get("type"))) {
+                String value = s.get("value") == null ? "" : String.valueOf(s.get("value")).trim();
+                if (value.length() >= 2 && lower.contains(value.toLowerCase())) {
+                    textHit = s;
+                    textHits++;
+                }
+            }
+        }
+        if (textHits == 1) {
+            return textHit;
+        }
         Map<String, Object> best = null;
         int bestScore = 0;
         int bestCount = 0;

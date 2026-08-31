@@ -4,6 +4,18 @@
 
 ---
 
+## v9.5 — 执行失败归因优化 + 选择器池扩充 + 数据依赖治理（12.16/12.17）
+**日期**: 2026-08-31
+**基线**: v9.4（断言修复与面包屑口径）
+**主题**: litemall 实测 28 失败步归因驱动的两卡落地。三件套待补，任务卡见 [docs/长期迭代计划书.md](长期迭代计划书.md) 12.16/12.17。
+
+- **v9.4 执行失败归因**：断言引擎子句级重构（负向断言"不显示'X'"按 X 不出现验证；含引号锚点的子句只验锚点，叙述连接语不进 ngram；泛化/动态描述子句剔除，剥离后无锚点诚实 skipped）；dom_click 异常自动升级 visual_click + 错误带根因；生成侧 v9.4 锚点真实性硬约束（skill/代码/ai-review 同步）；Linter 引号占位符规则降级为确认性提示
+- **12.16 选择器池扩充**：静态提取新增 name 属性/语义 class/可见文本选择器（button/a/el-button/van-button，每组件限 8 条）；执行器 `buildCssSelector` 支持 `text=` 引擎与 `name`，白名单放开；bestSelector text 快速通道（唯一包含命中直采，同名按钮歧义宁空不赌）；LLM 补采空池时定向二次调用 + 空池 warnings 显式告警；Toast 型反馈文案提取（litemall userFeedbackTexts 0→可用）
+- **12.17 数据依赖治理**：`preDataSteps` 每用例幂等重置式数据准备（settings.executionEnvironments[].preDataSteps，UI 编辑器待后续卡）；生成硬规则——删除类用例自带准备步骤、负向用例禁止真实提交畸形数据；`describe` 检测"系统内部错误"追加【app_error】标注区分应用侧缺陷
+- **实测闭环**：litemall 足迹 500 实锤为应用侧 bug（WxGoodsController.detail 对已删商品未判空 NPE，2 条孤儿足迹由畸形参数用例产生）——孤儿数据已清理，足迹接口恢复 errno=0
+
+**验证**：后端 550/550 绿（新增 SelectorMatchTest 4 例、describe app_error 用例、Guard 口径更新）；前端无变更。
+
 ## v9.3 — litemall 实测回归修复（断言误判 / 编号乱序 / 面包屑口径）
 **日期**: 2026-08-31
 **基线**: v9.2

@@ -320,6 +320,10 @@ public final class ExecutionAssert {
         return false;
     }
 
+    /** v12.17-C: 被测系统错误特征——页面文本出现时，断言失败大概率是应用侧缺陷/脏数据，标注区分 */
+    private static final Pattern APP_ERROR_TEXT = Pattern.compile(
+            "系统内部错误|系统异常|服务器错误|服务异常|服务器开小差|Internal Server Error|network error");
+
     /**
      * 期望/实际差异摘要，供 ExecutionStep.error 字段（断言 failed 时使用）。
      */
@@ -327,9 +331,14 @@ public final class ExecutionAssert {
         if (pageState == null) {
             return "断言不匹配: 期望[" + expected + "] 实际页面状态读取失败";
         }
-        return "断言不匹配: 期望[" + expected + "] 实际[url="
+        String desc = "断言不匹配: 期望[" + expected + "] 实际[url="
                 + pageState.getOrDefault("url", "") + ", title=" + pageState.getOrDefault("title", "")
                 + ", 页面文本=" + snippetSummary(pageState) + "]";
+        // v12.17-C: 应用错误可见化——"系统内部错误"类文案混在断言失败里会被误读为用例写得不好
+        if (APP_ERROR_TEXT.matcher(snippetSummary(pageState)).find()) {
+            desc += "；【app_error】页面出现被测系统错误提示，疑似应用侧缺陷或测试脏数据，非断言口径问题";
+        }
+        return desc;
     }
 
     /** textSnippet 截断摘要（前 120 字符），供 coordinates/证据字段 */
