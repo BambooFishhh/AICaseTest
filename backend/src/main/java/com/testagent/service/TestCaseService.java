@@ -40,7 +40,6 @@ import com.testagent.security.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -85,22 +84,46 @@ public class TestCaseService {
     // v3.3: 取消标志注册表（projectId → cancelled flag），供 cancel 端点触发
     private final ConcurrentHashMap<String, RuntimeFlag> cancellationFlags = new ConcurrentHashMap<>();
 
-    // v8.9.8(12.11-P0): SSE 断线宽限期——断连后不立即取消，生成照常跑；宽限期满无重连才取消
-    @Value("${app.sse.reconnect-grace-seconds:90}")
-    private long reconnectGraceSeconds = 90;
-    private final java.util.concurrent.ScheduledExecutorService sseGraceScheduler =
-            java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+    // v9.1(2.1): 生成与 SSE 连接生命周期解耦——断连/切页/刷新不再取消生成，
+    // 任务一旦启动就跑到底（只有显式 cancel 端点能中断）。
+    // 每个运行中的生成任务持有广播器：history 缓存全部已推送事件供重接回放，
+    // subscribers 是当前在线的 SSE 连接（发起连接只是首个订阅者，重接连接是后续订阅者）。
+    private final ConcurrentHashMap<String, GenerationBroadcast> liveGenerations = new ConcurrentHashMap<>();
 
-    private void scheduleGracefulCancel(String projectId, RuntimeFlag cancelled, AtomicBoolean clientGone) {
-        if (clientGone == null || cancelled == null) {
+    static final class GenerationBroadcast {
+        final List<Object[]> history = new ArrayList<>();          // {eventName, payload}
+        final List<SseEmitter> subscribers = new ArrayList<>();    // 活跃 SSE 连接
+    }
+
+    /** 注册运行中任务的广播器（runGenerateStream/Append 进入时调用；包级可见供测试预置） */
+    GenerationBroadcast registerBroadcast(String projectId) {
+        GenerationBroadcast bc = new GenerationBroadcast();
+        liveGenerations.put(projectId, bc);
+        return bc;
+    }
+
+    /** 同锁内追加历史 + 推送全体订阅者：回放与实况不丢不重；发送失败的连接即移除 */
+    private void broadcast(GenerationBroadcast bc, String eventName, Object data) {
+        if (bc == null) {
             return;
         }
-        sseGraceScheduler.schedule(() -> {
-            if (clientGone.get() && !cancelled.isCancelled()) {
-                cancelled.cancel();
-                log.warn("SSE 宽限期结束无重连，取消生成: {}", projectId);
+        synchronized (bc) {
+            bc.history.add(new Object[]{eventName, data});
+            for (var it = bc.subscribers.iterator(); it.hasNext(); ) {
+                SseEmitter sub = it.next();
+                try {
+                    sub.send(SseEmitter.event().name(eventName).data(data, MediaType.APPLICATION_JSON));
+                } catch (Exception e) {
+                    it.remove();
+                    log.debug("SSE subscriber removed (send failed): {}", e.getMessage());
+                }
             }
-        }, reconnectGraceSeconds, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
+    /** 生成结束/异常收尾时移除广播器（history 随之释放，重接回落 DB 回放） */
+    private void unregisterBroadcast(String projectId) {
+        liveGenerations.remove(projectId);
     }
 
     @Autowired
@@ -275,8 +298,10 @@ public class TestCaseService {
     /**
      * v3.2: SSE 流式生成。emitter 由 Controller 传入，本方法在 generationExecutor 线程执行生成，
      * 通过 emitter 推送 progress/case/complete/error 事件，结束时落库。
-     * v3.3: 新增 cancelled 标志——客户端断开/超时/error 或 cancel 端点触发取消，
-     *       生成线程在检查点抛 GenerationCancelledException，catch 后跳过落库（保留旧用例）。
+     * v3.3: cancelled 标志仅由显式 cancel 端点触发，生成线程在检查点抛 GenerationCancelledException，
+     *       catch 后跳过落库（保留旧用例）。
+     * v9.1(2.1): 生成与连接生命周期解耦——断连/切页/刷新只移除订阅者，不再取消生成；
+     *       事件统一走广播器（history + 多订阅者），重接端点据此回放续播。
      */
     @Async("generationExecutor")
     public void runGenerateStream(String projectId, SseEmitter emitter) {
@@ -286,25 +311,23 @@ public class TestCaseService {
         runtimeStore.clearFlag("gen:cancel:" + projectId);
         // v5.2: 取消标志写入 RuntimeStore（Redis/内存），支持跨实例取消
         RuntimeFlag cancelled = runtimeStore.newFlag("gen:cancel:" + projectId);
-        // v3.3: 客户端断开同时置 cancelled（不只跳过 send，还要停止生成 + 跳过落库）
-        // v8.9.8(12.11-P0): 断连不再立即取消——进入宽限期，生成照常跑完，宽限期满无重连才取消
+        // v9.1(2.1): 连接断开/超时只影响该连接本身，生成照常跑完
         emitter.onCompletion(() -> {
             clientGone.set(true);
-            log.info("SSE client disconnected (grace {}s): {}", reconnectGraceSeconds, projectId);
-            scheduleGracefulCancel(projectId, cancelled, clientGone);
+            log.info("SSE client disconnected: {}", projectId);
         });
-        emitter.onTimeout(() -> {
-            clientGone.set(true);
-            log.warn("SSE timeout (grace {}s): {}", reconnectGraceSeconds, projectId);
-            scheduleGracefulCancel(projectId, cancelled, clientGone);
-        });
+        emitter.onTimeout(() -> clientGone.set(true));
         emitter.onError(t -> {
             clientGone.set(true);
             log.warn("SSE error: {}", projectId, t);
-            scheduleGracefulCancel(projectId, cancelled, clientGone);
         });
         // v3.3: 注册取消标志（供 cancel 端点触发）
         cancellationFlags.put(projectId, cancelled);
+        // v9.1(2.1): 注册广播器，发起连接是首个订阅者
+        GenerationBroadcast bc = registerBroadcast(projectId);
+        synchronized (bc) {
+            bc.subscribers.add(emitter);
+        }
 
         try {
             // v5.13: 前置校验——生成必须基于 PRD
@@ -323,12 +346,18 @@ public class TestCaseService {
             agentTaskService.start(taskId);
             agentTaskService.checkpoint(taskId, "generate", null);
             // v8.9.8(12.12): 即时首事件——避免排队/启动期间 15s 无任何推送（静默黑洞）
-            sendSseEvent(emitter, clientGone, "started", Map.of("message", "生成已接受，正在启动..."));
+            broadcast(bc, "started", Map.of("message", "生成已接受，正在启动..."));
 
-            // 进度回调 → 推送 progress 事件 + 同步写 project.progress（兼容轮询）
+            // 进度回调 → 广播 progress 事件 + 同步写 project.progress（兼容轮询）+ 持久化（重接回放）
+            final String progressTaskId = taskId;
             TestGeneratorAgent.ProgressCallback progressCb = msg -> {
-                sendSseEvent(emitter, clientGone, "progress", Map.of("message", msg));
+                broadcast(bc, "progress", Map.of("message", msg));
                 projectRepository.updateProgress(projectId, msg);
+                try {
+                    agentTaskService.recordGenerationEvent(progressTaskId, "progress", "PUSHED",
+                            objectMapper.writeValueAsString(Map.of("message", msg)));
+                } catch (Exception ignore) {
+                }
             };
             // 用例回调 → 推送 case 事件（每条用例解析完成即推送，不等去重/落库）
             // v7.1(G2): 实际计数推送草稿数——比 report.generated-focusDropped 更可信，
@@ -339,7 +368,7 @@ public class TestCaseService {
                 @Override
                 public void onCase(TestCase tc) {
                     pushedCount.incrementAndGet();
-                    sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
+                    broadcast(bc, "case", Map.of("testCase", TestCaseDTO.from(tc)));
                     // v8.9.8(12.11-P1): 持久化用例事件(跨实例回放)
                     try {
                         agentTaskService.recordGenerationEvent(replayTaskId, "case", "PUSHED",
@@ -351,7 +380,7 @@ public class TestCaseService {
                 // v8.4fix: 流式重试时通知前端清空已渲染草稿，避免重试重推造成界面重复用例
                 @Override
                 public void onRetryReset() {
-                    sendSseEvent(emitter, clientGone, "retryReset", Map.of());
+                    broadcast(bc, "retryReset", Map.of());
                 }
             };
 
@@ -415,7 +444,7 @@ public class TestCaseService {
             if (genReport.degradedProvider != null && !genReport.degradedProvider.isBlank()) {
                 completeData.put("degradedProvider", genReport.degradedProvider);
             }
-            sendSseEvent(emitter, clientGone, "complete", completeData);
+            broadcast(bc, "complete", completeData);
             safeSseComplete(emitter, clientGone);
             log.info("Streaming generation completed for project {}: {} cases", projectId, testCases.size());
         } catch (GenerationCancelledException e) {
@@ -426,8 +455,7 @@ public class TestCaseService {
             }
             projectRepository.updateProgress(projectId, null);
             restoreProjectStatus(projectId);
-            sendSseEvent(emitter, clientGone, "cancelled",
-                    Map.of("message", "生成已取消，旧用例已保留"));
+            broadcast(bc, "cancelled", Map.of("message", "生成已取消，旧用例已保留"));
             safeSseComplete(emitter, clientGone);
         } catch (Exception e) {
             log.error("Streaming generation failed for project {}", projectId, e);
@@ -436,12 +464,14 @@ public class TestCaseService {
             if (taskId != null) {
                 agentTaskService.fail(taskId, "GENERATION_FAILED", errorMsg);
             }
-            sendSseEvent(emitter, clientGone, "error", Map.of("message", errorMsg));
+            broadcast(bc, "error", Map.of("message", errorMsg));
             safeSseCompleteWithError(emitter, clientGone, e);
         } finally {
             // v3.3: 清理取消标志，避免内存泄漏
             cancellationFlags.remove(projectId);
             cancelled.clear();
+            // v9.1(2.1): 移除广播器，后续重接回落 DB 回放
+            unregisterBroadcast(projectId);
             taskQueueService.markDone(TaskQueueService.GENERATION_QUEUE, projectId);
         }
     }
@@ -460,22 +490,22 @@ public class TestCaseService {
         AtomicBoolean clientGone = new AtomicBoolean(false);
         runtimeStore.clearFlag("gen:cancel:" + projectId);
         RuntimeFlag cancelled = runtimeStore.newFlag("gen:cancel:" + projectId);
+        // v9.1(2.1): 与主生成流一致——断连/超时只影响连接本身，不再取消生成
         emitter.onCompletion(() -> {
             clientGone.set(true);
-            cancelled.cancel();
             log.info("SSE client disconnected (append): {}", projectId);
         });
-        emitter.onTimeout(() -> {
-            clientGone.set(true);
-            cancelled.cancel();
-            log.warn("SSE timeout (append): {}", projectId);
-        });
+        emitter.onTimeout(() -> clientGone.set(true));
         emitter.onError(t -> {
             clientGone.set(true);
-            cancelled.cancel();
             log.warn("SSE error (append): {}", projectId, t);
         });
         cancellationFlags.put(projectId, cancelled);
+        // v9.1(2.1): 注册广播器，发起连接是首个订阅者
+        GenerationBroadcast bc = registerBroadcast(projectId);
+        synchronized (bc) {
+            bc.subscribers.add(emitter);
+        }
 
         try {
             // v5.13: 前置校验——生成必须基于 PRD
@@ -495,20 +525,32 @@ public class TestCaseService {
             agentTaskService.start(taskId);
             agentTaskService.checkpoint(taskId, "generate", null);
 
+            // v9.1(2.1): 同主流程——广播 + 持久化（final 引用供 lambda 捕获）
+            final String replayTaskId = taskId;
             TestGeneratorAgent.ProgressCallback progressCb = msg -> {
-                sendSseEvent(emitter, clientGone, "progress", Map.of("message", msg));
+                broadcast(bc, "progress", Map.of("message", msg));
                 projectRepository.updateProgress(projectId, msg);
+                try {
+                    agentTaskService.recordGenerationEvent(replayTaskId, "progress", "PUSHED",
+                            objectMapper.writeValueAsString(Map.of("message", msg)));
+                } catch (Exception ignore) {
+                }
             };
             TestGeneratorAgent.CaseCallback caseCb = new TestGeneratorAgent.CaseCallback() {
                 @Override
                 public void onCase(TestCase tc) {
-                    sendSseEvent(emitter, clientGone, "case", Map.of("testCase", TestCaseDTO.from(tc)));
+                    broadcast(bc, "case", Map.of("testCase", TestCaseDTO.from(tc)));
+                    try {
+                        agentTaskService.recordGenerationEvent(replayTaskId, "case", "PUSHED",
+                                objectMapper.writeValueAsString(TestCaseDTO.from(tc)));
+                    } catch (Exception ignore) {
+                    }
                 }
 
                 // v8.4fix: 流式重试时通知前端清空已渲染草稿，避免重试重推造成界面重复用例
                 @Override
                 public void onRetryReset() {
-                    sendSseEvent(emitter, clientGone, "retryReset", Map.of());
+                    broadcast(bc, "retryReset", Map.of());
                 }
             };
 
@@ -597,7 +639,7 @@ public class TestCaseService {
             completeData.put("existingBefore", existing.size());
             // v7.7(G10): 容量事实（非降级信号）——达 60 条上限仍有缺口
             completeData.put("coverageCappedByLimit", genReport.coverageCappedByLimit);
-            sendSseEvent(emitter, clientGone, "complete", completeData);
+            broadcast(bc, "complete", completeData);
             safeSseComplete(emitter, clientGone);
             log.info("Append generation completed for project {}: generated={}, appended={}, dropped={}",
                     projectId, total, appended, dropped);
@@ -608,8 +650,7 @@ public class TestCaseService {
             }
             projectRepository.updateProgress(projectId, null);
             restoreProjectStatus(projectId);
-            sendSseEvent(emitter, clientGone, "cancelled",
-                    Map.of("message", "追加生成已取消，现有用例已保留"));
+            broadcast(bc, "cancelled", Map.of("message", "追加生成已取消，现有用例已保留"));
             safeSseComplete(emitter, clientGone);
         } catch (Exception e) {
             log.error("Append generation failed for project {}", projectId, e);
@@ -618,12 +659,90 @@ public class TestCaseService {
             if (taskId != null) {
                 agentTaskService.fail(taskId, "APPEND_GENERATION_FAILED", errorMsg);
             }
-            sendSseEvent(emitter, clientGone, "error", Map.of("message", errorMsg));
+            broadcast(bc, "error", Map.of("message", errorMsg));
             safeSseCompleteWithError(emitter, clientGone, e);
         } finally {
             cancellationFlags.remove(projectId);
             cancelled.clear();
+            unregisterBroadcast(projectId);
             taskQueueService.markDone(TaskQueueService.GENERATION_QUEUE, projectId);
+        }
+    }
+
+    /**
+     * v9.1(2.1): 生成任务重接——刷新/切页后重进用例页时，回放 agent_task_events 持久化事件并续播实况。
+     * 分支：RUNNING 且本实例持有广播器 → 锁内回放内存 history 并加入订阅者，无缝续播（连接保持打开）；
+     *      其余（无任务/已终态/任务在其他实例）→ 一次性回放 progress+case 事件后按任务终态收尾关流。
+     */
+    public void attachGenerate(String projectId, SseEmitter emitter) {
+        try {
+            var task = agentTaskService.latestGenerationTask(projectId);
+            boolean active = task != null && ("RUNNING".equals(task.getStatus())
+                    || "QUEUED".equals(task.getStatus()) || "CREATED".equals(task.getStatus()));
+            GenerationBroadcast bc = active ? liveGenerations.get(projectId) : null;
+            if (active && bc != null) {
+                synchronized (bc) {
+                    for (Object[] ev : bc.history) {
+                        emitter.send(SseEmitter.event().name((String) ev[0])
+                                .data(ev[1], MediaType.APPLICATION_JSON));
+                    }
+                    bc.subscribers.add(emitter);
+                }
+                return;   // 连接保持打开，后续事件随广播实时到达
+            }
+
+            // 一次性回放段（无实况可续：无任务 / 已终态 / 他实例）
+            int replayed = 0;
+            if (task != null) {
+                if (active) {
+                    emitter.send(SseEmitter.event().name("progress").data(Map.of(
+                            "message", "生成任务运行于其他实例，以下为已产生进度（历史回放）"),
+                            MediaType.APPLICATION_JSON));
+                }
+                for (var ev : agentTaskService.timeline(task.getId())) {
+                    String payload = ev.getErrorMessage();
+                    if (payload == null || payload.isBlank()) {
+                        continue;
+                    }
+                    if ("case".equals(ev.getPhase())) {
+                        emitter.send(SseEmitter.event().name("case").data(
+                                Map.of("testCase", objectMapper.readTree(payload)),
+                                MediaType.APPLICATION_JSON));
+                        replayed++;
+                    } else if ("progress".equals(ev.getPhase())) {
+                        emitter.send(SseEmitter.event().name("progress").data(
+                                Map.of("message", objectMapper.readTree(payload).path("message").asText("")),
+                                MediaType.APPLICATION_JSON));
+                        replayed++;
+                    }
+                }
+            }
+            // 按任务终态收尾，前端走对应处理（完成重载/取消提示/失败提示）
+            String status = task == null ? null : task.getStatus();
+            if (AgentTaskService.STATUS_FAILED.equals(status)) {
+                String msg = task.getErrorMessage() == null || task.getErrorMessage().isBlank()
+                        ? "生成任务失败" : task.getErrorMessage();
+                emitter.send(SseEmitter.event().name("error").data(
+                        Map.of("message", msg), MediaType.APPLICATION_JSON));
+            } else if (AgentTaskService.STATUS_CANCELLED.equals(status)) {
+                emitter.send(SseEmitter.event().name("cancelled").data(
+                        Map.of("message", "生成已取消，旧用例已保留"), MediaType.APPLICATION_JSON));
+            } else {
+                int total = testCaseRepository.findByProjectId(projectId).size();
+                emitter.send(SseEmitter.event().name("complete").data(Map.of(
+                        "message", task == null ? "未找到生成任务" : "回放完成",
+                        "total", total, "pushed", replayed, "replayed", replayed),
+                        MediaType.APPLICATION_JSON));
+            }
+            emitter.complete();
+        } catch (Exception e) {
+            log.warn("Generation attach failed for project {}: {}", projectId, e.getMessage());
+            try {
+                emitter.send(SseEmitter.event().name("error").data(
+                        Map.of("message", "重接失败: " + e.getMessage()), MediaType.APPLICATION_JSON));
+            } catch (Exception ignore) {
+            }
+            emitter.complete();
         }
     }
 

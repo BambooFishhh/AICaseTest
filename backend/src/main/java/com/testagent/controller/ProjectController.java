@@ -235,6 +235,19 @@ public class ProjectController {
     }
 
     /**
+     * v9.1(2.1): 生成任务重接端点——刷新/切页后重进页面时调用。
+     * 回放 agent_task_events 持久化事件（progress/case），任务仍在运行时无缝续播实况广播。
+     * URI 含 "generate-stream"，自动进入 SseTicket 白名单。
+     */
+    @GetMapping("/{projectId}/testcases/generate-stream-attach")
+    public SseEmitter generateStreamAttach(@PathVariable String projectId) {
+        projectAccessService.assertOperateAccess(projectId);
+        SseEmitter emitter = new SseEmitter(30 * 60 * 1000L);
+        testCaseService.attachGenerate(projectId, emitter);
+        return emitter;
+    }
+
+    /**
      * v3.5: 追加生成（SSE）。不删除现有用例，可选 type 过滤。
      * 复用 generating 状态机，与重新生成互斥。
      * complete 事件携带 total/appended/dropped/existingBefore 字段。

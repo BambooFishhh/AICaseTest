@@ -5,16 +5,12 @@ export function triggerGenerate(projectId, params) {
   return request.post(`/projects/${projectId}/generate`, params || {})
 }
 
-// v3.2: SSE 流式生成用例。基于浏览器原生 EventSource，返回事件源对象供调用方 close()。
-// 事件类型：progress（进度文本）、case（单条用例）、complete（完成，v7.1 起含 total/pushed/dropped）、cancelled（取消）、error（失败）。
-// v3.3: 新增 cancelled 事件 + onCancelled 回调，区分"取消"与"失败"。
-// v6.6: 先以 Bearer 换短期 ticket，再用 ?ticket= 建立连接（避免长期 JWT 进 URL）。
-// v7.12(E16): 新增可选 onDisconnect 回调——error 事件区分"后端下发错误（e.data 有值）"
-// 与"连接层断开（e.data 为空，网络瞬断/代理超时，后端任务仍在跑）"，后者不再误报失败。
-// v8.5: 新增 onRetryReset——后端 LLM 重试前推送 retryReset，前端清空已渲染草稿防重推叠加。
-export async function streamGenerate(projectId, { onProgress, onCase, onRetryReset, onComplete, onCancelled, onError, onDisconnect } = {}) {
-  const { data } = await fetchSseTicket()
-  const url = `/api/projects/${projectId}/testcases/generate-stream?ticket=${encodeURIComponent(data.ticket)}`
+// v9.1(2.1): 生成流事件分发公共实现——streamGenerate / streamGenerateAppend / attachGenerate 共用。
+// 事件类型：progress（进度文本）、case（单条用例）、complete（完成）、cancelled（取消）、error（失败）。
+// v7.12(E16): error 事件区分"后端下发错误（e.data 有值）"与"连接层断开（e.data 为空）"，
+// 后者交由 onDisconnect 降级轮询，不误报失败。
+function openGenerationEventStream(url, handlers) {
+  const { onProgress, onCase, onRetryReset, onComplete, onCancelled, onError, onDisconnect } = handlers
   const es = new EventSource(url)
 
   es.addEventListener('progress', (e) => {
@@ -33,7 +29,6 @@ export async function streamGenerate(projectId, { onProgress, onCase, onRetryRes
   // v8.5: 纯信号量事件（无数据体），触发即清态
   es.addEventListener('retryReset', () => { onRetryReset?.() })
   es.addEventListener('complete', (e) => {
-    // v7.1(G2): complete 携带 total/pushed/dropped（各阶段丢弃明细），推送≠落库不再静默
     try { onComplete?.(JSON.parse(e.data)) } catch {}
     es.close()
   })
@@ -43,8 +38,6 @@ export async function streamGenerate(projectId, { onProgress, onCase, onRetryRes
     es.close()
   })
   es.addEventListener('error', (e) => {
-    // v7.12(E16): e.data 有值 = 后端下发的真实错误；为空 = 连接层断开（后端任务仍在跑）
-    // 断连不再误报失败，交由 onDisconnect 降级轮询跟踪进度
     if (e.data) {
       let msg = '生成连接异常'
       try { msg = JSON.parse(e.data).message || msg } catch {}
@@ -58,60 +51,33 @@ export async function streamGenerate(projectId, { onProgress, onCase, onRetryRes
   return es
 }
 
-// v3.5: SSE 流式追加生成。复用 streamGenerate 的事件结构，
-// complete 事件携带 total/appended/dropped/existingBefore 字段。
+// v3.2: SSE 流式生成用例。基于浏览器原生 EventSource，返回事件源对象供调用方 close()。
+// v6.6: 先以 Bearer 换短期 ticket，再用 ?ticket= 建立连接（避免长期 JWT 进 URL）。
+export async function streamGenerate(projectId, handlers = {}) {
+  const { data } = await fetchSseTicket()
+  const url = `/api/projects/${projectId}/testcases/generate-stream?ticket=${encodeURIComponent(data.ticket)}`
+  return openGenerationEventStream(url, handlers)
+}
+
+// v3.5: SSE 流式追加生成。complete 事件携带 total/appended/dropped/existingBefore 字段。
 // type 为空时全类型追加；非空时仅追加该类型（positive/negative/boundary/data）。
-// v7.12(E16): 新增可选 onDisconnect 回调——断连（e.data 为空）不再误报失败，降级轮询。
-// v8.5: 新增 onRetryReset——同 streamGenerate，重试前清空草稿。
-export async function streamGenerateAppend(
-  projectId,
-  type,
-  { onProgress, onCase, onRetryReset, onComplete, onCancelled, onError, onDisconnect } = {}
-) {
+export async function streamGenerateAppend(projectId, type, handlers = {}) {
   const params = new URLSearchParams()
   if (type) params.set('type', type)
   const query = params.toString() ? `?${params.toString()}` : ''
   const { data } = await fetchSseTicket()
   const sep = query ? '&' : '?'
   const url = `/api/projects/${projectId}/testcases/generate-stream-append${query}${sep}ticket=${encodeURIComponent(data.ticket)}`
-  const es = new EventSource(url)
+  return openGenerationEventStream(url, handlers)
+}
 
-  es.addEventListener('progress', (e) => {
-    try { onProgress?.(JSON.parse(e.data).message) } catch {}
-  })
-  // v8.9.8(12.12): started/queued 事件——即时反馈"已接受/排队"，消灭静默黑洞
-  es.addEventListener('started', (e) => {
-    try { onProgress?.(JSON.parse(e.data).message) } catch {}
-  })
-  es.addEventListener('queued', (e) => {
-    try { onProgress?.(JSON.parse(e.data).message) } catch {}
-  })
-  es.addEventListener('case', (e) => {
-    try { onCase?.(JSON.parse(e.data).testCase) } catch {}
-  })
-  es.addEventListener('retryReset', () => { onRetryReset?.() })
-  es.addEventListener('complete', (e) => {
-    // v3.5: complete 携带 total/appended/dropped/existingBefore
-    try { onComplete?.(JSON.parse(e.data)) } catch {}
-    es.close()
-  })
-  es.addEventListener('cancelled', (e) => {
-    try { onCancelled?.(JSON.parse(e.data).message) } catch {}
-    es.close()
-  })
-  es.addEventListener('error', (e) => {
-    // v7.12(E16): e.data 有值 = 后端下发的真实错误；为空 = 连接层断开（后端任务仍在跑）
-    if (e.data) {
-      let msg = '追加生成连接异常'
-      try { msg = JSON.parse(e.data).message || msg } catch {}
-      onError?.(msg)
-    } else {
-      onDisconnect?.()
-    }
-    es.close()
-  })
-
-  return es
+// v9.1(2.1): 生成任务重接——刷新/切页后重进页面时调用。
+// 后端回放 agent_task_events 持久化的 progress/case 事件，任务仍在运行则续播实况广播；
+// 任务已结束则按终态回放后发 complete/cancelled/error 关流。事件结构与 streamGenerate 完全一致。
+export async function attachGenerate(projectId, handlers = {}) {
+  const { data } = await fetchSseTicket()
+  const url = `/api/projects/${projectId}/testcases/generate-stream-attach?ticket=${encodeURIComponent(data.ticket)}`
+  return openGenerationEventStream(url, handlers)
 }
 
 // v3.3: 取消流式生成。后端置取消标志，生成线程在下个检查点停止并跳过落库。

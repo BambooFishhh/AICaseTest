@@ -104,20 +104,6 @@
                 <span v-if="!hasSourcePath" class="optional-tag">可选</span>
               </el-button>
               <el-button
-                :icon="CollectionTag"
-                :type="hasSourcePath && !hasConfirmedScope ? 'warning' : 'default'"
-                :title="hasConfirmedScope
-                  ? '查看/管理已确认的本期范围'
-                  : '尚未确认本期范围——生成前需先完成识别与人工确认'"
-                @click="openScope"
-              >
-                本期范围
-                <span
-                  v-if="hasSourcePath && !hasConfirmedScope"
-                  class="optional-tag"
-                >未确认</span>
-              </el-button>
-              <el-button
                 type="primary"
                 :icon="MagicStick"
                 :disabled="!canGenerate"
@@ -156,6 +142,10 @@
             <div class="action-buttons">
               <el-button :icon="DataAnalysis" :disabled="!canViewAnalysis" @click="goAnalysis">
                 查看分析
+              </el-button>
+              <!-- v9.0: 自动流程下范围已由分析后自动识别锁定，入口降级为查看/调整 -->
+              <el-button :icon="CollectionTag" :disabled="!canViewAnalysis" @click="openScope">
+                本期范围
               </el-button>
               <el-button :icon="Document" :disabled="!canViewTestcases" @click="goTestcases">
                 查看用例
@@ -414,14 +404,14 @@ async function loadScopeStatus() {
   }
 }
 
-/** v8.x: 分析成功后的下一步引导——未确认范围时通知（生成会被后端拦截） */
+/** v9.0: 分析成功后刷新范围状态——自动识别已锁定则静默解锁生成；兜底场景（非 Git/无差异/0 条）才提示手动创建 */
 function notifyNextStepScope() {
   loadScopeStatus().then(() => {
     if (hasSourcePath.value && !hasConfirmedScope.value) {
       ElNotification({
-        title: '下一步：确认本期范围',
-        message: '代码驱动项目生成用例前，需先创建并确认本期迭代范围（主线操作 → 本期范围）',
-        type: 'info',
+        title: '本期范围未自动识别',
+        message: '自动识别未产出范围（非 Git 仓库 / 基线无差异 / 识别 0 条），可在「查看 → 本期范围」中手动创建',
+        type: 'warning',
         duration: 8000
       })
     }
