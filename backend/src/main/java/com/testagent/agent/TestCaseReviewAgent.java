@@ -116,6 +116,14 @@ public class TestCaseReviewAgent {
                 log.warn("Review reject (no structuredSteps): {}", tc.getTitle());
                 continue;
             }
+            // v9.2: 全部步骤均为 api_call 的用例直接拒绝——UI 执行器对 api_call 一律 skip，
+            // 这类用例执行价值为零（接口信息应进 apiEndpoints 关联字段，步骤必须页面操作）
+            boolean allApiCall = !steps.isEmpty() && steps.stream().allMatch(
+                    s -> "api_call".equals(String.valueOf(s.get("type"))));
+            if (allApiCall) {
+                log.warn("Review reject (all steps api_call, UI 自动化禁止直接调接口): {}", tc.getTitle());
+                continue;
+            }
             Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
             Map<String, Object> refs = readCoverageRefs(hints);
             if (isEmptyRefs(refs)) {
