@@ -18,31 +18,57 @@
 ## 架构总览
 
 ```mermaid
-flowchart LR
-    subgraph client["浏览器"]
-        FE["Vue 3 + Element Plus"]
-    end
-    subgraph backend["Spring Boot 后端"]
-        API["REST API / SSE"]
-        GEN["生成 Agent 链路"]
-        EXEC["执行 Agent 链路"]
-    end
-    LLM["LLM<br/>文本 / 流式 / Embedding"]
-    MILVUS["Milvus 2.4<br/>语义去重 / RAG"]
-    DB[("MySQL 8<br/>Flyway")]
-    REDIS[("Redis 7<br/>运行态 / 队列")]
-    PW["Playwright MCP<br/>真实浏览器 + 录屏"]
+flowchart TB
+    FE["前端 Vue 3 + Element Plus<br/>用例列表 · 生成流式 · 执行结果 · 覆盖率矩阵"]
 
-    FE -->|REST + SSE| API
-    API --> GEN
-    API --> EXEC
-    GEN --> LLM
-    GEN --> MILVUS
-    EXEC --> PW
-    PW -->|截图 / WebM 录屏| EXEC
+    subgraph backend["Spring Boot 后端 · 双实例水平扩容"]
+        direction TB
+        API["REST API / SSE<br/>JWT 认证 · SseTicket · attach 续播"]
+        TASK["agent_task 持久化任务<br/>租约心跳 · 启动恢复 · 事件回放"]
+        subgraph gen["生成链路"]
+            SCOPE["范围识别<br/>Git 基线 diff · 自动锁定"]
+            RAG["RAG 多路检索<br/>RRF 融合"]
+            GEN["TestGeneratorAgent<br/>多轮生成 · AI 评审 · Linter · 确定性后处理"]
+        end
+        subgraph exec["执行链路"]
+            QUEUE["ExecutionService<br/>并发排队 · 批量限流 · blocked 语义"]
+            AGENT["ExecutionAgent<br/>Agent 模式 · 程序化模式 · 视觉兜底"]
+            ASSERT["ExecutionAssert<br/>三层断言 · 占位符语义 · 负向断言"]
+        end
+    end
+
+    subgraph mcp["MCP Server 子进程"]
+        PW["playwright-mcp-server<br/>Chromium 多会话 · 截图 · WebM 录屏"]
+        TOOLS["tools-mcp-server<br/>语义检索 · 状态机 · 评审工具"]
+        LMMMCP["mcp-server<br/>chat · embedding · 多模态定位"]
+    end
+
+    LLM["LLM 供应商<br/>主通道 + fallback 降级路由 · 熔断"]
+    DB[("MySQL 8<br/>Flyway · 用例 · 执行记录 · 任务事件")]
+    REDIS[("Redis 7<br/>取消标志 · 租约 · 配额 · 任务队列")]
+    MILVUS[("Milvus 2.4<br/>语义去重 · RAG 向量 · 失败经验库")]
+    GIT[("被测项目 Git 仓库")]
+    OBS["Prometheus 指标 · Grafana 看板与告警"]
+
+    FE -->|"REST / SSE"| API
+    API --> TASK
+    SCOPE -->|"diff 识别"| GIT
+    GEN --> RAG
+    GEN -->|"chatJson / 流式"| LLM
+    GEN -->|"向量化 / 检索"| MILVUS
+    QUEUE --> AGENT
+    AGENT --> ASSERT
+    AGENT -->|"browser 工具"| PW
+    AGENT -->|"多模态定位"| LMMMCP
+    GEN -.->|"组件摘要 / 解析"| TOOLS
     API --> DB
+    TASK --> DB
+    GEN --> DB
+    AGENT --> DB
     API --> REDIS
-    EXEC --> DB
+    QUEUE --> REDIS
+    OBS -.->|"指标采集"| backend
+    PW -.->|"截图 / 录屏证据"| AGENT
 ```
 
 ## 技术栈
@@ -152,8 +178,7 @@ AICaseTest/
 - v9.1 生成与 SSE 解耦（断连不取消 / 事件持久化 / attach 无缝续播）
 - v9.0 本期范围全自动（分析完成自动锁定 / G17 顺序修复接口全量进上下文）
 
-<details>
-<summary>完整版本线（v1.0 → v9.3）</summary>
+## 完整版本线（v1.0 → v9.3）
 
 | 版本线 | 主题 | 状态 |
 |---|---|---|
@@ -228,8 +253,6 @@ AICaseTest/
 | vP1–vP5 | 上线加固（TLS/容灾/可观测/发布流水线/压测容量） | ✅ 完成 |
 
 逐版本详细变更见 [docs/CHANGELOG.md](docs/CHANGELOG.md) 与 [docs/迭代历程.md](docs/迭代历程.md)。
-
-</details>
 
 ## API 文档
 
