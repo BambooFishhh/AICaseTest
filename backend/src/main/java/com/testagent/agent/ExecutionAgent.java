@@ -208,13 +208,32 @@ public class ExecutionAgent {
                     String selType = selector.path("type").asText("css");
                     String selValue = selector.path("value").asText("");
                     if (!selValue.isEmpty()) {
-                        domSelectorUsed = selValue;
-                        int[] clickPos = playwrightSkill.domClick(sessionId, selType, selValue);
-                        if (clickPos != null) {
-                            clickX = clickPos[0];
-                            clickY = clickPos[1];
+                        try {
+                            domSelectorUsed = selValue;
+                            int[] clickPos = playwrightSkill.domClick(sessionId, selType, selValue);
+                            if (clickPos != null) {
+                                clickX = clickPos[0];
+                                clickY = clickPos[1];
+                            }
+                            result = "passed";
+                        } catch (Exception domEx) {
+                            // v9.4: DOM 点击异常时自动升级视觉点击——选择器池外的元素（图标/删除按钮等
+                            // 分析器未提取到选择器）不再直接失败；多模态定位已命中时按坐标点击兜底
+                            if (locateResult != null && locateResult.isFound()) {
+                                log.info("DOM click failed ({}), escalate to visual_click at located position",
+                                        domEx.getMessage());
+                                int vx = locateResult.getClickX();
+                                int vy = locateResult.getClickY();
+                                playwrightSkill.visualClick(sessionId, vx, vy);
+                                clickX = vx;
+                                clickY = vy;
+                                coordinates = "x=" + vx + ",y=" + vy;
+                                strategy = "dom_click+visual_fallback";
+                                result = "passed";
+                            } else {
+                                throw domEx;
+                            }
                         }
-                        result = "passed";
                     } else {
                         // 无可用选择器，降级为跳过
                         strategy = "skip";
@@ -267,10 +286,24 @@ public class ExecutionAgent {
                             strategy = strategy + "+dom_fallback";
                             // 兜底重试后保留 passed（最佳努力重试）
                         } else {
-                            result = "failed";
-                            error = alreadyDomClicked
-                                    ? "操作未生效且已尝试 DOM 点击，为避免重复点击不再重试"
-                                    : "操作未生效且无 DOM 选择器可兜底";
+                            // v9.4: DOM 兜底不可用（无选择器/已点过同一选择器）且视觉定位已命中
+                            // → 视觉点击兜底一次（与 DOM 是不同机制，无重复点击风险；原 visual_click
+                            // 策略不再重复视觉点击，避免同坐标双击改变业务结果）
+                            if (!"visual_click".equals(strategy)
+                                    && locateResult != null && locateResult.isFound()) {
+                                int vx = locateResult.getClickX();
+                                int vy = locateResult.getClickY();
+                                playwrightSkill.visualClick(sessionId, vx, vy);
+                                clickX = vx;
+                                clickY = vy;
+                                coordinates = "x=" + vx + ",y=" + vy;
+                                strategy = strategy + "+visual_fallback";
+                            } else {
+                                result = "failed";
+                                error = alreadyDomClicked
+                                        ? "操作未生效且已尝试 DOM 点击，为避免重复点击不再重试"
+                                        : "操作未生效且无 DOM 选择器可兜底";
+                            }
                         }
                     } else {
                         result = "failed";

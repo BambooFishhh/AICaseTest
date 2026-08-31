@@ -136,7 +136,7 @@ class UiLanguageLinterTest {
 
     @Test
     void quotedPlaceholderIsFlagged() {
-        // v9.2: 引号文案含占位符——'共 N 件收藏' 页面不会出现该字面量，断言必失败
+        // v9.4: 引号文案含占位符降级为确认性提示（执行器已支持数字语义匹配），仍纳入 lint 提示
         TestCase tc = caseWith("[\"页面显示'我的收藏'与'共 N 件收藏'\"]", "[]");
         List<String> violations = UiLanguageLinter.lint(tc);
         assertEquals(1, violations.size());

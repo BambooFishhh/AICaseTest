@@ -54,6 +54,18 @@ public final class ExecutionAssert {
      *  而占位符元描述恰恰把 N 嵌在中文里（"且N为实际商品列表数量"）。 */
     private static final Pattern CLAUSE_PLACEHOLDER = Pattern.compile("(?<![a-zA-Z0-9])[A-Z](?![a-zA-Z0-9])|\\{[^}]*\\}");
 
+    /** v9.4: 负向断言极性标记——子句含这些词时，其引号短语应为"不出现"而非"出现" */
+    private static final Pattern ASSERT_NEGATIVE = Pattern.compile(
+            "不显示|不再显示|不再出现|不再存在|不应出现|不应显示|未出现|没有出现");
+
+    /** v9.4: 无引号子句的泛化/动态描述特征——没有可比较的稳定文案，不参与 ngram。
+     *  "至少一个商品项"、"列表区域无商品卡片"、"保持不变"、"如…等"这类子句
+     *  按 3-gram 匹配必然落空，只会制造误判；其中可验证的引号锚点单独验证。 */
+    private static final Pattern ASSERT_CLAUSE_VAGUE = Pattern.compile(
+            "至少|不再|消失|保持不变|未发生变化|没有变化|无变化|无响应|加载完成|加载中|正在加载|loading"
+                    + "|类似|例如|如[^，。；]{0,16}等|空状态|为空|无商品|无记录|无内容|无数据|详情|信息"
+                    + "|等基本|等统计|等描述|等文案|等提示|等数值");
+
     /** 叙述性前缀（长词优先剥离） */
     private static final String[] ASSERT_PREFIXES = {
             "页面上出现", "页面出现", "页面显示", "标题显示", "跳转到", "页面", "标题", "出现", "显示", "提示", "跳转", "返回", "包含"};
@@ -117,13 +129,42 @@ public final class ExecutionAssert {
             return "skipped";
         }
 
+        // v9.4: 子句级断言分析（层 1/层 2 共用）——按标点/连接词切分子句后逐子句定性：
+        //  A. 含引号短语 → 只验证引号短语本身：极性由子句内负向词决定（"不显示'X'" = X 不应出现），
+        //     子句其余中文是叙述连接语（"至少一个商品项"），不参与 ngram——混合型断言不再误判
+        //  B. 含占位符（N/{var}）→ 对占位符的语义限定子句（v9.3，"且N为实际商品列表数量"），剔除
+        //  C. 无引号的泛化/动态描述子句（至少/消失/保持不变/类似…等）→ 剔除
+        //  D. 其余无引号子句 → 保持原 ngram 匹配强度
+        List<Object[]> quotedChecks = new ArrayList<>();
+        StringBuilder assertable = new StringBuilder();
+        for (String clause : ASSERT_CLAUSE_SPLIT.split(expected)) {
+            List<String> clauseQuotes = extractQuoted(clause);
+            if (!clauseQuotes.isEmpty()) {
+                boolean negative = ASSERT_NEGATIVE.matcher(clause).find();
+                for (String q : clauseQuotes) {
+                    quotedChecks.add(new Object[]{q, negative});
+                }
+                continue;
+            }
+            if (CLAUSE_PLACEHOLDER.matcher(clause).find()) {
+                continue;
+            }
+            if (ASSERT_CLAUSE_VAGUE.matcher(clause).find()) {
+                continue;
+            }
+            if (assertable.length() > 0) {
+                assertable.append("，");
+            }
+            assertable.append(clause);
+        }
+
         // 层 1: URL/标题语义
         if (ASSERT_URLISH.matcher(expected).find()) {
             String url = pageState.getOrDefault("url", "");
             String title = pageState.getOrDefault("title", "");
             String urlTitleText = (url + " " + title).toLowerCase();
             List<String> keywords = new ArrayList<>();
-            Matcher m = ASSERT_TOKEN.matcher(stripPlaceholderClauses(expected));
+            Matcher m = ASSERT_TOKEN.matcher(assertable.toString());
             while (m.find()) {
                 String kw = m.group().toLowerCase();
                 if (!ASSERT_STOPWORDS.contains(kw)) {
@@ -142,18 +183,13 @@ public final class ExecutionAssert {
         }
 
         // 层 2: DOM 文本断言（title + textSnippet 包含比较）
-        List<String> quoted = extractQuoted(expected);
-        // v9.3: 含占位符（N/{var}）的子句是对占位符的语义限定（如"且N为实际商品列表数量"），
-        // 不是页面可见文案——剔除后再提取中文段/英文token，否则 ngram 匹配必然落空误报 failed。
-        // 子句中的可验证锚点（引号短语）已由占位符正则独立验证。
-        String assertable = stripPlaceholderClauses(expected);
         List<String> segments = new ArrayList<>();
-        Matcher zh = ASSERT_CHINESE.matcher(assertable);
+        Matcher zh = ASSERT_CHINESE.matcher(assertable.toString());
         while (zh.find()) {
             segments.add(zh.group());
         }
         // 进入文本断言的前提：有引号短语或中文段——纯 API 形态（status=XXX）无 UI 可比内容
-        if (quoted.isEmpty() && segments.isEmpty()) {
+        if (quotedChecks.isEmpty() && segments.isEmpty()) {
             return "skipped";
         }
         String snippet = pageState.getOrDefault("textSnippet", "");
@@ -163,9 +199,16 @@ public final class ExecutionAssert {
         }
         String pageText = (title + " " + snippet).toLowerCase();
 
-        // 引号短语：完整包含；含占位符（N/X/{var}）的短语按"占位符=数字"正则语义匹配
-        for (String q : quoted) {
-            if (QUOTE_PLACEHOLDER.matcher(q).find()) {
+        // 引号短语：正极性完整包含（含占位符时按"占位符=数字"正则语义匹配）；负极性必须不出现
+        for (Object[] qc : quotedChecks) {
+            String q = (String) qc[0];
+            boolean negative = (Boolean) qc[1];
+            if (negative) {
+                // v9.4: 负向断言——"不显示'X'/不再显示'X'" 的语义是 X 不应出现在页面文本
+                if (pageText.contains(q.toLowerCase())) {
+                    return "failed";
+                }
+            } else if (QUOTE_PLACEHOLDER.matcher(q).find()) {
                 if (!placeholderPhraseRegex(q).matcher(pageText).find()) {
                     return "failed";
                 }
@@ -208,23 +251,6 @@ public final class ExecutionAssert {
             }
         }
         return java.util.regex.Pattern.compile(sb.toString());
-    }
-
-    /** v9.3: 剔除含占位符（独立 N/X、{var}）的子句——这类子句是对占位符的语义限定
-     *  （如"且N为实际商品列表数量"），不是页面可见文案；其可验证锚点（引号短语）
-     *  已由占位符正则独立验证，剩余文字参与 ngram/token 匹配只会必然落空。 */
-    static String stripPlaceholderClauses(String expected) {
-        StringBuilder kept = new StringBuilder();
-        for (String clause : ASSERT_CLAUSE_SPLIT.split(expected)) {
-            if (CLAUSE_PLACEHOLDER.matcher(clause).find()) {
-                continue;
-            }
-            if (kept.length() > 0) {
-                kept.append("，");
-            }
-            kept.append(clause);
-        }
-        return kept.toString();
     }
 
     /** 引号内短语（「」/“”/''/""），取匹配到的非空分组 */

@@ -118,11 +118,12 @@ public final class UiLanguageLinter {
         if (text == null || text.isBlank()) {
             return;
         }
-        // v9.2: 引号文案占位符——'共 N 件收藏' 这类字面量页面不会出现，断言必失败，最高优先标记
+        // v9.4: 引号文案占位符——执行器已支持占位符数字语义匹配（'共 N 件收藏' 匹配"共 1 件收藏"），
+        // 不再是违规；降级为确认性提示，提醒检查占位符写法为 N 单字符形态
         List<String> badQuotes = com.testagent.service.ExecutionAssert.quotedPlaceholders(text);
         if (!badQuotes.isEmpty()) {
             violations.add(field + " '" + truncate(text) + "' 引号文案含占位符（" + badQuotes.get(0)
-                    + "），页面不会出现该字面量——写真实值或只引用不含变量的部分");
+                    + "）——执行器按数字语义匹配，请确认占位符为单字符 N/X 形态且表述为'共 N 件'类数量句式");
             return;
         }
         Matcher api = API_PHRASE.matcher(text);

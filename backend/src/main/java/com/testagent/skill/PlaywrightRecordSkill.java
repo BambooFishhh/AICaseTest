@@ -187,7 +187,9 @@ public class PlaywrightRecordSkill {
             return position;
         } catch (Exception e) {
             log.error("DOM 点击失败: {}={}, error={}", selectorType, selectorValue, e.getMessage());
-            throw new RuntimeException("DOM 点击失败", e);
+            // v9.4: 根因带出（选择器未命中/超时/MCP 异常），不再只有一句"DOM 点击失败"让排查全靠猜
+            throw new RuntimeException("DOM 点击失败: " + selectorType + "=" + selectorValue
+                    + "（" + e.getMessage() + "）", e);
         }
     }
 

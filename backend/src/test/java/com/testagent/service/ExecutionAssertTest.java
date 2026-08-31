@@ -193,4 +193,47 @@ class ExecutionAssertTest {
                 page("http://host/#/collect", "litemall 商城",
                         "我的收藏 共 1 件收藏 商品A 购物车为空")));
     }
+
+    // ==================== v9.4: 负向断言 / 泛化限定语 / 混合型断言 ====================
+
+    @Test
+    void negativeQuotedAssertionPassesWhenAbsent() {
+        // v9.4 实测回归：litemall 收藏页"不显示'已取消收藏'提示"——语义是该文案不应出现，
+        // 旧实现按 must-contain 处理必然误判 failed；泛化子句（操作无响应/保持不变）同时剔除
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "操作无响应或页面无变化，收藏总数保持不变，不显示'已取消收藏'提示",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 商品A 删除")));
+        // 文案实际出现 → 负向断言失败（真实回归）
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "操作无响应或页面无变化，收藏总数保持不变，不显示'已取消收藏'提示",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 已取消收藏 共 0 件收藏")));
+    }
+
+    @Test
+    void mixedVagueQualifierWithAnchorPassesOnAnchor() {
+        // v9.4 实测回归：引号锚点命中即通过——"至少一个商品卡片"是泛化限定语，
+        // 不再随 3-gram 匹配制造误判（同一断言此前"锚点明明命中仍 failed"）
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'浏览足迹'，列表中包含至少一个商品卡片，例如'蔓越莓曲奇'",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹 共 7 条足迹 蔓越莓曲奇 200克 ￥36 删除")));
+        // 锚点真实缺失照样 failed
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面显示'浏览足迹'，列表中包含至少一个商品卡片，例如'蔓越莓曲奇'",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹 共 0 条足迹 暂无足迹")));
+    }
+
+    @Test
+    void noAnchorVagueDescriptiveIsSkipped() {
+        // v9.4: 无引号锚点且全为泛化描述（如…等/详情信息/未发生变化）→ 无可验证内容，诚实 skipped
+        assertEquals("skipped", ExecutionAssert.assertExpected(
+                "页面显示商品详情信息，如商品图片、规格选择等",
+                page("http://host/#/goods/1", "litemall 商城", "蔓越莓曲奇 200克 ￥36")));
+        assertEquals("skipped", ExecutionAssert.assertExpected(
+                "提示消失后，足迹列表内容与总数均未发生变化",
+                page("http://host/#/footprint", "litemall 商城", "浏览足迹 共 7 条足迹")));
+    }
 }
