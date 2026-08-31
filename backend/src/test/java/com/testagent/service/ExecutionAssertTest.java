@@ -154,4 +154,43 @@ class ExecutionAssertTest {
                 page("http://host/#/collect", "litemall 商城",
                         "我的收藏 商品A")));
     }
+
+    @Test
+    void placeholderMetaClauseIsNotPageCopy() {
+        // v9.3 实测回归：litemall 收藏页——"且N为实际商品列表数量"是对占位符 N 的语义限定，
+        // 不是页面文案。此前"为实际商品列表数量"被抽成中文核心短语做 3-gram 匹配必然落空，
+        // 引号短语明明命中仍误报 failed。
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'共 N 件收藏'，且N为实际商品列表数量",
+                page("http://172.31.160.1:6255/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 蔓越莓曲奇 200克 酥脆奶香，甜酸回味 ￥36 删除")));
+        // 占位符正则仍是权威校验：页面没有"共 <数字> 件收藏"形态时照样 failed
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面显示'共 N 件收藏'，且N为实际商品列表数量",
+                page("http://172.31.160.1:6255/#/collect", "litemall 商城",
+                        "我的收藏 暂无收藏商品")));
+    }
+
+    @Test
+    void bracePlaceholderVarNameNotRequiredInPageText() {
+        // v9.3: {orderId} 的变量名此前会被抽成英文 token 要求页面出现 "orderId"——
+        // 现占位符子句整体剔除，引号短语按"订单号 <数字>"正则匹配
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'订单号 {orderId}'",
+                page("http://host/#/order/1", "订单详情",
+                        "订单详情 订单号 12345 下单时间 2026-08-31")));
+    }
+
+    @Test
+    void clausesWithoutPlaceholderStillVerified() {
+        // 无占位符的子句不受剔除影响，保持原有字面校验强度（缺失即 failed）
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面显示'共 1 件收藏'，页面显示'购物车为空'",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 商品A")));
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'共 1 件收藏'，页面显示'购物车为空'",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 商品A 购物车为空")));
+    }
 }

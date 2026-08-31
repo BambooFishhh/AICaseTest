@@ -46,6 +46,14 @@ public final class ExecutionAssert {
     /** 中文连接词：段内切分为多个并列断言 */
     private static final Pattern ASSERT_CONNECTOR = Pattern.compile("并且|同时|以及|且");
 
+    /** v9.3: 子句切分（标点 + 连接词）——用于剔除占位符元描述子句 */
+    private static final Pattern ASSERT_CLAUSE_SPLIT = Pattern.compile("，|,|；|;|。|并且|同时|以及|且");
+
+    /** v9.3: 子句内占位符特征——独立大写字母（前后非 ASCII 字母数字，允许紧贴中文）/花括号变量。
+     *  不能用 \b：Java 的 \b 是 Unicode 感知的，"且N为" 中 N 两侧都是汉字时形不成词边界，
+     *  而占位符元描述恰恰把 N 嵌在中文里（"且N为实际商品列表数量"）。 */
+    private static final Pattern CLAUSE_PLACEHOLDER = Pattern.compile("(?<![a-zA-Z0-9])[A-Z](?![a-zA-Z0-9])|\\{[^}]*\\}");
+
     /** 叙述性前缀（长词优先剥离） */
     private static final String[] ASSERT_PREFIXES = {
             "页面上出现", "页面出现", "页面显示", "标题显示", "跳转到", "页面", "标题", "出现", "显示", "提示", "跳转", "返回", "包含"};
@@ -115,7 +123,7 @@ public final class ExecutionAssert {
             String title = pageState.getOrDefault("title", "");
             String urlTitleText = (url + " " + title).toLowerCase();
             List<String> keywords = new ArrayList<>();
-            Matcher m = ASSERT_TOKEN.matcher(expected);
+            Matcher m = ASSERT_TOKEN.matcher(stripPlaceholderClauses(expected));
             while (m.find()) {
                 String kw = m.group().toLowerCase();
                 if (!ASSERT_STOPWORDS.contains(kw)) {
@@ -135,8 +143,12 @@ public final class ExecutionAssert {
 
         // 层 2: DOM 文本断言（title + textSnippet 包含比较）
         List<String> quoted = extractQuoted(expected);
+        // v9.3: 含占位符（N/{var}）的子句是对占位符的语义限定（如"且N为实际商品列表数量"），
+        // 不是页面可见文案——剔除后再提取中文段/英文token，否则 ngram 匹配必然落空误报 failed。
+        // 子句中的可验证锚点（引号短语）已由占位符正则独立验证。
+        String assertable = stripPlaceholderClauses(expected);
         List<String> segments = new ArrayList<>();
-        Matcher zh = ASSERT_CHINESE.matcher(expected);
+        Matcher zh = ASSERT_CHINESE.matcher(assertable);
         while (zh.find()) {
             segments.add(zh.group());
         }
@@ -169,7 +181,7 @@ public final class ExecutionAssert {
         }
         // 英文 token：大小写不敏感包含
         List<String> tokens = new ArrayList<>();
-        Matcher en = ASSERT_TEXT_TOKEN.matcher(expected);
+        Matcher en = ASSERT_TEXT_TOKEN.matcher(assertable);
         while (en.find()) {
             String kw = en.group().toLowerCase();
             if (!ASSERT_STOPWORDS.contains(kw)) {
@@ -196,6 +208,23 @@ public final class ExecutionAssert {
             }
         }
         return java.util.regex.Pattern.compile(sb.toString());
+    }
+
+    /** v9.3: 剔除含占位符（独立 N/X、{var}）的子句——这类子句是对占位符的语义限定
+     *  （如"且N为实际商品列表数量"），不是页面可见文案；其可验证锚点（引号短语）
+     *  已由占位符正则独立验证，剩余文字参与 ngram/token 匹配只会必然落空。 */
+    static String stripPlaceholderClauses(String expected) {
+        StringBuilder kept = new StringBuilder();
+        for (String clause : ASSERT_CLAUSE_SPLIT.split(expected)) {
+            if (CLAUSE_PLACEHOLDER.matcher(clause).find()) {
+                continue;
+            }
+            if (kept.length() > 0) {
+                kept.append("，");
+            }
+            kept.append(clause);
+        }
+        return kept.toString();
     }
 
     /** 引号内短语（「」/“”/''/""），取匹配到的非空分组 */
