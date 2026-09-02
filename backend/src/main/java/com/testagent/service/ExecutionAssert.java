@@ -80,6 +80,14 @@ public final class ExecutionAssert {
                     + "|商品卡片|足迹商品|订单统计|统计项|统计数字|统计信息|列表展示"
                     + "|总数|商品收藏|收藏总数|足迹总数");
 
+    /** v9.11: 列表存在性兜底触发——"至少一个商品卡片"类无内容描述断言的可验证子集：
+     *  通过页面总数文案（共 N 件/条）判定列表是否有项 */
+    static final Pattern LIST_PRESENCE_TRIGGER = Pattern.compile("至少一个|至少一项");
+    /** v9.11: 空状态兜底触发——期望"暂无/为空/空状态"时总数应为 0 */
+    static final Pattern EMPTY_STATE_TRIGGER = Pattern.compile("空状态|暂无|为空");
+    /** v9.11: 页面总数文案（共 N 件/条/个/只） */
+    static final Pattern LIST_COUNT_PATTERN = Pattern.compile("共\\s*(\\d+)\\s*[件条个只]");
+
     /** v9.5fix: URL 语义子句——含这些词的子句，其引号短语（'/goods/' 等路径）应与 url/title
      *  比对而非页面正文（正文快照不含 URL，按正文匹配必然误判） */
     private static final Pattern ASSERT_URL_CLAUSE = Pattern.compile("URL|url|地址|重定向|跳转至|跳转到|路径");
@@ -154,7 +162,10 @@ public final class ExecutionAssert {
         }
         // v9.2: 抽象断言诚实降级——无引号文案锚点的泛化表述（加载完成/至少一个等）
         // 没有可匹配的具体文案，文本断言必然落空，按"无法验证"处理而非误报失败
-        if (!hasQuotedAnchor(expected) && ASSERT_VAGUE.matcher(expected).find()) {
+        // v9.11: 列表存在性/空状态类有总数文案兜底验证途径，放行到下方兜底判定
+        if (!hasQuotedAnchor(expected) && ASSERT_VAGUE.matcher(expected).find()
+                && !LIST_PRESENCE_TRIGGER.matcher(expected).find()
+                && !EMPTY_STATE_TRIGGER.matcher(expected).find()) {
             return "skipped";
         }
 
@@ -220,7 +231,16 @@ public final class ExecutionAssert {
             segments.add(zh.group());
         }
         // 进入文本断言的前提：有引号短语或中文段——纯 API 形态（status=XXX）无 UI 可比内容
-        if (quotedChecks.isEmpty() && segments.isEmpty()) {
+        // v9.11: 列表存在性兜底——"页面展示至少一个商品卡片，包含图片名称价格"这类无内容
+        // 描述断言被泛化词表剔除后 quotedChecks/segments 均空，原本只能诚实 skipped。
+        // 其中"列表至少一项"类有通用验证途径：页面总数文案（共 N 件/条）——N≥1 即列表有项，
+        // N=0 即空；空状态类反向同理。页面无总数文案则维持诚实 skipped
+        boolean listPresenceFallback = quotedChecks.isEmpty()
+                && LIST_PRESENCE_TRIGGER.matcher(expected).find();
+        boolean emptyStateFallback = quotedChecks.isEmpty() && !listPresenceFallback
+                && EMPTY_STATE_TRIGGER.matcher(expected).find();
+        if (quotedChecks.isEmpty() && segments.isEmpty()
+                && !listPresenceFallback && !emptyStateFallback) {
             return "skipped";
         }
         String snippet = pageState.getOrDefault("textSnippet", "");
@@ -231,6 +251,20 @@ public final class ExecutionAssert {
         // v9.7: DOM 文本快照按行/标签拼接，用户中心这类换行分隔的"user123 欢迎回来"、
         // "0 待付款 1 待发货"必须在断言前归一空白，否则字面引号锚点因换行误判失败
         String pageText = normalizeSpace(title + " " + snippet).toLowerCase();
+
+        // v9.11: 兜底判定——无引号锚点且触发列表/空状态时，忽略其余泛化子段，
+        // 直接以页面总数文案（共 N 件/条）为唯一判据
+        if (listPresenceFallback || emptyStateFallback) {
+            Matcher count = LIST_COUNT_PATTERN.matcher(pageText);
+            if (!count.find()) {
+                return "skipped";  // 页面无"共 N 件/条"总数文案，无法兜底验证，维持诚实 skipped
+            }
+            int n = Integer.parseInt(count.group(1));
+            if (listPresenceFallback) {
+                return n >= 1 ? "passed" : "failed";  // 期望列表至少一项：总数≥1 即通过
+            }
+            return n == 0 ? "passed" : "failed";      // 期望空状态：总数为 0 即通过
+        }
 
         // 引号短语：正极性完整包含（含占位符时按"占位符=数字"正则语义匹配）；负极性必须不出现
         String urlTitleText = normalizeSpace(pageState.getOrDefault("url", "") + " " + title).toLowerCase();

@@ -446,4 +446,32 @@ class ExecutionAssertTest {
                 page("http://host/#/collect", "litemall 商城",
                         "我的收藏 共 1 件收藏 轻奢纯棉刺绣水洗四件套 ￥899 删除")));
     }
+
+    @Test
+    void listPresenceFallbackVerifiesViaCount() {
+        // v9.11 实测回归：通过用例的最后一步断言"展示至少一个商品卡片"被泛化词表诚实
+        // skipped——但这类断言有通用验证途径：页面总数文案。N≥1 即列表有项 → passed
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面展示至少一个收藏的商品卡片，包含商品图片、名称和价格",
+                page("http://host/#/collect", "litemall 商城", "我的收藏 共 1 件收藏 蔓越莓曲奇")));
+        // 总数为 0 → "至少一项"断言失败（列表真实为空）
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面展示至少一个收藏的商品卡片，包含商品图片、名称和价格",
+                page("http://host/#/collect", "litemall 商城", "我的收藏 共 0 件收藏 暂无收藏")));
+    }
+
+    @Test
+    void emptyStateFallbackVerifiesViaCount() {
+        // v9.11: 空状态断言反向兜底——总数为 0 即通过，有项即失败
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示暂无足迹的空状态组件",
+                page("http://host/#/footprint", "litemall 商城", "浏览足迹 共 0 条足迹")));
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面显示暂无足迹的空状态组件",
+                page("http://host/#/footprint", "litemall 商城", "浏览足迹 共 6 条足迹 商品A")));
+        // 页面无"共 N"总数文案 → 无法兜底验证，维持诚实 skipped
+        assertEquals("skipped", ExecutionAssert.assertExpected(
+                "页面显示暂无足迹的空状态组件",
+                page("http://host/#/footprint", "litemall 商城", "浏览足迹")));
+    }
 }
