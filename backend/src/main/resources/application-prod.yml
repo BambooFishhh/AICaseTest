@@ -16,12 +16,12 @@ spring:
   ai:
     openai:
       api-key: ${LLM_API_KEY:}
-      base-url: ${LLM_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+      base-url: ${LLM_BASE_URL:https://api.xiaomimimo.com/v1}
       # v6.0fix: 与 application.yml 一致，覆盖端点路径避免 /v1/v1 重复
       chat:
         completions-path: /chat/completions
         options:
-          model: ${LLM_MODEL:glm-5.3-flash}
+          model: ${LLM_MODEL:mimo-v2.5}
       embedding:
         api-key: ${LLM_EMBEDDING_API_KEY:${DASHSCOPE_API_KEY:${LLM_API_KEY:}}}
         # v7.14(E17): 默认端点改 DashScope 兼容模式（chat 网关无 embeddings 路由，回落=404）
@@ -30,7 +30,7 @@ spring:
         options:
           model: ${LLM_EMBEDDING_MODEL:text-embedding-v4}
 llm:
-  provider: ${LLM_PROVIDER:openai}
-  model: ${LLM_MODEL:glm-5.3-flash}
+  provider: ${LLM_PROVIDER:mimo}
+  model: ${LLM_MODEL:mimo-v2.5}
   api-key: ${LLM_API_KEY:}
-  base-url: ${LLM_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+  base-url: ${LLM_BASE_URL:https://api.xiaomimimo.com/v1}

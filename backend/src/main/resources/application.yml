@@ -50,13 +50,13 @@ spring:
   ai:
     openai:
       api-key: ${LLM_API_KEY:}
-      base-url: ${LLM_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+      base-url: ${LLM_BASE_URL:https://api.xiaomimimo.com/v1}
       # v6.0fix: LLM_BASE_URL 以 /v1 结尾（MCP vision 的 OpenAI SDK 语义）。
       # Spring AI 会额外拼路径，因此显式覆盖为不带 /v1 的端点路径，避免 /v1/v1 重复。
       chat:
         completions-path: /chat/completions
         options:
-          model: ${LLM_MODEL:glm-5.3-flash}
+          model: ${LLM_MODEL:mimo-v2.5}
           temperature: 0.4
       embedding:
         api-key: ${LLM_EMBEDDING_API_KEY:${DASHSCOPE_API_KEY:${LLM_API_KEY:}}}
@@ -70,7 +70,7 @@ spring:
           model: ${LLM_EMBEDDING_MODEL:text-embedding-v4}
 llm:
   provider: ${LLM_PROVIDER:bailian}
-  model: ${LLM_MODEL:glm-5.3-flash}
+  model: ${LLM_MODEL:mimo-v2.5}
   embedding-model: ${LLM_EMBEDDING_MODEL:text-embedding-v4}
   enable-thinking: ${LLM_ENABLE_THINKING:false}
   # v7.10(L3): thinking 为咨询性配置——Spring AI OpenAI starter 无法透传 enable_thinking，
@@ -79,7 +79,7 @@ llm:
     analysis: ${LLM_THINKING_ANALYSIS:true}
     generation: ${LLM_THINKING_GENERATION:false}
   api-key: ${LLM_API_KEY:}
-  base-url: ${LLM_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+  base-url: ${LLM_BASE_URL:https://api.xiaomimimo.com/v1}
   # v8.8.1(10.1): 多供应商注册——现有 llm.* 即 primary；fallback 三键齐备时启用降级路由
   models:
     fallback:
