@@ -37,7 +37,7 @@ public class McpClientManager {
     @Value("${llm.api-key:}")
     private String llmApiKey;
 
-    @Value("${llm.base-url:https://api.xiaomimimo.com/v1}")
+    @Value("${llm.base-url:https://open.bigmodel.cn/api/paas/v4}")
     private String llmBaseUrl;
 
     @Value("${llm.model:gpt-4o}")
