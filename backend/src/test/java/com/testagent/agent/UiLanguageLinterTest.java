@@ -152,6 +152,24 @@ class UiLanguageLinterTest {
     }
 
     @Test
+    void quoteEndingWithDigitIsFlagged() {
+        // v9.13: '我的收藏 3' 徽标形态（"共 N 件"模式覆盖不到的数字写法）
+        TestCase tc = caseWith("[\"菜单项显示'浏览足迹 5'\"]", "[]");
+        List<String> violations = UiLanguageLinter.lint(tc);
+        assertEquals(1, violations.size());
+        assertTrue(violations.get(0).contains("写死数字"));
+    }
+
+    @Test
+    void unsureHintIsFlagged() {
+        // v9.13: 不确定注释/或分叉写进 expected
+        TestCase tc = caseWith("[\"页面出现'收藏成功'的提示（根据实际代码，可能无此提示，而是图标变化）\"]", "[]");
+        List<String> violations = UiLanguageLinter.lint(tc);
+        assertEquals(1, violations.size());
+        assertTrue(violations.get(0).contains("不确定表述"));
+    }
+
+    @Test
     void fixedCountInExpectedIsFlagged() {
         // 12.21: 数量写死（'共 1 件收藏'）数字随数据变化必然脆断，应改占位符 '共 N 件收藏'
         TestCase tc = caseWith("[\"页面显示'我的收藏'，共 1 件收藏\"]", "[]");

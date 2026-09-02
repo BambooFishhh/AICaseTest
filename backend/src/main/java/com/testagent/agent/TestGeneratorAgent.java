@@ -1183,6 +1183,11 @@ public class TestGeneratorAgent {
         result = semanticService.deduplicateBatch(result);
         r.semanticDropped = beforeSemantic - result.size();
 
+        // v9.13: 数量写死确定性归一——mimo 对 12.21 ② 遵从率不足（实测仍产出 '共 3 件收藏'
+        // '共 5 条足迹'），数字随数据变化必然脆断；正则替换为占位符 N（执行器按数字语义
+        // 匹配，语义等价且不再脆断）。不指望 LLM 的确定性兜底，与 normalizeModules 同思路
+        normalizeExpectationCounts(result);
+
         // v9.9: 按模块归组排序后再分配 id/落库——并发生成的到达序会把平台 id 与模块块
         // 打散（实测 TC-1004 插在 TC-998/TC-999 之间），project_seq 按模块重排后与 id
         // 视觉错位显"乱序"。排序后 id 分配顺序=模块块顺序，id 序/序号/分组显示三者
@@ -1202,6 +1207,38 @@ public class TestGeneratorAgent {
         }
         r.finalCount = result.size();
         return result;
+    }
+
+    /** v9.13: expected 中的写死数量（共 3 件/共 5 条）→ 占位符 N */
+    private static final java.util.regex.Pattern FIXED_COUNT =
+            java.util.regex.Pattern.compile("共\\s*\\d+\\s*([件条个只])");
+
+    /**
+     * v9.13: 数量写死确定性归一——expectedResults 与 structuredSteps[].expected 里的
+     * '共 3 件收藏' 统一替换为 '共 N 件收藏'。只动 "共 <数字> <量词>" 形态，
+     * 不触碰其他数字（商品规格 200克 等）。
+     */
+    void normalizeExpectationCounts(List<TestCase> cases) {
+        for (TestCase tc : cases) {
+            if (tc.getExpectedResults() != null && FIXED_COUNT.matcher(tc.getExpectedResults()).find()) {
+                tc.setExpectedResults(FIXED_COUNT.matcher(tc.getExpectedResults()).replaceAll("共 N $1"));
+            }
+            if (tc.getStructuredSteps() == null || !tc.getStructuredSteps().contains("expected")) {
+                continue;
+            }
+            List<Map<String, Object>> steps = JsonHelper.parseListMap(tc.getStructuredSteps());
+            boolean changed = false;
+            for (Map<String, Object> step : steps) {
+                Object expected = step.get("expected");
+                if (expected instanceof String expectedStr && FIXED_COUNT.matcher(expectedStr).find()) {
+                    step.put("expected", FIXED_COUNT.matcher(expectedStr).replaceAll("共 N $1"));
+                    changed = true;
+                }
+            }
+            if (changed) {
+                tc.setStructuredSteps(toJson(steps));
+            }
+        }
     }
 
     /**

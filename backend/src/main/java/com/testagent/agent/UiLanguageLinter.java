@@ -43,6 +43,10 @@ public final class UiLanguageLinter {
             "\\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\\b");
 
     /** 12.21: expected 数量写死——'共 3 件收藏' 类句式（数字随数据变化必然脆断，改占位符 N） */
+
+    /** v9.13: 不确定注释/或分叉特征——'（可能无此提示…）''可能出现…或操作无响应''或如果实际…' */
+    private static final Pattern UNSURE_HINT = Pattern.compile(
+            "可能无|可能出现|或如果|可能不|或操作无响应|若无此提示");
     private static final Pattern FIXED_COUNT_IN_EXPECTED = Pattern.compile(
             "共\\s*\\d+\\s*[件条个只项]");
 
@@ -135,6 +139,22 @@ public final class UiLanguageLinter {
                         + "）——数字随数据变化必然失败，应改占位符表达如'共 N 件收藏'");
                 return;
             }
+        }
+        // v9.13: 引号文案以中文+数字结尾——'我的收藏 3' 徽标形态，数字随数据变化（"共 N 件"
+        // 模式覆盖不到）；确认性提示，建议改占位符或引不含数字的真实文案
+        for (String q : com.testagent.service.ExecutionAssert.quotedPhrases(text)) {
+            if (q.matches(".*[一-龥]\\s*\\d+")) {
+                violations.add(field + " '" + truncate(text) + "' 引号文案含写死数字（" + q
+                        + "）——数字随数据变化，应改占位符表达或引用不含数字的真实文案");
+                return;
+            }
+        }
+        // v9.13: 不确定注释/或分叉——'（可能无此提示…）''可能出现…或操作无响应'写进了 expected
+        Matcher unsure = UNSURE_HINT.matcher(text);
+        if (unsure.find()) {
+            violations.add(field + " '" + truncate(text) + "' 含不确定表述（" + unsure.group()
+                    + "）——行为不确定时应对照 userFeedbackTexts 写确定的单一结果，或删除该断言");
+            return;
         }
         // v9.4: 引号文案占位符——执行器已支持占位符数字语义匹配（'共 N 件收藏' 匹配"共 1 件收藏"），
         // 不再是违规；降级为确认性提示，提醒检查占位符写法为 N 单字符形态
