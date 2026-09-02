@@ -146,8 +146,18 @@ class UiLanguageLinterTest {
 
     @Test
     void quotedRealTextIsNotFlaggedAsPlaceholder() {
-        TestCase tc = caseWith("[\"页面显示'我的收藏'，共 1 件收藏\"]", "[]");
+        // 12.21: 无数量的真实文案不触发任何规则
+        TestCase tc = caseWith("[\"页面显示'我的收藏'与'蔓越莓曲奇'\"]", "[]");
         assertEquals(0, UiLanguageLinter.lint(tc).size());
+    }
+
+    @Test
+    void fixedCountInExpectedIsFlagged() {
+        // 12.21: 数量写死（'共 1 件收藏'）数字随数据变化必然脆断，应改占位符 '共 N 件收藏'
+        TestCase tc = caseWith("[\"页面显示'我的收藏'，共 1 件收藏\"]", "[]");
+        List<String> violations = UiLanguageLinter.lint(tc);
+        assertEquals(1, violations.size());
+        assertTrue(violations.get(0).contains("数量写死"));
     }
 
     @Test

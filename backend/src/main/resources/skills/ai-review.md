@@ -13,6 +13,12 @@
   必须标记 fix，issues 说明与哪条重复并建议合并保留断言更明确的一条
 - v9.6 预期与动作一致性：删除/取消类动作的预期必须落在动作结果上
   （列表消失/总数更新/提示文案），只断言页面标题或「页面跳转/触发跳转」无锚点泛化表述必须标记 fix
+- 12.21 断言界限（全部标记 fix）——① expected 引号内写死数量（'共 3 件收藏'/'共 5 条足迹'）
+  应改占位符 '共 N 件收藏'，禁止 N-1/N+1 算术；② 图标样式/颜色/徽标断言（'图标显示为空心'
+  '变为高亮'）页面文本不可验证，改为可感知的文本结果（列表包含/提示文案/URL 跳转）；
+  ③ "或"分叉预期（'A 或 B''或如果实际…则…'）与不确定注释（'可能无此提示'）必须收敛为
+  单一确定结果；④ 断言依赖的前置状态（空列表/未收藏/不存在商品）无准备步骤时标记 fix
+  并建议补准备步骤或删除该用例
 - coverageRefs 只能引用 coverageChecklist 中真实存在的 id：
   transitionIds 用 "from->to"；endpointIds 用 "METHOD /path"；ruleIds 用 "rule-N"；requirementIds 原样使用 coverageChecklist.requirements[].id
 - suggestedChanges：给出可自动采纳的修正（title/module/type/priority/coverageRefs），没有修正则填 null

@@ -42,6 +42,10 @@ public final class UiLanguageLinter {
     private static final Pattern SNAKE_ID = Pattern.compile(
             "\\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\\b");
 
+    /** 12.21: expected 数量写死——'共 3 件收藏' 类句式（数字随数据变化必然脆断，改占位符 N） */
+    private static final Pattern FIXED_COUNT_IN_EXPECTED = Pattern.compile(
+            "共\\s*\\d+\\s*[件条个只项]");
+
     /** 规则6(v9.2): 步骤类型本身接口化——type=api_call（执行器一律 skip，生成即废步骤） */
     private static final String API_CALL_STEP = "api_call";
 
@@ -121,6 +125,16 @@ public final class UiLanguageLinter {
     private static void check(String text, String field, List<String> violations) {
         if (text == null || text.isBlank()) {
             return;
+        }
+        // 12.21: 数量写死——'共 3 件收藏' 的数字随数据变化必然脆断（litemall 实测写死 3/5 全部
+        // 失败），应改占位符 '共 N 件收藏'（执行器按数字语义匹配）
+        if (field.contains("expected")) {
+            Matcher fixedCount = FIXED_COUNT_IN_EXPECTED.matcher(text);
+            if (fixedCount.find()) {
+                violations.add(field + " '" + truncate(text) + "' 数量写死（" + fixedCount.group()
+                        + "）——数字随数据变化必然失败，应改占位符表达如'共 N 件收藏'");
+                return;
+            }
         }
         // v9.4: 引号文案占位符——执行器已支持占位符数字语义匹配（'共 N 件收藏' 匹配"共 1 件收藏"），
         // 不再是违规；降级为确认性提示，提醒检查占位符写法为 N 单字符形态
