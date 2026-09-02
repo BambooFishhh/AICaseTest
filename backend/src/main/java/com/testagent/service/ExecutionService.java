@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.testagent.analyzer.result.FrontendResult;
 import com.testagent.entity.ExecutionRecord;
 import com.testagent.entity.ExecutionStep;
 import com.testagent.entity.Project;
@@ -57,6 +58,9 @@ public class ExecutionService {
     // v8.9.8(12.14-C): 读前端分析路由做存量用例导航兜底
     @Autowired
     private com.testagent.repository.CodeAnalysisRepository codeAnalysisRepository;
+    // v9.10: 执行期选择器兜底——复用生成期的 enrich 路由作用域逻辑（无循环依赖）
+    @Autowired
+    private com.testagent.agent.TestGeneratorAgent testGeneratorAgent;
     @Autowired
     private PlaywrightRecordSkill playwrightSkill;
     @Autowired
@@ -1278,11 +1282,48 @@ public class ExecutionService {
                         all.insert(0, nav);
                     }
                 }
+                // v9.10: 执行期选择器兜底——存量用例生成时选择器池可能为空/不完整（enrich
+                // 此前只在生成期做），统一用最新前端分析池按路由作用域补齐缺失 uiSelector。
+                // attach-only：不剔除既有选择器（登录前置等若被路由作用域误判会打断整条执行链），
+                // 让"入口点击/按钮点击"类步骤拿到确定性 DOM 定位，不局限于新生成用例
+                try {
+                    var analysis = codeAnalysisRepository
+                            .findFirstByProjectIdOrderByCreatedAtDesc(testCase.getProjectId()).orElse(null);
+                    FrontendResult fr = analysis == null || analysis.getFrontendResult() == null
+                            ? null : parseFrontendSafe(analysis.getFrontendResult());
+                    if (fr != null) {
+                        String enriched = testGeneratorAgent.enrichSelectors(
+                                fr, objectMapper.writeValueAsString(all), true);
+                        JsonNode reparsed = objectMapper.readTree(enriched);
+                        if (reparsed.isArray()) {
+                            all.removeAll();
+                            for (JsonNode s : reparsed) {
+                                all.add(s);
+                            }
+                        }
+                    }
+                } catch (Exception ex) {
+                    log.debug("execution-time selector enrich skipped for case {}: {}",
+                            testCase.getId(), ex.getMessage());
+                }
             }
         } catch (Exception e) {
             log.warn("Failed to parse structuredSteps for case {}", testCase.getId(), e);
         }
         return all;
+    }
+
+    /** v9.10: 存量 frontend_result 安全解析——形态异常/解析失败返回 null 不阻断执行 */
+    private com.testagent.analyzer.result.FrontendResult parseFrontendSafe(String json) {
+        if (json == null || json.isBlank() || "{}".equals(json)) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, com.testagent.analyzer.result.FrontendResult.class);
+        } catch (Exception e) {
+            log.warn("Failed to parse frontend result for selector enrich: {}", e.getMessage());
+            return null;
+        }
     }
 
     // v8.9.8(12.14-C): 从前端分析路由匹配生成导航兜底步骤；匹配不上返回 null（不硬造）

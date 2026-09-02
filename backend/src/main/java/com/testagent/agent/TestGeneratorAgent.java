@@ -1409,13 +1409,28 @@ public class TestGeneratorAgent {
      * 匹配最可能的 DOM 选择器/表单字段，补到 ui_action 步骤上，让执行更精确。
      */
     void enrichStructuredSteps(FrontendResult frontendResult, TestCase tc) {
-        List<Map<String, Object>> steps = JsonHelper.parseListMap(tc.getStructuredSteps());
-        if (steps.isEmpty() || frontendResult == null) return;
+        tc.setStructuredSteps(enrichSelectors(frontendResult, tc.getStructuredSteps(), false));
+    }
+
+    /**
+     * v9.10: 选择器补齐/校验公共入口——生成期与执行期共用同一套路由作用域逻辑。
+     *
+     * @param attachOnly true（执行期兜底）时只补齐缺失 uiSelector，不剔除既有选择器——
+     *                   存量用例的登录前置步骤选择器若被路由作用域误判会打断整个执行链；
+     *                   false（生成期）保持 v9.7 行为，假选择器/跨页选择器剔除
+     */
+    public String enrichSelectors(FrontendResult frontendResult, String stepsJson, boolean attachOnly) {
+        List<Map<String, Object>> steps = JsonHelper.parseListMap(stepsJson);
+        if (steps.isEmpty() || frontendResult == null) {
+            return stepsJson;
+        }
 
         // v9.6: 选择器池按组件分组，并按路由/组件做作用域收敛——不再全局混池，
         // 避免"我的页收藏入口"被配成"商品详情页收藏图标"这类跨页错误资产固化进用例
         Map<String, List<Map<String, Object>>> selectorsByComponent = groupSelectorsByComponent(frontendResult);
-        if (selectorsByComponent.isEmpty()) return;
+        if (selectorsByComponent.isEmpty()) {
+            return sanitizeUiSelectors(stepsJson);
+        }
         Map<String, String> componentRoutes = buildComponentRouteMap(frontendResult);
 
         String currentRoute = null;
@@ -1450,7 +1465,9 @@ public class TestGeneratorAgent {
                     }
                     // v9.7: LLM 编造/跨页 css/text 选择器不固化——按当前路由真实选择器池校验，
                     // 不在池内则剔除，交给 Agent 模式上下文定位，避免 10s 定位超时写死进用例
-                    if (!scopedKeys.isEmpty() && !scopedKeys.contains(selectorKey(selType, String.valueOf(value)))) {
+                    // v9.10: attachOnly（执行期）模式跳过剔除，只做补齐
+                    if (!attachOnly && !scopedKeys.isEmpty()
+                            && !scopedKeys.contains(selectorKey(selType, String.valueOf(value)))) {
                         log.warn("v9.7 drop fake/off-route selector {}:{} on route {} (step: {})",
                                 selType, value, currentRoute, action);
                         step.remove("uiSelector");
@@ -1471,7 +1488,7 @@ public class TestGeneratorAgent {
                 // Agent 模式的输入值由 LLM 决定，分析器目前也无默认值/示例值来源，宁缺勿错
             }
         }
-        tc.setStructuredSteps(sanitizeUiSelectors(toJson(steps)));
+        return sanitizeUiSelectors(toJson(steps));
     }
 
     /**

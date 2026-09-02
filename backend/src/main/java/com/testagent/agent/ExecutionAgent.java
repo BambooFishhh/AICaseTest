@@ -320,6 +320,13 @@ public class ExecutionAgent {
             log.warn("Step {} execution failed: {}", stepIndex, e.getMessage(), e);
             result = "failed";
             error = e.getMessage();
+            // v9.10: 定位超时归因提示——Timeout 通常意味着元素未渲染/禁用/被遮挡，
+            // 疑似前置步骤未达成预期页面状态（如未勾选时"删除选中"按钮不可用），
+            // 提示排查方向朝页面状态而非选择器本身
+            if (error != null && error.contains("Timeout")) {
+                error = error + "；【页面状态】元素未渲染或不可点击（禁用/隐藏/被遮挡），"
+                        + "疑似前置步骤未达成预期页面状态，请检查上一步操作是否生效";
+            }
             // 失败场景也尽量补一张操作后截图作为证据
                 try {
                     screenshotAfter = playwrightSkill.takeScreenshotWithMarker(sessionId, clickX, clickY);
