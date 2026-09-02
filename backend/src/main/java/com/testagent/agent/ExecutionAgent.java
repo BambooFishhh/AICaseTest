@@ -122,6 +122,11 @@ public class ExecutionAgent {
             if (isNavigationStep(step, action, target)) {
                 return executeNavigation(sessionId, step, stepIndex, executionId, action, target, baseUrl);
             }
+            // v9.12: 返回/后退动作——"返回上一页"无路由形态 target，掉进点击流水线会点错
+            // （vant 返回箭头视觉定位不稳）；直接走浏览器 history 后退
+            if (action != null && action.matches(".*(返回上一页|返回上页|后退).*")) {
+                return executeBack(sessionId, step, stepIndex, executionId, action, target);
+            }
             if ("input".equals(step.path("type").asText())) {
                 JsonNode selector = step.path("uiSelector");
                 String inputValue = step.path("inputValue").asText(step.path("value").asText(""));
@@ -417,6 +422,41 @@ public class ExecutionAgent {
                 .strategy("navigate")
                 .result("passed")
                 .coordinates("url=" + cur)
+                .build();
+    }
+
+    /**
+     * v9.12: 返回/后退步骤——调 browser_go_back（history back），校验 URL 变化。
+     */
+    private ExecutionStep executeBack(String sessionId, JsonNode step, int stepIndex,
+                                      String executionId, String action, String target) {
+        String error = null;
+        String urlAfter;
+        try {
+            urlAfter = playwrightSkill.browserGoBack(sessionId);
+        } catch (Exception e) {
+            log.warn("goBack failed for step {}: {}", stepIndex, e.getMessage());
+            return ExecutionStep.builder()
+                    .id(newStepId())
+                    .executionId(executionId)
+                    .stepIndex(stepIndex)
+                    .action(action)
+                    .target(target)
+                    .strategy("back")
+                    .result("failed")
+                    .error("浏览器后退失败: " + e.getMessage())
+                    .build();
+        }
+        touchHeartbeat(executionId);
+        return ExecutionStep.builder()
+                .id(newStepId())
+                .executionId(executionId)
+                .stepIndex(stepIndex)
+                .action(action)
+                .target(target)
+                .strategy("back")
+                .result("passed")
+                .coordinates("url=" + urlAfter)
                 .build();
     }
 

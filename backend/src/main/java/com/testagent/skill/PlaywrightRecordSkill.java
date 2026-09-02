@@ -193,6 +193,24 @@ public class PlaywrightRecordSkill {
         }
     }
 
+    /** v9.12: 浏览器后退（history back）——"返回上一页"类步骤的确定性执行 */
+    public String browserGoBack(String sessionId) {
+        try {
+            String response = mcpClientManager.callTool("playwright", "browser_go_back",
+                    Map.of("session_id", sessionId));
+            int start = response.indexOf("\"url\":\"");
+            if (start >= 0) {
+                int end = response.indexOf("\"", start + 7);
+                if (end > start) {
+                    return response.substring(start + 7, end);
+                }
+            }
+            return "";
+        } catch (Exception e) {
+            throw new RuntimeException("浏览器后退失败: " + e.getMessage(), e);
+        }
+    }
+
     /** 输入框填充 */
     public int[] fillInput(String sessionId, String selectorType, String selectorValue, String value) {
         String cssSelector = buildCssSelector(selectorType, selectorValue);

@@ -127,6 +127,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'browser_go_back',
+      description: '浏览器后退（history back），用于"返回上一页"类步骤。',
+      inputSchema: {
+        type: 'object',
+        properties: { session_id: sessionIdProperty },
+      },
+    },
+    {
       name: 'browser_take_screenshot',
       description: '截图并保存到指定路径（PNG）。',
       inputSchema: {
@@ -320,6 +328,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         await page.mouse.click(args.x, args.y);
         await page.waitForTimeout(1000);
         return { content: [{ type: 'text', text: `clicked (${args.x},${args.y})` }] };
+      }
+
+      case 'browser_go_back': {
+        const { page } = getSession(sid);
+        await page.goBack({ timeout: 10000 });
+        await page.waitForTimeout(1000);
+        return { content: [{ type: 'text', text: JSON.stringify({ url: page.url() }) }] };
       }
 
       case 'browser_dom_click': {

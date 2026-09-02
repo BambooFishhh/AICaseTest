@@ -1515,6 +1515,26 @@ public class TestGeneratorAgent {
         if (fr.getDomSelectors() == null) {
             return byComponent;
         }
+        // v9.12: 组件中文语义桥——选择器值多为英文 class/name，而用例 action/target 是中文，
+        // token 打分永远匹配不上；把组件摘要(summary+keywords)的中文章节挂到池子条目上，
+        // "点击收藏商品"即可通过摘要中的"收藏"命中 .collect-item（路由作用域已先收敛，无跨页风险）
+        Map<String, String> summaryTexts = new LinkedHashMap<>();
+        if (fr.getComponentSummaries() != null) {
+            for (Map<String, Object> cs : fr.getComponentSummaries()) {
+                String component = String.valueOf(cs.getOrDefault("component", ""));
+                if (component.isBlank() || summaryTexts.containsKey(component)) {
+                    continue;
+                }
+                StringBuilder sb = new StringBuilder(String.valueOf(cs.getOrDefault("summary", "")));
+                Object keywords = cs.get("keywords");
+                if (keywords instanceof List) {
+                    for (Object k : (List<?>) keywords) {
+                        sb.append(' ').append(k);
+                    }
+                }
+                summaryTexts.put(component, sb.toString());
+            }
+        }
         for (Map<String, Object> entry : fr.getDomSelectors()) {
             Object componentObj = entry.get("component");
             Object selectorsObj = entry.get("selectors");
@@ -1531,6 +1551,7 @@ public class TestGeneratorAgent {
                 if (s instanceof Map) {
                     Map<String, Object> sel = new LinkedHashMap<>((Map<String, Object>) s);
                     sel.putIfAbsent("component", component);
+                    sel.putIfAbsent("summary", summaryTexts.getOrDefault(component, ""));
                     list.add(sel);
                 }
             }
@@ -1777,7 +1798,10 @@ public class TestGeneratorAgent {
             String component = s.get("component") == null ? "" : String.valueOf(s.get("component"));
             String name = s.get("name") == null ? "" : String.valueOf(s.get("name"));
             String label = s.get("label") == null ? "" : String.valueOf(s.get("label"));
-            String haystack = (value + " " + element + " " + component + " " + name + " " + label).toLowerCase();
+            // v9.12: 组件摘要参与打分——中英跨语言匹配桥
+            String summary = s.get("summary") == null ? "" : String.valueOf(s.get("summary"));
+            String haystack = (value + " " + element + " " + component + " " + name + " " + label
+                    + " " + summary).toLowerCase();
             int score = 0;
             for (String token : lower.split("[^a-zA-Z0-9\\u4e00-\\u9fa5]+")) {
                 if (token.length() >= 2 && haystack.contains(token)) {
