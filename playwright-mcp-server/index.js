@@ -403,7 +403,7 @@ case 'browser_add_cookies': {
         const status = {
           url: page.url(),
           title: await page.title(),
-          textSnippet: bodyText.substring(0, 500),
+          textSnippet: bodyText.substring(0, 2000),
         };
         return { content: [{ type: 'text', text: JSON.stringify(status) }] };
       }
