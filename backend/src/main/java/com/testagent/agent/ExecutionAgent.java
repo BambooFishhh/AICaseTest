@@ -361,7 +361,9 @@ public class ExecutionAgent {
         }
         // 目标为路由路径形态 → 视为导航（frontendRoutes 注入后 LLM 常以 "/user" 等为 target，
         // 动词可能是"点击底部导航/进入/跳转"等，无法枚举，用路径形态判定最稳）
-        if (target != null && target.trim().matches("^/[\\w:{}$-].*")) {
+        // v9.10: 裸根路由 "/" 也是导航（实测"返回首页" target="/" 掉进点击流水线，
+        // 多模态点错位置导致整批用例前置准备 blocked）
+        if (target != null && target.trim().matches("^/(?:[\\w:{}$-].*)?")) {
             return true;
         }
         return false;

@@ -835,7 +835,7 @@ public class ExecutionService {
                                     stepBuilder.result("passed");
                                     passed++;
                                 } else if (target != null
-                                        && target.trim().matches("^/[\\w:{}$-].*")
+                                        && target.trim().matches("^/(?:[\\w:{}$-].*)?")
                                         && targetUrl != null && !targetUrl.isBlank()) {
                                     // v9.2: 无 uiSelector 但 target 为路由形态的 ui_action（导航首步）——
                                     // 导航是确定性操作，按导航兜底执行，与 Agent 模式路径形态判定同语义
@@ -1275,7 +1275,7 @@ public class ExecutionService {
                     }
                 }
                 boolean firstNav = "ui_action".equals(first.path("type").asText(""))
-                        && first.path("target").asText("").matches("^/[\\w:{}$-].*");
+                        && first.path("target").asText("").matches("^/(?:[\\w:{}$-].*)?");
                 if (hasUi && !firstNav) {
                     JsonNode nav = buildNavFallback(testCase, steps);
                     if (nav != null && !nav.isNull()) {
