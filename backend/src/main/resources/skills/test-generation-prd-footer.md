@@ -119,6 +119,8 @@
      查证不了就删除该断言而不是猜
   ⑤ 前置自造：断言依赖的数据状态（空列表/未收藏/不存在商品）必须由用例准备步骤构造；
      构造不了的前置不生成该用例
+  ⑥ 导航 target 必须真实实例化：写 frontendRoutes 真实清单里的路由与上下文中的真实数据 ID
+     （如 /goods/1116011），禁止"商品A的ID""商品E的ID"式未实例化占位文本——执行器无法导航
 
 ## coverageRefs 覆盖要求（v5.12）
 - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}

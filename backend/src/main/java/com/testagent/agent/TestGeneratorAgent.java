@@ -639,6 +639,8 @@ public class TestGeneratorAgent {
                  查证不了就删除该断言而不是猜
               ⑤ 前置自造：断言依赖的数据状态（空列表/未收藏/不存在商品）必须由用例准备步骤
                  构造；构造不了的前置不生成该用例
+              ⑥ 导航 target 必须真实实例化：写 frontendRoutes 真实清单里的路由与上下文中的
+                 真实数据 ID（如 /goods/1116011），禁止"商品A的ID"式未实例化占位文本
 
             ## coverageRefs 覆盖要求（v5.12）
             - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}
@@ -1187,6 +1189,9 @@ public class TestGeneratorAgent {
         // '共 5 条足迹'），数字随数据变化必然脆断；正则替换为占位符 N（执行器按数字语义
         // 匹配，语义等价且不再脆断）。不指望 LLM 的确定性兜底，与 normalizeModules 同思路
         normalizeExpectationCounts(result);
+        // v9.13: api_call 步骤确定性剔除——pro 模型会复活"模拟调用XX接口"步骤（v9.2 已禁止），
+        // UI 执行器对 api_call 一律 skip，保留只是废步骤；prompt 遵从不可靠，落库前硬剔除
+        stripApiCallSteps(result);
 
         // v9.9: 按模块归组排序后再分配 id/落库——并发生成的到达序会把平台 id 与模块块
         // 打散（实测 TC-1004 插在 TC-998/TC-999 之间），project_seq 按模块重排后与 id
@@ -1207,6 +1212,21 @@ public class TestGeneratorAgent {
         }
         r.finalCount = result.size();
         return result;
+    }
+
+    /**
+     * v9.13: 剔除 type=api_call 的步骤——UI 执行器对 api_call 一律 skip（v7.6 E5），
+     * 保留只会产生必然 skip 的废步骤与级联断言失败；不指望 LLM 遵从 prompt。
+     */
+    void stripApiCallSteps(List<TestCase> cases) {
+        for (TestCase tc : cases) {
+            if (tc.getStructuredSteps() == null || !tc.getStructuredSteps().contains("api_call")) {
+                continue;
+            }
+            List<Map<String, Object>> steps = JsonHelper.parseListMap(tc.getStructuredSteps());
+            steps.removeIf(step -> "api_call".equals(step.get("type")));
+            tc.setStructuredSteps(toJson(steps));
+        }
     }
 
     /** v9.13: expected 中的写死数量（共 3 件/共 5 条）→ 占位符 N */

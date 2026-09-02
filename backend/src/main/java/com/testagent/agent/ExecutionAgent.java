@@ -377,6 +377,21 @@ public class ExecutionAgent {
     // v8.9.8(12.14-A): 执行导航步骤——调浏览器导航，校验 URL，不进点击流水线
     private ExecutionStep executeNavigation(String sessionId, JsonNode step, int stepIndex,
                                             String executionId, String action, String target, String baseUrl) {
+        // v9.13: 导航目标占位符校验——pro 模型会编造 "/goods/商品A的ID" 式未实例化路由
+        //（URL 编码后含 %XX 中文序列），命中不了任何真实页面；明确归因为生成数据缺陷
+        if (target.matches(".*[\u4e00-\u9fa5].*") || target.contains("%E")) {
+            return ExecutionStep.builder()
+                    .id(newStepId())
+                    .executionId(executionId)
+                    .stepIndex(stepIndex)
+                    .action(action)
+                    .target(target)
+                    .strategy("navigate")
+                    .result("failed")
+                    .error("【生成数据缺陷】导航目标 '" + target + "' 含未实例化的占位文本（如'商品A的ID'），"
+                            + "应使用上下文中的真实路由与真实数据 ID")
+                    .build();
+        }
         String url = joinBase(baseUrl, target);
         String error = null;
         try {
