@@ -490,6 +490,31 @@ public class ExecutionAgent {
         }
         touchHeartbeat(executionId);
         String verdict = ExecutionAssert.assertExpected(expected, pageState);
+        // v9.8: 瞬态 toast 断言轮询——Vant showToast 约 2s 自动消失，断言快照晚于点击步骤
+        // 时可能错过（'收藏成功'/'已取消收藏'/'请先选择' 等）；期望含引号锚点（toast 文案）
+        // 且首判 failed 时，最多轮询 2 次×1.2s 捕获瞬态提示，命中即通过
+        if ("failed".equals(verdict) && ExecutionAssert.hasQuotedAnchor(expected)) {
+            for (int i = 0; i < 2; i++) {
+                try {
+                    Thread.sleep(1200);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                touchHeartbeat(executionId);
+                try {
+                    Map<String, String> retry = playwrightSkill.getPageStatus(sessionId);
+                    String r = ExecutionAssert.assertExpected(expected, retry);
+                    if (!"failed".equals(r)) {
+                        pageState = retry;
+                        verdict = r;
+                        break;
+                    }
+                } catch (Exception e) {
+                    log.debug("state_assert toast-poll getPageStatus failed: {}", e.getMessage());
+                }
+            }
+        }
         String error = switch (verdict) {
             case "failed" -> ExecutionAssert.describe(expected, pageState);
             case "skipped" -> "UI 层暂无法验证: " + expected;
@@ -538,7 +563,11 @@ public class ExecutionAgent {
     /**
      * LLM 决策执行策略。
      * 未配置 LLM 时按 MCP 结果直接决策：
-     *   found → visual_click；未 found 但有 uiSelector → dom_click；否则 skip。
+     *   有 uiSelector → dom_click（坐标精确，视觉模型坐标易漂移点错子元素）；
+     *   无 uiSelector 且 found → visual_click；否则 skip。
+     * v9.8: 策略改 DOM 优先——litemall 足迹/收藏页实测，视觉点击坐标漂移导致
+     * 勾选复选框误导航商品详情、点信息区域点中复选框未生效；DOM 点击命中元素
+     * 中心点无漂移，视觉仅作 DOM 失败/缺失时的兜底。
      */
     private Map<String, Object> askLlmForStrategy(String action, String target, JsonNode step, LocateResult locateResult) {
         Map<String, Object> decision = new LinkedHashMap<>();
@@ -551,12 +580,14 @@ public class ExecutionAgent {
         try {
             // v7.0(E12): 增加决策规则引导——无决策规则时 LLM 见"未找到"倾向保守 skip，
             // 即使备用 DOM 选择器可用，导致大量本可执行的步骤被放弃
+            // v9.8: 规则 1 改 DOM 优先——步骤自带 uiSelector 时优先 dom_click，
+            // 视觉坐标仅用于无选择器元素；dom_click 失败系统会自动升级视觉兜底
             String systemPrompt = "你是测试执行Agent。根据视觉识别结果，决定下一步执行策略。返回 JSON："
                     + "{\"strategy\": \"visual_click|dom_click|skip\", \"reason\": \"...\", \"x\": 0, \"y\": 0, "
                     + "\"selectorType\": \"\", \"selectorValue\": \"\"}\n"
                     + "决策规则：\n"
-                    + "1. found=true 且置信度>=0.5 → visual_click（用 MCP 返回的坐标）\n"
-                    + "2. found=false 但备用DOM选择器非空 → 优先 dom_click，不要轻易放弃\n"
+                    + "1. 备用DOM选择器非空 → 优先 dom_click（坐标精确无漂移；失败会自动视觉兜底）\n"
+                    + "2. found=true 且备用DOM选择器为空 → visual_click（用 MCP 返回的坐标）\n"
                     + "3. 仅当 found=false 且备用DOM选择器为空，或页面明确不存在该元素时才 skip\n"
                     + "4. reason 必须说明具体原因，skip 时尤其要说清为什么";
             String userPrompt = "步骤: " + action
@@ -569,6 +600,17 @@ public class ExecutionAgent {
             if (llmDecision == null || llmDecision.isEmpty() || !llmDecision.containsKey("strategy")) {
                 log.warn("LLM strategy decision empty, fallback to default");
                 return defaultStrategy(locateResult, step);
+            }
+            // v9.8: 硬约束——只要步骤带可用 uiSelector，即使 LLM 返回 visual_click 也改判 dom_click，
+            // 杜绝视觉坐标漂移（勾选/全选/列表项点击误导航商品详情）
+            if ("visual_click".equals(String.valueOf(llmDecision.get("strategy")))) {
+                JsonNode selector = step.path("uiSelector");
+                if (!selector.path("value").asText("").isEmpty()) {
+                    llmDecision.put("strategy", "dom_click");
+                    llmDecision.put("selectorType", selector.path("type").asText("css"));
+                    llmDecision.put("selectorValue", selector.path("value").asText(""));
+                    llmDecision.put("reason", "v9.8 DOM 优先：步骤自带选择器，改判 dom_click 防视觉漂移");
+                }
             }
             return llmDecision;
         } catch (Exception e) {
@@ -592,26 +634,25 @@ public class ExecutionAgent {
 
     /**
      * LLM 未配置/异常时的默认策略。
+     * v9.8: DOM 优先——有 uiSelector 先 dom_click（视觉坐标易漂移），无选择器才 visual。
      */
     private Map<String, Object> defaultStrategy(LocateResult locateResult, JsonNode step) {
         Map<String, Object> decision = new LinkedHashMap<>();
-        if (locateResult.isFound()) {
+        JsonNode selector = step.path("uiSelector");
+        String selValue = selector.path("value").asText("");
+        if (!selValue.isEmpty()) {
+            decision.put("strategy", "dom_click");
+            decision.put("selectorType", selector.path("type").asText("css"));
+            decision.put("selectorValue", selValue);
+            decision.put("reason", "v9.8 DOM 优先：步骤自带选择器，优先 DOM 点击防视觉漂移");
+        } else if (locateResult.isFound()) {
             decision.put("strategy", "visual_click");
             decision.put("x", locateResult.getClickX());
             decision.put("y", locateResult.getClickY());
-            decision.put("reason", "LLM 未配置，MCP 找到元素，直接视觉点击");
+            decision.put("reason", "无 DOM 选择器，MCP 找到元素，视觉点击");
         } else {
-            JsonNode selector = step.path("uiSelector");
-            String selValue = selector.path("value").asText("");
-            if (!selValue.isEmpty()) {
-                decision.put("strategy", "dom_click");
-                decision.put("selectorType", selector.path("type").asText("css"));
-                decision.put("selectorValue", selValue);
-                decision.put("reason", "MCP 未找到元素，回退 DOM 点击");
-            } else {
-                decision.put("strategy", "skip");
-                decision.put("reason", "MCP 未找到且无 DOM 选择器");
-            }
+            decision.put("strategy", "skip");
+            decision.put("reason", "MCP 未找到且无 DOM 选择器");
         }
         return decision;
     }

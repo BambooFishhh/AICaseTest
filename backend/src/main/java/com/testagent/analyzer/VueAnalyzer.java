@@ -91,12 +91,21 @@ public class VueAnalyzer {
             "(?:Toast|\\$toast|toast)\\s*(?:\\.\\s*(?:success|error|warning|info))?\\s*\\(\\s*['\"`]([^'\"`]{2,60})['\"`]");
 
     // v12.16-A: 语义 class 词根——按钮/图标类操作元素（组件库应用常无 id/ref/testid 可抓）
+    // v9.8: 补常见内容容器词根（item/info/row/list/checkbox/count/toolbar/card/bar/name）——
+    // litemall 足迹页 .fp-item/.fp-info/.fp-row/.toolbar/.count-bar 仅"删除选中"一个选择器，
+    // 足迹项/复选框/全选全靠视觉点击且坐标漂移；补全后这些元素有 DOM 选择器可精确点击
     static final Pattern SEMANTIC_CLASS_TOKEN = Pattern.compile(
             "(?:^|-|_)(btn|button|icon|delete|del|remove|add|edit|submit|cancel|confirm|cart|buy"
-                    + "|collect|fav|like|share|search|login|logout|close|check|select|switch|all|back)(?:$|-|_)");
-    /** v12.16-A: button/a 及组件库按钮（el-button/van-button）的直接可见文本（不含内嵌标签，限长控噪） */
+                    + "|collect|fav|like|share|search|login|logout|close|check|select|switch|all|back"
+                    + "|item|info|row|list|checkbox|count|toolbar|card|bar|name)(?:$|-|_)");
+    /** v12.16-A: button/a 及组件库按钮（el-button/van-button）的直接可见文本（不含内嵌标签，限长控噪）
+     *  v9.8: 补 van-checkbox——足迹/收藏/购物车的"全选""设为默认地址"类复选框可见文本，
+     *  此前只能靠视觉点击（坐标漂移），补后 text= 引擎可精确点击 */
     static final Pattern VISIBLE_TEXT_ELEMENT = Pattern.compile(
-            "<(button|a|el-button|van-button)\\b[^>]*>([^<>]{1,24}?)</\\1>", Pattern.CASE_INSENSITIVE);
+            "<(button|a|el-button|van-button|van-checkbox)\\b[^>]*>([^<>]{1,24}?)</\\1>", Pattern.CASE_INSENSITIVE);
+    /** v9.8: van-cell/van-tabbar-item/van-tab 的 title 属性文本——菜单入口/状态标签选择器来源 */
+    static final Pattern TITLE_ATTR_ELEMENT = Pattern.compile(
+            "<(van-cell|van-tabbar-item|van-tab|van-nav-bar)\\b[^>]*\\btitle=\"([^\"]+)\"", Pattern.CASE_INSENSITIVE);
     /** v12.16-A: 每组件 class/text 选择器上限，防止布局类噪音淹没池子 */
     static final int TEXT_SELECTOR_CAP_PER_COMPONENT = 8;
 
@@ -762,6 +771,25 @@ public class VueAnalyzer {
                     sel.put("value", visible);
                     sel.put("element", textEl.group(1));
                     sel.put("label", visible);
+                    selectors.add(sel);
+                    textAdded++;
+                }
+
+                // v9.8: van-cell/van-tabbar-item/van-tab 的 title="..." 属性——组件库菜单入口
+                // （我的收藏/浏览足迹/我的订单/待付款 等）文本在属性而非标签内，VISIBLE_TEXT_ELEMENT
+                // 抓不到；实测用户页这些入口全靠视觉点击（坐标漂移），补 title 文本选择器后可 DOM 精确点击
+                Matcher titleEl = TITLE_ATTR_ELEMENT
+                        .matcher(content.substring(searchStart, searchEnd));
+                while (titleEl.find() && textAdded < TEXT_SELECTOR_CAP_PER_COMPONENT) {
+                    String title = titleEl.group(2).trim();
+                    if (title.isEmpty() || title.length() > 12 || !title.matches(".*[\\u4e00-\\u9fa5a-zA-Z0-9].*")) {
+                        continue;
+                    }
+                    Map<String, Object> sel = new HashMap<>();
+                    sel.put("type", "text");
+                    sel.put("value", title);
+                    sel.put("element", titleEl.group(1));
+                    sel.put("label", title);
                     selectors.add(sel);
                     textAdded++;
                 }

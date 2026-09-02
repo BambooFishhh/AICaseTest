@@ -73,13 +73,71 @@ public class TestGeneratorAgent {
     }
 
     // v5.14: 自动多轮补齐上限，避免无限调用 LLM（收敛/成本控制，非上下文约束，未随 256k 放宽）
-    private static final int MAX_GENERATION_ROUNDS = 4;
+    // v9.8: 4 → 3 轮——实测第 4 轮多为低收益尾部用例（语义重复/弱锚点），
+    // 且增加脏用例比例拖累批量执行；3 轮内未收敛即记 not_converged，主用内容密度档位收敛。
+    private static final int MAX_GENERATION_ROUNDS = 3;
     // v8.4: 生成用例总量上限参数化，60 → 120（60 只够中小项目；大项目接口多时上限先于上下文成为覆盖率瓶颈）。
     // 字段初始化默认值兜底：单测直接 new 不走容器时 @Value 不注入。
-    // 注意：实际总量还受 MAX_GENERATION_ROUNDS（3~4 轮）约束，两者先到者生效；
+    // 注意：实际总量还受 MAX_GENERATION_ROUNDS（v9.8 起 3 轮）约束，两者先到者生效；
     // 若日志频繁出现 coverageCappedByLimit 可再评估放宽轮次。
     @Value("${app.generation.max-generated-cases:120}")
     private int maxGeneratedCases = 120;
+
+    // v9.8: litemall 种子商品 id 白名单——生成侧校验 /goods/{id} 导航目标真实性。
+    // 实测回归：LLM 幻觉商品 id（456/789/123/100100）→ 访问 500 系统内部错误，
+    // 且前端仍落孤儿足迹 → 足迹列表接口 NPE 502，整批足迹/收藏用例连带失败。
+    // 归一规则：目标/期望文本中出现白名单外的商品 id 一律替换为默认有效 id。
+    private static final String DEFAULT_GOODS_ID = "1006002";
+    private static final Set<String> VALID_GOODS_IDS = Set.of(
+            "1006002", "1006007", "1006010", "1006013", "1006014", "1006051",
+            "1009009", "1009012", "1009013", "1009024", "1009027",
+            "1010000", "1010001", "1011004", "1015007",
+            "1019000", "1019001", "1019002", "1019006",
+            "1020000", "1021000", "1021001", "1021004", "1021010",
+            "1022000", "1022001", "1023003", "1023012", "1023032", "1023034",
+            "1025005", "1027004", "1029005",
+            "1030001", "1030002", "1030003", "1030004", "1030005", "1030006",
+            "1033000", "1035006", "1036002", "1036013", "1036016",
+            "1037011", "1037012", "1038004", "1039051", "1039056",
+            "1043005", "1044012", "1045000", "1046001", "1046002", "1046044", "1048005",
+            "1051000", "1051001", "1051002", "1051003",
+            "1055012", "1055016", "1055022", "1056002", "1057036",
+            "1064000", "1064002", "1064003", "1064004", "1064006", "1064007",
+            "1064021", "1064022", "1065004", "1065005",
+            "1068010", "1068011", "1068012",
+            "1070000", "1071004", "1071005", "1071006",
+            "1072000", "1072001", "1073008", "1074001",
+            "1075022", "1075023", "1075024",
+            "1081000", "1081002", "1083009", "1083010",
+            "1084001", "1084003", "1085019",
+            "1086015", "1086023", "1086024", "1086025", "1086026", "1086052",
+            "1090004", "1092001", "1092005", "1092024", "1092025", "1092026",
+            "1092038", "1092039", "1093000", "1093001", "1093002",
+            "1097004", "1097005", "1097006", "1097007", "1097009",
+            "1097011", "1097012", "1097013", "1097014", "1097016", "1097017",
+            "1100000", "1100001", "1100002",
+            "1108029", "1108030", "1108031", "1108032",
+            "1109004", "1109005", "1109008", "1109034",
+            "1110002", "1110003", "1110004", "1110007", "1110008",
+            "1110013", "1110014", "1110015", "1110016", "1110017", "1110018", "1110019",
+            "1111007", "1111010", "1113010", "1113011", "1113019", "1114011",
+            "1115023", "1115028", "1115052", "1115053",
+            "1116004", "1116005", "1116008", "1116011",
+            "1116030", "1116031", "1116032", "1116033",
+            "1125010", "1125011", "1125016", "1125017", "1125026",
+            "1127003", "1127024", "1127025", "1127038", "1127039",
+            "1127047", "1127052", "1128002", "1128010", "1128011",
+            "1129015", "1129016",
+            "1130037", "1130038", "1130039", "1130041", "1130042", "1130049",
+            "1130056", "1131017", "1134022", "1134030", "1134032", "1134036", "1134056",
+            "1135000", "1135001", "1135002", "1135050", "1135051", "1135052",
+            "1135053", "1135054", "1135055", "1135056", "1135057", "1135058",
+            "1135065", "1135072", "1135073", "1138000", "1138001",
+            "1143006", "1143015", "1143016", "1143018", "1143019", "1143020",
+            "1147045", "1147046", "1147047", "1147048",
+            "1151012", "1151013", "1152004", "1152008", "1152009", "1152031",
+            "1152095", "1152097", "1152100", "1152101", "1152161",
+            "1153006", "1155000", "1155015", "1156006", "1166008", "1181000");
 
     // v8.9.8(12.13): 允许 live 评测按数据集动态调闸门（large 放大）
     public void setMaxGeneratedCases(int n) {
@@ -561,6 +619,10 @@ public class TestGeneratorAgent {
             - v9.6: 跳转类断言必须写"页面URL包含'/xxx'"或目标页可见标题，禁止
               "触发跳转/页面跳转/开始跳转"等无锚点泛化表述；删除/取消类动作的预期
               必须验证动作结果（列表消失/总数更新/提示文案），不得只断言页面标题
+            - 12.17: 未登录场景默认不生成——执行环境统一通过 preSteps 注入登录态，用例内
+              无法构造"未登录"前置（清 cookie/退出登录超出执行器能力），生成的未登录用例
+              必然 blocked；除非 PRD 明确要求鉴权矩阵且提供独立无登录执行环境，否则不生成
+              "未登录访问被重定向"类用例
 
             ## coverageRefs 覆盖要求（v5.12）
             - 每条用例必须携带 coverageRefs：{"requirementIds":[],"transitionIds":[],"endpointIds":[],"ruleIds":[]}
@@ -1105,6 +1167,12 @@ public class TestGeneratorAgent {
         result = semanticService.deduplicateBatch(result);
         r.semanticDropped = beforeSemantic - result.size();
 
+        // v9.9: 按模块归组排序后再分配 id/落库——并发生成的到达序会把平台 id 与模块块
+        // 打散（实测 TC-1004 插在 TC-998/TC-999 之间），project_seq 按模块重排后与 id
+        // 视觉错位显"乱序"。排序后 id 分配顺序=模块块顺序，id 序/序号/分组显示三者
+        // 单调一致（resequenceProjectSeq 兜底保留）
+        sortCasesByModule(result);
+
         // v7.11(T1): 批内编号改走全局唯一分配器（原 TC-001 起连续编号会与
         // 其他项目存量用例跨库撞号，JPA merge 静默覆盖）；单测未注入分配器时回退旧编号
         int counter = 1;
@@ -1118,6 +1186,23 @@ public class TestGeneratorAgent {
         }
         r.finalCount = result.size();
         return result;
+    }
+
+    /**
+     * v9.9: 用例按模块归组排序——模块按首次出现序（LinkedHashMap 保序），组内保持原
+     * 相对顺序（List.sort 稳定排序）。放在 id 分配/落库之前，保证平台 id、project_seq、
+     * 模块分组渲染三者单调一致。包级可见供单测。
+     */
+    void sortCasesByModule(List<TestCase> cases) {
+        Map<String, Integer> moduleOrder = new LinkedHashMap<>();
+        for (TestCase tc : cases) {
+            moduleOrder.putIfAbsent(moduleKey(tc), moduleOrder.size());
+        }
+        cases.sort(Comparator.comparingInt(tc -> moduleOrder.get(moduleKey(tc))));
+    }
+
+    private String moduleKey(TestCase tc) {
+        return tc.getModule() == null || tc.getModule().isBlank() ? "未分类" : tc.getModule();
     }
 
     // v3.13: 聚焦类型过滤（focusTypes 为空 = 全部类型）
@@ -1564,14 +1649,67 @@ public class TestGeneratorAgent {
                 if (sel.isObject() && !EXECUTABLE_SELECTOR_TYPES.contains(sel.path("type").asText(""))) {
                     ((ObjectNode) step).remove("uiSelector");
                     changed = true;
+                    continue;
+                }
+                // v9.8: css 选择器值合法性——:contains()/:has()/:eq()/:visible 等是 jQuery 伪选择器，
+                // Playwright querySelectorAll 直接抛 SyntaxError（实测 litemall 用户页
+                // 'css=.order-stat .item:contains('待付款')' 必炸），这类假选择器必须在固化前剔除
+                if ("css".equals(sel.path("type").asText(""))) {
+                    String v = sel.path("value").asText("");
+                    if (!v.isBlank() && CSS_JQUERY_PSEUDO.matcher(v).find()) {
+                        log.warn("v9.8 drop invalid css selector (jquery pseudo): {}", v);
+                        ((ObjectNode) step).remove("uiSelector");
+                        changed = true;
+                    }
                 }
             }
-            return changed ? objectMapper.writeValueAsString(root) : stepsJson;
+            String cleaned = changed ? objectMapper.writeValueAsString(root) : stepsJson;
+            // v9.8: 商品 id 真实性归一——幻觉 id 会 500 并落孤儿足迹拖垮足迹接口，必须在固化前替换
+            return normalizeGoodsIdsInSteps(cleaned);
         } catch (Exception e) {
             log.warn("sanitizeUiSelectors failed, keep original: {}", e.getMessage());
             return stepsJson;
         }
     }
+
+    /** v9.8: 生成侧商品 id 白名单归一——/goods/{id} 目标与"ID为{id}"期望文本中，
+     *  白名单外的幻觉 id 一律替换为默认有效 id（DEFAULT_GOODS_ID），防止访问 500 与孤儿足迹。
+     *  包级可见供单测验证。 */
+    String normalizeGoodsIdsInSteps(String stepsJson) {
+        if (stepsJson == null || stepsJson.isBlank()) {
+            return stepsJson;
+        }
+        java.util.Set<String> badIds = new java.util.LinkedHashSet<>();
+        java.util.regex.Matcher m = GOODS_ID_REF.matcher(stepsJson);
+        while (m.find()) {
+            String id = m.group(1);
+            if (!VALID_GOODS_IDS.contains(id)) {
+                badIds.add(id);
+            }
+        }
+        if (badIds.isEmpty()) {
+            return stepsJson;
+        }
+        String out = stepsJson;
+        for (String bad : badIds) {
+            out = out.replace("/goods/" + bad, "/goods/" + DEFAULT_GOODS_ID);
+            // 期望/动作文本里的 ID 引用（如"列表中不包含ID为789的商品"/"ID 789"）。
+            // 不能用 \b：Java 的 \b 将 CJK 视为单词字符，"为789的" 中 789 两侧无词边界，
+            // 改用 (?!\d) 确保替换的是完整 id 而非前缀
+            out = out.replaceAll("ID\\s*为?\\s*" + java.util.regex.Pattern.quote(bad) + "(?!\\d)",
+                    "ID 为 " + DEFAULT_GOODS_ID);
+        }
+        log.info("v9.8 normalize hallucinated goods ids {} → {}", badIds, DEFAULT_GOODS_ID);
+        return out;
+    }
+
+    /** /goods/{id} 引用（导航 target / route 选择器 value） */
+    private static final java.util.regex.Pattern GOODS_ID_REF =
+            java.util.regex.Pattern.compile("/goods/(\\d+)");
+
+    /** v9.8: jQuery 伪选择器特征——Playwright 的 CSS 引擎不支持，命中的 css 选择器直接剔除 */
+    private static final java.util.regex.Pattern CSS_JQUERY_PSEUDO =
+            java.util.regex.Pattern.compile(":contains\\(|:has\\(|:eq\\(|:gt\\(|:lt\\(|:visible|:hidden|:first|:last");
 
     // 按关键词包含匹配最合适的 DOM 选择器/表单字段
     // v7.10(L12): 阈值 2→3 且要求唯一最高分——旧实现单个 2 字 token 命中（score≥2）即匹配，

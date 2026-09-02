@@ -94,6 +94,26 @@ class ExecutionAgentStepTypeTest {
     }
 
     @Test
+    void transientToastAssertionPolledUntilCaptured() throws Exception {
+        // v9.8: Vant toast 约 2s 消失，断言快照晚于点击步骤可能错过'收藏成功'类瞬态提示——
+        // 首判 failed 且期望含引号锚点时轮询重读，命中即通过
+        PlaywrightRecordSkill playwrightSkill = mock(PlaywrightRecordSkill.class);
+        when(playwrightSkill.getPageStatus(anyString()))
+                .thenReturn(Map.of("url", "http://host/#/goods/1006007", "title", "litemall 商城",
+                        "textSnippet", "轻奢纯棉刺绣水洗四件套 ￥899"))
+                .thenReturn(Map.of("url", "http://host/#/goods/1006007", "title", "litemall 商城",
+                        "textSnippet", "轻奢纯棉刺绣水洗四件套 ￥899 收藏成功"));
+        when(playwrightSkill.takeScreenshot(anyString())).thenReturn("after.png");
+        ExecutionAgent agent = agent(playwrightSkill);
+
+        ExecutionStep step = agent.executeStep("session-1", objectMapper.readTree("""
+                {"type":"state_assert","action":"验证收藏操作","target":"","expected":"页面出现'收藏成功'提示"}
+                """), "用例: 收藏商品", 2, "exec-1");
+
+        assertEquals("passed", step.getResult(), "toast 轮询应捕获瞬态'收藏成功'提示");
+    }
+
+    @Test
     void apiCallIsExplicitlySkipped() throws Exception {
         PlaywrightRecordSkill playwrightSkill = mock(PlaywrightRecordSkill.class);
         ExecutionAgent agent = agent(playwrightSkill);

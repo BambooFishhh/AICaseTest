@@ -291,12 +291,159 @@ class ExecutionAssertTest {
                         "guest\n请先登录")));
     }
 
-    @Test
+@Test
     void arithmeticPlaceholderMatchesAnyCount() {
         // v9.5fix: '共 N-1 件收藏' 的增减量无法从页面文本独立验证，按普通 N 处理（匹配任意数字）
         assertEquals("passed", ExecutionAssert.assertExpected(
                 "页面顶部显示'共 N-1 件收藏'",
                 page("http://host/#/collect", "litemall 商城",
                         "我的收藏 共 1 件收藏 商品A")));
+    }
+
+    // ==================== v9.8: 泛化子句补全（litemall 足迹/收藏页实测回归） ====================
+
+    @Test
+    void genericListItemClauseDroppedWhenAnchorMatched() {
+        // 实测回归：足迹页断言'出现包含商品名称的足迹商品列表项'是 UI 概念描述，
+        // 页面文本不存在字面"列表项"，3-gram 必然落空误判 failed；引号锚点'共 N 条足迹'命中即通过
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'共 N 条足迹'，出现包含商品名称的足迹商品列表项",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹 共 23 条足迹 全选 删除选中 轻奢纯棉刺绣水洗四件套 ￥899")));
+        // 引号锚点真实缺失照样 failed
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面显示'共 N 条足迹'，出现包含商品名称的足迹商品列表项",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹 暂无足迹")));
+    }
+
+    @Test
+    void comparativeCountClauseIsSkipped() {
+        // 实测回归：'列表商品数量与点击前一致'是前后对比描述，页面文本无法独立验证，
+        // 无引号锚点整句诚实降级 skipped（不再 3-gram 必然失败）
+        assertEquals("skipped", ExecutionAssert.assertExpected(
+                "列表商品数量与点击前一致",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹 共 26 条足迹 全选 删除选中 轻奢纯棉刺绣水洗四件套")));
+    }
+
+    @Test
+    void loginFormConceptClauseNotLiteralText() {
+        // 实测回归：'显示登录表单'的"表单"是 UI 概念，页面文本只有"登录"按钮无字面"登录表单"；
+        // 该子句剔除后 URL 引号锚点 '/login' 命中即通过
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面URL包含'/login'，显示登录表单",
+                page("http://172.31.160.1:6255/#/login", "litemall 商城",
+                        "litemall 欢迎来到商城 账号 密码 登录 测试账号：user123 / user123")));
+        // URL 未命中仍失败（锚点真实缺失）
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面URL包含'/login'，显示登录表单",
+                page("http://172.31.160.1:6255/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏")));
+    }
+
+    @Test
+    void checkboxStateClauseIsSkippedAsUnverifiable() {
+        // 复选框"选中状态/被勾选"无法从页面文本快照验证——含'全选'引号锚点时按锚点通过，
+        // 无引号锚点的纯状态描述诚实 skipped 而非 3-gram 误判失败
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'全选'复选框为选中状态，列表复选框均被勾选",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹 共 8 条足迹 全选 删除选中 轻奢纯棉刺绣水洗四件套")));
+        assertEquals("skipped", ExecutionAssert.assertExpected(
+                "列表复选框均被勾选，选中状态已保持",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹 共 8 条足迹 全选 删除选中 轻奢纯棉刺绣水洗四件套")));
+    }
+
+    // ==================== v9.8: 相对比较/状态泛化子句（最近批次 TC-917~938 实测回归） ====================
+
+    @Test
+    void arithmeticPlaceholderAnyLetterPlusMinusNormalized() {
+        // 实测回归：'共 N+1 件收藏' 增减量无法独立验证——N+1 归一为 N 后按数字匹配；
+        // '总数增加1' 是相对比较子句，剔除；锚点命中即通过
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'共 N+1 件收藏'，总数增加1",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 轻奢纯棉刺绣水洗四件套 ￥899")));
+        // 任意单字母占位符 ± 任意数字同样归一（M-2 → M）
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'共 M-2 件收藏'",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 3 件收藏 商品A")));
+    }
+
+    @Test
+    void relativeComparisonClauseIsSkipped() {
+        // 实测回归：'列表中包含刚刚收藏的商品卡片，且页面显示的收藏总数比操作前增加1'
+        // 是相对比较描述，无引号锚点，整句诚实 skipped（页面单快照无法验证前后增量）
+        assertEquals("skipped", ExecutionAssert.assertExpected(
+                "列表中包含刚刚收藏的商品卡片，且页面显示的收藏总数比操作前增加1",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 轻奢纯棉刺绣水洗四件套 ￥899 删除")));
+        assertEquals("skipped", ExecutionAssert.assertExpected(
+                "页面提示删除失败或无反应，列表和总数不变",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹 共 35 条足迹 暂无足迹")));
+        assertEquals("skipped", ExecutionAssert.assertExpected(
+                "无新提示，页面状态不变",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 轻奢纯棉刺绣水洗四件套 ￥899 删除")));
+        assertEquals("skipped", ExecutionAssert.assertExpected(
+                "页面展示商品列表，非加载状态",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 轻奢纯棉刺绣水洗四件套 ￥899 删除")));
+    }
+
+    @Test
+    void iconStateClauseWithAnchorPassesOtherwiseSkipped() {
+        // 实测回归：收藏按钮回显——含 '收藏' 引号锚点按锚点通过；
+        // 无锚点的图标状态/初始样式描述（恢复初始样式）无法从文本验证，诚实 skipped
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "图标显示为未收藏状态，如'收藏'文字或图标样式不同",
+                page("http://host/#/goods/1006007", "litemall 商城",
+                        "轻奢纯棉刺绣水洗四件套 ￥899 收藏 加入购物车")));
+        assertEquals("skipped", ExecutionAssert.assertExpected(
+                "图标显示为已收藏状态，恢复初始样式",
+                page("http://host/#/goods/1006007", "litemall 商城",
+                        "轻奢纯棉刺绣水洗四件套 ￥899 已收藏 加入购物车")));
+    }
+
+    @Test
+    void goodsListConceptClauseDroppedWhenAnchorMatched() {
+        // 实测回归：'列表展示商品卡片''页面显示足迹商品列表'是 UI 结构描述，页面文本无字面
+        // 3-gram；引号锚点 '共 N 件收藏'/'删除选中' 命中即通过
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'共 N 件收藏'（N为实际数量），列表展示商品卡片",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 轻奢纯棉刺绣水洗四件套 ￥899 删除")));
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示足迹商品列表，包含'删除选中'按钮",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹 共 34 条足迹 全选 删除选中 轻奢纯棉刺绣水洗四件套 ￥899")));
+        // 引号锚点真实缺失照样 failed
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面显示足迹商品列表，包含'删除选中'按钮",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹 共 0 条足迹 暂无足迹")));
+    }
+
+    @Test
+    void genericTotalCountClauseIsSkipped() {
+        // 实测回归：'页面显示足迹总数''页面显示商品收藏的总数'是无引号的泛化描述，
+        // 页面文本无字面"总数"文案，诚实 skipped 而非 3-gram 误判失败
+        assertEquals("skipped", ExecutionAssert.assertExpected(
+                "页面显示足迹总数",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹 共 36 条足迹 全选 删除选中 轻奢纯棉刺绣水洗四件套")));
+        assertEquals("skipped", ExecutionAssert.assertExpected(
+                "页面显示商品收藏的总数",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 轻奢纯棉刺绣水洗四件套 ￥899 删除")));
+        // 带引号锚点仍按锚点验证
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'共 1 件收藏'总数",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏 共 1 件收藏 轻奢纯棉刺绣水洗四件套 ￥899 删除")));
     }
 }

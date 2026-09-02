@@ -417,7 +417,7 @@
             <span v-else-if="streaming" class="text-muted">生成中</span>
             <!-- v7.15(2a): 双编号——展示项目内序号，悬浮显示平台全局唯一 id -->
             <el-tooltip v-else :content="'平台编号 ' + row.id" placement="top">
-              <span class="case-id">#{{ row.projectSeq ?? row.id }}</span>
+              <span class="case-id">#{{ row.displaySeq ?? row.projectSeq ?? row.id }}</span>
             </el-tooltip>
           </template>
         </el-table-column>
@@ -1333,6 +1333,7 @@ const treeData = computed(() => {
   })
   const tree = []
   moduleMap.forEach((children, mod) => {
+    children.forEach((tc, i) => { tc.displaySeq = i + 1 })
     tree.push({
       id: `module-${mod}`,
       isModule: true,

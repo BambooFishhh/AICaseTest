@@ -306,11 +306,94 @@ class VueAnalyzerTest {
                         && String.valueOf(s.get("summary")).contains("订单列表")));
     }
 
+    @Test
+    void userPageMenuTitlesExtractedAsTextSelectors() throws IOException {
+        // v9.8 实测回归：用户页"我的收藏/浏览足迹/我的订单"是 van-cell 的 title 属性，
+        // 文本不在标签内，VISIBLE_TEXT_ELEMENT 抓不到 → 之前全靠视觉点击（坐标漂移）。
+        // 补 TITLE_ATTR_ELEMENT 后这些菜单入口应有 text= 选择器。
+        writeVueFile(tempDir, "User.vue", """
+                <template>
+                  <div class="page user-page">
+                    <van-cell title="我的订单" is-link @click="$router.push('/order')" />
+                    <van-cell title="收货地址" is-link @click="$router.push('/address')" />
+                    <van-cell title="我的收藏" :value="collectCount" is-link @click="goCollect" />
+                    <van-cell title="浏览足迹" :value="footprintCount" is-link @click="goFootprint" />
+                  </div>
+                </template>
+                """);
+
+        FrontendResult result = analyzerWithoutLlm().analyze(tempDir.toString());
+        Map<String, Object> userEntry = result.getDomSelectors().stream()
+                .filter(e -> "User".equals(e.get("component")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("domSelectors 未包含 User"));
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> selectors = (List<Map<String, Object>>) userEntry.get("selectors");
+        List<String> values = selectors.stream()
+                .map(s -> String.valueOf(s.get("value")))
+                .toList();
+
+        assertTrue(values.contains("我的收藏"), "我的收藏入口选择器缺失: " + values);
+        assertTrue(values.contains("浏览足迹"), "浏览足迹入口选择器缺失: " + values);
+        assertTrue(values.contains("我的订单"), "我的订单入口选择器缺失: " + values);
+        assertTrue(values.contains("收货地址"), "收货地址入口选择器缺失: " + values);
+    }
+
     private Map<String, Object> fieldByName(List<Map<String, Object>> fields, String name) {
         return fields.stream()
                 .filter(f -> name.equals(f.get("name")))
                 .findFirst()
                 .orElseThrow();
+    }
+
+    @Test
+    void footprintPageSelectorsIncludeItemInfoAndCheckbox() throws IOException {
+        // v9.8 实测回归：litemall 足迹页此前仅提取到"删除选中"一个选择器，
+        // 足迹项/信息区域/复选框/全选全靠视觉点击（坐标漂移误导航商品详情）。
+        // 语义 class 词根补 item/info/row/checkbox/count/toolbar + van-checkbox 可见文本后，
+        // .fp-item/.fp-info/.fp-row/.toolbar/.count-bar 与"全选"都应进入选择器池。
+        writeVueFile(tempDir, "MyFootprint.vue", """
+                <template>
+                  <div class="page footprint-page">
+                    <van-nav-bar title="浏览足迹" />
+                    <div class="count-bar">{{ totalCount }} 条足迹</div>
+                    <div class="toolbar">
+                      <van-checkbox v-model="checkAll">全选</van-checkbox>
+                      <van-button size="small" type="danger" plain>删除选中</van-button>
+                    </div>
+                    <van-cell-group inset v-for="item in list" :key="item.id" class="fp-item">
+                      <div class="fp-row">
+                        <van-checkbox v-model="checkedMap[item.id]" />
+                        <div class="fp-info" @click="goGoods(item)">
+                          <div class="fp-name">{{ item.name }}</div>
+                          <div class="fp-price">￥{{ item.retailPrice }}</div>
+                        </div>
+                      </div>
+                    </van-cell-group>
+                  </div>
+                </template>
+                """);
+
+        FrontendResult result = analyzerWithoutLlm().analyze(tempDir.toString());
+        Map<String, Object> fpEntry = result.getDomSelectors().stream()
+                .filter(e -> "MyFootprint".equals(e.get("component")))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("domSelectors 未包含 MyFootprint"));
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> selectors = (List<Map<String, Object>>) fpEntry.get("selectors");
+        List<String> values = selectors.stream()
+                .map(s -> String.valueOf(s.get("value")))
+                .toList();
+
+        assertTrue(values.contains(".fp-item"), "足迹项选择器缺失: " + values);
+        assertTrue(values.contains(".fp-info"), "足迹信息区域选择器缺失: " + values);
+        assertTrue(values.contains(".fp-row"), "足迹行选择器缺失: " + values);
+        assertTrue(values.contains(".toolbar"), "工具栏选择器缺失: " + values);
+        assertTrue(values.contains(".count-bar"), "总数栏选择器缺失: " + values);
+        assertTrue(values.contains("全选"), "全选复选框文本选择器缺失: " + values);
+        assertTrue(values.contains("删除选中"), "删除选中按钮文本选择器缺失: " + values);
     }
 
     private void writeVueFile(Path root, String fileName, String content) throws IOException {
