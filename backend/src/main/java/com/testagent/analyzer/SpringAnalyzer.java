@@ -27,6 +27,9 @@ import com.github.javaparser.ast.expr.StringLiteralExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.stmt.ThrowStmt;
 import com.github.javaparser.ast.stmt.IfStmt;
+import com.github.javaparser.ast.stmt.BlockStmt;
+import com.github.javaparser.ast.stmt.ReturnStmt;
+import com.github.javaparser.ast.stmt.Statement;
 import com.testagent.analyzer.result.BackendResult;
 import com.testagent.analyzer.result.BusinessRule;
 import com.testagent.analyzer.result.EndpointInfo;
@@ -224,9 +227,9 @@ public class SpringAnalyzer {
             String className = cls.getNameAsString();
             for (MethodDeclaration method : cls.getMethods()) {
                 for (AnnotationExpr ann : method.getAnnotations()) {
-                    // v7.4(A2): 传注解对象以解析 @RequestMapping 的 method 属性
-                    String httpMethod = mapHttpMethod(ann);
-                    if (httpMethod == null) {
+                    // v13.7: 多值 method 展开为多端点（旧实现只取第一个，{GET,POST} 只剩 GET）
+                    List<String> httpMethods = mapHttpMethods(ann);
+                    if (httpMethods.isEmpty()) {
                         continue;
                     }
                     String methodPath = extractAnnotationPath(ann);
@@ -256,18 +259,20 @@ public class SpringAnalyzer {
                             .filter(m -> "body".equals(m.get("in")))
                             .map(m -> String.valueOf(m.get("type")))
                             .findFirst().orElse(null);
-                    endpoints.add(EndpointInfo.builder()
-                            .method(httpMethod)
-                            .path(fullPath)
-                            .function(className + "." + method.getNameAsString())
-                            .file(filePath)
-                            .parameters(parameters)
-                            .requestBody(requestBodyType)
-                            .responseBody(method.getType().asString())
-                            .businessLogic(compactMethodBody(method))
-                            .exceptions(exceptionTypes)
-                            .sources(List.of("rules"))
-                            .build());
+                    for (String httpMethod : httpMethods) {
+                        endpoints.add(EndpointInfo.builder()
+                                .method(httpMethod)
+                                .path(fullPath)
+                                .function(className + "." + method.getNameAsString())
+                                .file(filePath)
+                                .parameters(parameters)
+                                .requestBody(requestBodyType)
+                                .responseBody(method.getType().asString())
+                                .businessLogic(compactMethodBody(method))
+                                .exceptions(exceptionTypes)
+                                .sources(List.of("rules"))
+                                .build());
+                    }
                 }
             }
         }
@@ -699,20 +704,74 @@ public class SpringAnalyzer {
         return deduped;
     }
 
-    private String compactMethodBody(MethodDeclaration method) {
+    /** v13.5(点1第2条): 方法体压缩上限。旧值 300 会把长方法的守卫/分支截掉（截断在中段下游 200/80 头切窗口里）。 */
+    static final int METHOD_BODY_MAX_CHARS = 500;
+
+    /**
+     * v13.5(点1第2条): 控制流/校验信号行判定——超限时优先保留这些行（守卫、return、throw、循环分支），
+     * 丢弃纯赋值/日志行。正则含 litemall 常见错误返回调用（fail/unlogin/badArgument 等）。
+     */
+    private static final java.util.regex.Pattern METHOD_BODY_SIGNAL = java.util.regex.Pattern.compile(
+            "\\b(if|else|for|while|switch|case|return|throw|catch|assert)\\b"
+                    + "|\\b(fail|error|unlogin|forbidden|badArgument|serious)\\s*\\(");
+
+    /**
+     * v13.5(点1第2条): 方法体压缩——旧实现把整个 body 空白折叠后硬截 300 字符：
+     * 长方法只剩方法开头的 Happy Path 序言，守卫/分支逻辑全丢，且拦腰断在词法中间。
+     * 新逻辑：①全文 ≤500 字符原样保留（按行空格拼接，不再折叠字符串字面量内部空白）；
+     * ②超限优先保留信号行（原始顺序），下游头部截断窗口（规则摘要 200 / ScopeMapping 80）自动信号密集；
+     * ③信号行仍超限按行边界头部截断；兜底退回旧行为的头部截断，保证非空。
+     * 包级可见供单测直接验证（同 v7.10 A6 惯例）。
+     */
+    String compactMethodBody(MethodDeclaration method) {
         var body = method.getBody();
         if (body.isEmpty()) {
             return "";
         }
-        String text = body.get().toString().replaceAll("\\s+", " ").trim();
-        return text.length() > 300 ? text.substring(0, 300) + "..." : text;
+        List<String> lines = body.get().toString().lines()
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+        String full = String.join(" ", lines);
+        if (full.length() <= METHOD_BODY_MAX_CHARS) {
+            return full;
+        }
+        List<String> signals = new ArrayList<>();
+        for (String line : lines) {
+            if (METHOD_BODY_SIGNAL.matcher(line).find()) {
+                signals.add(line);
+            }
+        }
+        if (signals.isEmpty()) {
+            return truncate(full, METHOD_BODY_MAX_CHARS);
+        }
+        String joined = String.join(" ", signals);
+        if (joined.length() <= METHOD_BODY_MAX_CHARS) {
+            return joined + "...";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String line : signals) {
+            if (sb.length() + line.length() + 1 > METHOD_BODY_MAX_CHARS) {
+                break;
+            }
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append(line);
+        }
+        if (sb.length() == 0) {
+            // 首条信号行单独超限（如超长标识符/URL）：截断信号串，保证非空且信号密集
+            return truncate(joined, METHOD_BODY_MAX_CHARS);
+        }
+        return sb + "...";
     }
 
     private record ServiceClass(String name, String file, Set<String> methods,
                                 Map<String, String> fieldTypes) {
     }
 
-    private List<EnumInfo> extractEnums(CompilationUnit cu, String filePath) {
+    // v13.7: 包级可见，供单测直接验证 interface 常量枚举语义
+    List<EnumInfo> extractEnums(CompilationUnit cu, String filePath) {
         List<EnumInfo> enums = new ArrayList<>();
 
         for (EnumDeclaration enumDecl : cu.findAll(EnumDeclaration.class)) {
@@ -734,14 +793,15 @@ public class SpringAnalyzer {
         }
 
         for (ClassOrInterfaceDeclaration cls : cu.findAll(ClassOrInterfaceDeclaration.class)) {
-            if (cls.isInterface()) {
-                continue;
-            }
+            // v13.7: interface 常量不再跳过——"interface 常量枚举"是主流写法（字段隐含
+            // static final），旧实现 isInterface continue 导致这类枚举全漏
+            boolean isInterface = cls.isInterface();
             List<EnumValue> constValues = new ArrayList<>();
             for (FieldDeclaration field : cls.getFields()) {
-                boolean isStatic = field.getModifiers().stream()
+                // JavaParser getModifiers() 只返回显式修饰符，interface 字段的 static final 是隐含的
+                boolean isStatic = isInterface || field.getModifiers().stream()
                         .anyMatch(m -> m.getKeyword() == Modifier.Keyword.STATIC);
-                boolean isFinal = field.getModifiers().stream()
+                boolean isFinal = isInterface || field.getModifiers().stream()
                         .anyMatch(m -> m.getKeyword() == Modifier.Keyword.FINAL);
                 if (isStatic && isFinal) {
                     for (VariableDeclarator vd : field.getVariables()) {
@@ -814,11 +874,21 @@ public class SpringAnalyzer {
     List<BusinessRule> extractBusinessRules(CompilationUnit cu, String filePath, List<String> warnings) {
         List<BusinessRule> rules = new ArrayList<>();
         int filtered = 0;
+        int guardReturns = 0;
         for (MethodDeclaration method : cu.findAll(MethodDeclaration.class)) {
             String methodName = method.getNameAsString();
             for (IfStmt ifStmt : method.findAll(IfStmt.class)) {
                 String ifText = ifStmt.toString();
                 if (!ifText.contains("throw") || !ifText.contains("new")) {
+                    // v13.2: 权限/参数校验的主流写法是 if (...) return ResponseUtil.fail(...)，
+                    // 不含 throw——旧规则（要求同时含 throw 与 new）一条都收不到，
+                    // 导致 litemall 类项目的权限/参数校验只能靠 LLM 补充。
+                    // 此处仅收录带错误语义的 return，纯逻辑分支不会被误当作业务规则。
+                    BusinessRule guard = extractGuardReturn(ifStmt, methodName, filePath);
+                    if (guard != null) {
+                        rules.add(guard);
+                        guardReturns++;
+                    }
                     continue;
                 }
                 String condition = truncate(ifStmt.getCondition().toString(), 200);
@@ -862,7 +932,53 @@ public class SpringAnalyzer {
         if (filtered > 0) {
             warnings.add("已过滤 " + filtered + " 条 JDK/Spring 通用异常规则（空指针防御/参数断言，非业务规则）");
         }
+        if (guardReturns > 0) {
+            warnings.add("已收录 " + guardReturns
+                    + " 条 if-return 型校验规则（权限/参数校验的非 throw 写法，规则层直采）");
+        }
         return rules;
+    }
+
+    /**
+     * v13.2: 错误语义信号——方法调用名含这些词根（如 ResponseUtil.fail / badArgument / unlogin）。
+     * 要求"点号或词边界 + 含信号词的方法名 + 左括号"，避免 getFailureRate() 之类被误判。
+     */
+    private static final Pattern GUARD_RETURN_SIGNAL = Pattern.compile(
+            "(?i)(?:\\.|\\b)(fail|error|bad|unlogin|unauth|forbid|deny|invalid|illegal"
+                    + "|notfound|expire|exceed|unsupport|reject|refuse)\\w*\\s*\\(");
+
+    /**
+     * v13.2: 提取 if-return 型校验规则（权限/参数校验的非 throw 写法）。
+     *
+     * 仅当 then 分支是"直接 return"或"仅含一条 return 的块"，且 return 表达式命中
+     * 错误语义信号时才收录——纯逻辑分支（if (a > b) return a）不会被当成业务规则。
+     *
+     * @return 规则对象，不满足条件时返回 null
+     */
+    private BusinessRule extractGuardReturn(IfStmt ifStmt, String methodName, String filePath) {
+        Statement then = ifStmt.getThenStmt();
+        ReturnStmt returnStmt = null;
+        if (then instanceof ReturnStmt r) {
+            returnStmt = r;
+        } else if (then instanceof BlockStmt block && block.getStatements().size() == 1
+                && block.getStatement(0) instanceof ReturnStmt r) {
+            returnStmt = r;
+        }
+        if (returnStmt == null || !returnStmt.getExpression().isPresent()) {
+            return null;
+        }
+        String returnExpr = returnStmt.getExpression().get().toString();
+        if (!GUARD_RETURN_SIGNAL.matcher(returnExpr).find()) {
+            return null;
+        }
+        String condition = truncate(ifStmt.getCondition().toString(), 200);
+        return BusinessRule.builder()
+                .file(filePath)
+                .function(methodName)
+                .rule("if (" + condition + ") return " + truncate(returnExpr, 200))
+                .ruleType("guard_return")
+                .sources(List.of("rules"))
+                .build();
     }
 
     /** v7.10(A6): 通用异常黑名单——代码卫生型 throw，不构成业务规则 */
@@ -1498,11 +1614,12 @@ public class SpringAnalyzer {
         };
     }
 
-    // v7.4(A2): 方法级 @RequestMapping 解析 method 属性（此前恒返回 ANY，
-    // 老项目 method = RequestMethod.POST 写法路径对但方法错，接口覆盖率分母被污染）
-    private String mapHttpMethod(AnnotationExpr ann) {
+    // v13.7: 多值 method 展开为列表（旧实现取第一个，{GET,POST} 只剩 GET）；
+    // 非 @RequestMapping 注解单值；无 method 属性返回 ANY（单元素列表）
+    private List<String> mapHttpMethods(AnnotationExpr ann) {
         if (!"RequestMapping".equals(ann.getNameAsString())) {
-            return mapHttpMethod(ann.getNameAsString());
+            String single = mapHttpMethod(ann.getNameAsString());
+            return single == null ? List.of() : List.of(single);
         }
         List<String> methods = new ArrayList<>();
         if (ann instanceof NormalAnnotationExpr normal) {
@@ -1516,8 +1633,7 @@ public class SpringAnalyzer {
             // @RequestMapping(POST) 静态导入简写（Spring 4.3+）；路径字符串形态不会命中
             collectRequestMethodNames(single.getMemberValue(), methods);
         }
-        // 多值取第一个（风险清单 A2 约定）
-        return methods.isEmpty() ? "ANY" : methods.get(0);
+        return methods.isEmpty() ? List.of("ANY") : methods;
     }
 
     private void collectRequestMethodNames(com.github.javaparser.ast.expr.Expression expr, List<String> out) {

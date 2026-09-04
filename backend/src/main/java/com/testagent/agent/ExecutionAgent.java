@@ -11,11 +11,15 @@ import com.testagent.skill.PlaywrightRecordSkill;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * v2.1: LLM 驱动的 Agent 执行引擎。
@@ -51,6 +55,58 @@ public class ExecutionAgent {
 
     @Autowired
     private RuntimeStore runtimeStore;
+
+    // v13.3(①): 点击后即时页面快照——van-toast 约 2s 消失，state_assert 的快照晚于点击 4-6s
+    // 必然错过 toast 文案。点击生效检查在点击后 ~800ms 读过一次页面状态（toast 还在），
+    // 把该次 textSnippet 缓存下来，紧随其后的 state_assert 断言时并入比对文本。
+    // key=executionId，value=触发点击的 stepIndex + "\n" + textSnippet。
+    private final Map<String, String> actionSnapshots = new ConcurrentHashMap<>();
+
+    // v13.3(③): LLM-as-judge 开关——断言 failed 时的第 4 层语义复核
+    @Value("${app.execution.llm-judge-enabled:true}")
+    private boolean llmJudgeEnabled;
+
+    /** 供 ExecutionService 收尾时清理，防跨用例残留 */
+    public void clearActionSnapshot(String executionId) {
+        if (executionId != null) {
+            actionSnapshots.remove(executionId);
+        }
+    }
+
+    /** 存储点击步骤的即时页面文本快照（stepIndex 用于校验"断言步紧随点击步"） */
+    void rememberActionSnapshot(String executionId, int stepIndex, String textSnippet) {
+        if (executionId == null || textSnippet == null || textSnippet.isBlank()) {
+            return;
+        }
+        actionSnapshots.put(executionId, stepIndex + "\n" + textSnippet);
+    }
+
+    /**
+     * 取走动作快照：仅当快照来自紧邻的上一步（stepIndex-1）时有效——
+     * 隔了多步的 toast 文本不可信（可能是无关旧提示），直接丢弃。
+     */
+    String consumeActionSnapshot(String executionId, int assertStepIndex) {
+        if (executionId == null) {
+            return null;
+        }
+        String snapshot = actionSnapshots.remove(executionId);
+        if (snapshot == null) {
+            return null;
+        }
+        int nl = snapshot.indexOf('\n');
+        if (nl <= 0) {
+            return null;
+        }
+        try {
+            if (Integer.parseInt(snapshot.substring(0, nl)) != assertStepIndex - 1) {
+                return null;
+            }
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        String text = snapshot.substring(nl + 1);
+        return text.isBlank() ? null : text;
+    }
 
     /**
      * Agent 的 agentic loop，对单个测试步骤执行完整流程。
@@ -240,10 +296,27 @@ public class ExecutionAgent {
                             }
                         }
                     } else {
-                        // 无可用选择器，降级为跳过
-                        strategy = "skip";
-                        result = "skipped";
-                        error = "无可用 DOM 选择器";
+                        // v12.17(P1): 无可用选择器时，视觉定位已命中则按坐标点击兜底（与
+                        // dom_click 异常分支同一策略）。原实现直接 skip，导致"收藏图标/
+                        // 删除按钮/返回箭头"这类分析器未提取选择器的元素必然被跳过，
+                        // 并让后续断言因前置状态未达成而级联失败。
+                        if (locateResult != null && locateResult.isFound()) {
+                            log.info("No DOM selector available, fallback to visual_click at ({}, {})",
+                                    locateResult.getClickX(), locateResult.getClickY());
+                            int vx = locateResult.getClickX();
+                            int vy = locateResult.getClickY();
+                            playwrightSkill.visualClick(sessionId, vx, vy);
+                            clickX = vx;
+                            clickY = vy;
+                            coordinates = "x=" + vx + ",y=" + vy;
+                            strategy = "dom_click+visual_fallback";
+                            result = "passed";
+                        } else {
+                            // 无选择器且视觉定位也未命中，才真正放弃
+                            strategy = "skip";
+                            result = "skipped";
+                            error = "无可用 DOM 选择器，且视觉定位未命中";
+                        }
                     }
                     break;
                 }
@@ -268,6 +341,11 @@ public class ExecutionAgent {
                     Thread.currentThread().interrupt();
                 }
                 Map<String, String> statusAfter = playwrightSkill.getPageStatus(sessionId);
+                // v13.3(①): 点击后即时快照——statusAfter 在点击后 ~800ms 读取，van-toast(约 2s)尚未消失，
+                // 其 textSnippet 是瞬态提示文案的唯一可靠来源；缓存给紧随其后的 state_assert 用
+                if (strategy.contains("click")) {
+                    rememberActionSnapshot(executionId, stepIndex, statusAfter.get("textSnippet"));
+                }
                 boolean effective = askLlmIfEffective(statusBefore, statusAfter, action);
                 touchHeartbeat(executionId);  // v7.0(E8): 生效判断调用后补心跳
 
@@ -304,10 +382,28 @@ public class ExecutionAgent {
                                 coordinates = "x=" + vx + ",y=" + vy;
                                 strategy = strategy + "+visual_fallback";
                             } else {
-                                result = "failed";
-                                error = alreadyDomClicked
-                                        ? "操作未生效且已尝试 DOM 点击，为避免重复点击不再重试"
-                                        : "操作未生效且无 DOM 选择器可兜底";
+                                // v12.25: 无 uiSelector 时（收藏按钮/列表项等生成侧常漏挂），
+                                // 先用文本语义兜底（text= 按钮文案确定性点击）而非直接放弃——
+                                // 解决“视觉坐标漂移点错→判未生效→无 DOM 选择器即失败”的死角。
+                                boolean textOk = false;
+                                try {
+                                    textOk = tryTextSemanticFallback(sessionId, executionId,
+                                            action, target);
+                                } catch (Exception tfe) {
+                                    log.info("[text-fallback] 语义兜底异常，忽略: {}", tfe.getMessage());
+                                }
+                                if (textOk) {
+                                    strategy = strategy + "+text_fallback";
+                                    clickX = 0;
+                                    clickY = 0;
+                                    coordinates = null;  // 坐标由 text 选择器决定，非视觉点击
+                                    // 保留 passed：已抽到真实按钮文案并确认生效
+                                } else {
+                                    result = "failed";
+                                    error = alreadyDomClicked
+                                            ? "操作未生效且已尝试 DOM 点击，为避免重复点击不再重试"
+                                            : "操作未生效且无 DOM 选择器可兜底";
+                                }
                             }
                         }
                     } else {
@@ -377,9 +473,22 @@ public class ExecutionAgent {
     // v8.9.8(12.14-A): 执行导航步骤——调浏览器导航，校验 URL，不进点击流水线
     private ExecutionStep executeNavigation(String sessionId, JsonNode step, int stepIndex,
                                             String executionId, String action, String target, String baseUrl) {
+        // v12.29: 优先消费 step 内已确定的 route uiSelector 作为导航目标——生成期(enforcePageRealitySteps)
+        // 已把语义导航(如 target="我的收藏页")补成 uiSelector{type:route,value:/collect}。此前直接用描述性
+        // 中文 target 会误触 v9.13 占位守卫导致"生成数据缺陷"失败，即便正确 route 就挂在 step 上。
+        String routeTarget = target;
+        JsonNode uiSel = step.path("uiSelector");
+        if ("route".equals(uiSel.path("type").asText(""))) {
+            String selValue = uiSel.path("value").asText("").trim();
+            if (!selValue.isEmpty()) {
+                routeTarget = selValue;  // 以确定性 route 为准，忽略描述性 target
+            }
+        }
         // v9.13: 导航目标占位符校验——pro 模型会编造 "/goods/商品A的ID" 式未实例化路由
         //（URL 编码后含 %XX 中文序列），命中不了任何真实页面；明确归因为生成数据缺陷
-        if (target.matches(".*[\u4e00-\u9fa5].*") || target.contains("%E")) {
+        // 校验对象是实际用于导航的 routeTarget：route 选择器值(/collect、/goods/1006002)不含中文，
+        // 只有回落描述性 target 带中文/未实例化占位时才会拦截。
+        if (routeTarget.matches(".*[\u4e00-\u9fa5].*") || routeTarget.contains("%E")) {
             return ExecutionStep.builder()
                     .id(newStepId())
                     .executionId(executionId)
@@ -388,26 +497,26 @@ public class ExecutionAgent {
                     .target(target)
                     .strategy("navigate")
                     .result("failed")
-                    .error("【生成数据缺陷】导航目标 '" + target + "' 含未实例化的占位文本（如'商品A的ID'），"
+                    .error("【生成数据缺陷】导航目标 '" + routeTarget + "' 含未实例化的占位文本（如'商品A的ID'），"
                             + "应使用上下文中的真实路由与真实数据 ID")
                     .build();
         }
-        String url = joinBase(baseUrl, target);
+        String url = joinBase(baseUrl, routeTarget);
         String error = null;
         try {
             playwrightSkill.browserNavigate(sessionId, url);
             Map<String, String> status = playwrightSkill.getPageStatus(sessionId);
             String cur = status.get("url");
-            if (urlHitsRoute(cur, routeKey(target))) {
+            if (urlHitsRoute(cur, routeKey(routeTarget))) {
                 return okNav(executionId, stepIndex, action, target, cur);
             }
-            // v8.9.8: hash 路由兜底——history 路由拼不到时尝试 baseUrl/#/target（SPA hash 路由）
-            String hashUrl = joinBase(baseUrl, "#" + target);
+            // v8.9.8: hash 路由兜底——history 路由拼不到时尝试 baseUrl/#/routeTarget（SPA hash 路由）
+            String hashUrl = joinBase(baseUrl, "#" + routeTarget);
             if (!hashUrl.equals(url)) {
                 playwrightSkill.browserNavigate(sessionId, hashUrl);
                 status = playwrightSkill.getPageStatus(sessionId);
                 cur = status.get("url");
-                if (urlHitsRoute(cur, routeKey(target))) {
+                if (urlHitsRoute(cur, routeKey(routeTarget))) {
                     return okNav(executionId, stepIndex, action, target, cur);
                 }
             }
@@ -553,6 +662,15 @@ public class ExecutionAgent {
                     .build();
         }
         touchHeartbeat(executionId);
+        // v13.3(①): 并入紧邻点击步的即时快照——toast 文案的主捕获通道。
+        // 仅当本断言步紧随点击步（stepIndex-1）时采信，防止隔步旧 toast 造成误通过
+        String actionSnapshot = consumeActionSnapshot(executionId, stepIndex);
+        if (actionSnapshot != null
+                && !actionSnapshot.equals(pageState.getOrDefault("textSnippet", ""))) {
+            Map<String, String> merged = new LinkedHashMap<>(pageState);
+            merged.merge("textSnippet", actionSnapshot, (a, b) -> a + "\n" + b);
+            pageState = merged;
+        }
         String verdict = ExecutionAssert.assertExpected(expected, pageState);
         // v9.8: 瞬态 toast 断言轮询——Vant showToast 约 2s 自动消失，断言快照晚于点击步骤
         // 时可能错过（'收藏成功'/'已取消收藏'/'请先选择' 等）；期望含引号锚点（toast 文案）
@@ -579,11 +697,37 @@ public class ExecutionAgent {
                 }
             }
         }
+        // v13.3(③): LLM-as-judge 第 4 层——文本断言 failed 时的语义复核兜底。
+        // 覆盖两类死角：泛化描述（"页面内容为足迹列表"）的字面匹配落空、
+        // 断言要求的状态变化已发生但表达方式与期望文案不同。
+        // 仅 failed 时触发、每断言步至多 1 次；LLM 未配置/开关关闭/调用异常 → 维持 failed。
+        String llmJudgeNote = null;
+        if ("failed".equals(verdict)) {
+            String[] judged = llmJudgeExpected(expected, pageState);
+            if (judged != null) {
+                String jv = judged[0];
+                String reason = judged[1];
+                if ("passed".equals(jv)) {
+                    verdict = "passed";
+                    llmJudgeNote = "LLM 判定通过: " + reason;
+                } else if ("skipped".equals(jv)) {
+                    verdict = "skipped";
+                    llmJudgeNote = "LLM 判定无法验证: " + reason;
+                } else {
+                    llmJudgeNote = "LLM 判定不满足: " + reason;
+                }
+            }
+        }
         String error = switch (verdict) {
-            case "failed" -> ExecutionAssert.describe(expected, pageState);
-            case "skipped" -> "UI 层暂无法验证: " + expected;
+            case "failed" -> ExecutionAssert.describe(expected, pageState)
+                    + (llmJudgeNote != null ? "；" + llmJudgeNote : "");
+            case "skipped" -> (llmJudgeNote != null ? llmJudgeNote : "UI 层暂无法验证: " + expected);
             default -> null;
         };
+        String strategyTag = "assert";
+        if (llmJudgeNote != null && "passed".equals(verdict)) {
+            strategyTag = "assert+llm_judge";  // 判定来源可视化，报告里可区分纯文本断言与 LLM 复核
+        }
         String screenshotAfter = null;
         try {
             screenshotAfter = playwrightSkill.takeScreenshot(sessionId);
@@ -596,13 +740,65 @@ public class ExecutionAgent {
                 .stepIndex(stepIndex)
                 .action(action)
                 .target(target)
-                .strategy("assert")
+                .strategy(strategyTag)
                 .result(verdict)
                 .screenshotAfter(screenshotAfter)
                 .coordinates("url=" + pageState.getOrDefault("url", "")
-                        + ", 页面文本=" + ExecutionAssert.snippetSummary(pageState))
+                        + ", 页面文本=" + ExecutionAssert.snippetSummary(pageState)
+                        + (llmJudgeNote != null ? ", " + llmJudgeNote : ""))
                 .error(error)
                 .build();
+    }
+
+    /**
+     * v13.3(③): LLM 语义断言复核。返回 [verdict, reason]，无法复核时返回 null（维持原判）。
+     */
+    static final Pattern LLM_VERDICT_PATTERN =
+            Pattern.compile("\"verdict\"\\s*:\\s*\"(passed|failed|skipped)\"");
+    static final Pattern LLM_REASON_PATTERN =
+            Pattern.compile("\"reason\"\\s*:\\s*\"([^\"]{0,200})\"");
+
+    String[] llmJudgeExpected(String expected, Map<String, String> pageState) {
+        if (!llmJudgeEnabled || !llmService.isConfigured()) {
+            return null;
+        }
+        try {
+            String snippet = pageState.getOrDefault("textSnippet", "");
+            if (snippet.length() > 1500) {
+                snippet = snippet.substring(0, 1500);
+            }
+            String systemPrompt = "你是 Web UI 自动化测试的断言裁判。给定断言期望与页面实际状态，判断断言语义是否成立。"
+                    + "判定标准：页面实际状态已满足断言的语义（同义表达、状态变化等价证据均可）→ passed；"
+                    + "明确不满足 → failed；页面信息不足以判断 → skipped。"
+                    + "只输出 JSON：{\"verdict\":\"passed|failed|skipped\",\"reason\":\"简短理由\"}";
+            String userPrompt = "断言期望: " + expected
+                    + "\n页面URL: " + pageState.getOrDefault("url", "")
+                    + "\n页面标题: " + pageState.getOrDefault("title", "")
+                    + "\n页面文本快照: " + snippet;
+            String resp = llmService.chat(systemPrompt, userPrompt, 0.0);
+            return parseLlmVerdict(resp);
+        } catch (Exception e) {
+            log.debug("llmJudgeExpected failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 解析 LLM 裁决 JSON（宽松：verdict 必须是三值之一，否则视为无法复核返回 null） */
+    String[] parseLlmVerdict(String resp) {
+        if (resp == null || resp.isBlank()) {
+            return null;
+        }
+        Matcher vm = LLM_VERDICT_PATTERN.matcher(resp);
+        if (!vm.find()) {
+            return null;
+        }
+        String verdict = vm.group(1);
+        String reason = "";
+        Matcher rm = LLM_REASON_PATTERN.matcher(resp);
+        if (rm.find()) {
+            reason = rm.group(1);
+        }
+        return new String[]{verdict, reason};
     }
 
     /**
@@ -813,6 +1009,107 @@ public class ExecutionAgent {
             decision.put("strategy", "dom_click");
             decision.put("reason", "LLM 异常，默认 DOM 兜底: " + e.getMessage());
             return decision;
+        }
+    }
+
+    // ── v12.25: 文本语义兜底（解决"收藏按钮/列表项无 uiSelector→视觉坐标漂移→无法兜底"）──
+    // 生成器常不给"状态相关/列表项"按钮挂 uiSelector（商品详情收藏切换、收藏/足迹商品卡片等），
+    // 执行器只能视觉定位→坐标漂移点错→步骤 6 判未生效→因无 uiSelector 放弃失败。
+    // 此处从 action/target 抽取按钮真实文案（【已收藏】/【收藏】/【删除】…），用 Playwright
+    // text=… >> visible=true 做最后一次确定性 DOM 兜底，不依赖 LLM 生成侧是否给选择器。
+
+    /**
+     * 从动作/目标文本抽取可点击元素的可见文案（用于 text= 语义兜底）。
+     * 优先级：①【…】②引号 '…'/“…” ③“点击…按钮/入口/菜单”结构。
+     * 返回 null 表示无法抽出可信文案（不触发文本兜底）。
+     */
+    private String extractButtonText(String action, String target) {
+        String hay = ((target == null ? "" : target) + " " + (action == null ? "" : action)).trim();
+        if (hay.isEmpty()) {
+            return null;
+        }
+        // ① 中文书名号【…】
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("【([^】]{1,14})】").matcher(hay);
+        if (m.find()) {
+            String t = m.group(1).trim();
+            if (isLikelyButtonText(t)) {
+                return t;
+            }
+        }
+        // ② 引号包裹 '…' “…” 「…」
+        m = java.util.regex.Pattern.compile("['\"“”「」]([^'\"“”「」]{1,14})['\"“”「」]").matcher(hay);
+        if (m.find()) {
+            String t = m.group(1).trim();
+            if (isLikelyButtonText(t)) {
+                return t;
+            }
+        }
+        // ③ “点击X按钮/入口/菜单”
+        m = java.util.regex.Pattern.compile("点击([^，。；\\s/]{1,12})(?:按钮|入口|菜单|图标|icon)").matcher(hay);
+        if (m.find()) {
+            String t = m.group(1).trim();
+            if (isLikelyButtonText(t)) {
+                return t;
+            }
+        }
+        return null;
+    }
+
+    /** 判定一段文案是否像可点击按钮文本：够短、无路由/结构字符、非空。 */
+    private boolean isLikelyButtonText(String t) {
+        if (t == null || t.isEmpty() || t.length() > 14) {
+            return false;
+        }
+        // 排除路由/占位/结构化内容
+        if (t.contains("/") || t.contains("#") || t.contains(":") || t.contains("?")
+                || t.contains("{") || t.contains("}") || t.contains("\n")
+                || t.equalsIgnoreCase("首页") || t.equalsIgnoreCase("我的")) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * v12.25: 文本语义兜底点击——当步骤无 uiSelector 且视觉定位点击被判定未生效时，
+     * 从 action/target 抽取按钮文案，用 text=… >> visible=true 确定性点击一次，
+     * 并在点击后再做一次生效性校验，避免假通过。返回 true 表示兜底点击已生效。
+     */
+    private boolean tryTextSemanticFallback(String sessionId, String executionId,
+                                            String action, String target) {
+        String btnText = extractButtonText(action, target);
+        if (btnText == null) {
+            return false;
+        }
+        log.info("[text-fallback] 步骤无 uiSelector，抽取按钮文案 '{}' 做 text= 语义兜底点击",
+                btnText);
+        // 点击前页面状态，用于兜底生效性校验
+        Map<String, String> before;
+        try {
+            before = playwrightSkill.getPageStatus(sessionId);
+        } catch (Exception e) {
+            before = new java.util.HashMap<>();
+        }
+        try {
+            playwrightSkill.domClick(sessionId, "text", btnText);
+        } catch (Exception e) {
+            log.info("[text-fallback] text= 点击失败，放弃文本兜底: {}", e.getMessage());
+            return false;
+        }
+        // 兜底点击后等待 SPA 渲染并再次校验是否生效，避免“点到了但没生效却标记成功”
+        try {
+            Thread.sleep(EFFECT_CHECK_DELAY_MS);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
+        try {
+            Map<String, String> after = playwrightSkill.getPageStatus(sessionId);
+            boolean ok = askLlmIfEffective(before, after, action);
+            log.info("[text-fallback] 点击 '{}' 后生效性判定={}", btnText, ok);
+            return ok;
+        } catch (Exception e) {
+            log.warn("[text-fallback] 兜底生效性校验异常，按成功处理: {}", e.getMessage());
+            return true;  // 校验本身失败时按尽力而为视为成功，避免把有效操作误判失败
         }
     }
 

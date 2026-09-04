@@ -50,4 +50,31 @@ class RagTextChunkerTest {
         assertTrue(chunks.get(chunks.size() - 1).text().contains("测试内容299"));
         assertTrue(chunks.get(0).text().contains("测试内容0"));
     }
+
+    @Test
+    void longSentenceWithEarlyCommaCutsAtCommaNotMidWord() {
+        // 场景：长句横跨窗口边界，逗号落在窗口前半段（150 < size/2=200）。
+        // 旧逻辑：强/弱标点都要求 >= 窗口中点 → 找不到 → 硬切 400，"b" 串被拦腰。
+        // 新逻辑：弱标点回退到前 1/4 之后（>=100）→ 切在逗号处。
+        String body = "a".repeat(150) + "，" + "b".repeat(300) + "。";
+
+        List<RagTextChunker.Chunk> chunks = RagTextChunker.chunk(body, 400, 100);
+
+        assertFalse(chunks.isEmpty());
+        assertTrue(chunks.get(0).text().endsWith("，"),
+                "首个切块应切在逗号边界，而不是把后面的长串拦腰硬切：" + chunks.get(0).text());
+        // 内容不丢：末尾整句保留
+        assertTrue(chunks.get(chunks.size() - 1).text().endsWith("。"));
+    }
+
+    @Test
+    void windowWithoutAnyPunctuationStillHardCuts() {
+        String body = "a".repeat(1000);
+
+        List<RagTextChunker.Chunk> chunks = RagTextChunker.chunk(body, 400, 100);
+
+        assertEquals(3, chunks.size());
+        assertTrue(chunks.stream().allMatch(c -> c.text().length() <= 400));
+        assertEquals("a".repeat(400), chunks.get(0).text());
+    }
 }

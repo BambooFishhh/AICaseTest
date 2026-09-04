@@ -124,11 +124,34 @@ public final class RagTextChunker {
         return parts;
     }
 
+    /**
+     * 三级回退选切点（v13.2）：
+     * 1. 强标点（句级）优先在窗口后半段 —— 保持块大小均衡；
+     * 2. 强标点放宽到窗口前 1/4 之后 —— 句边界优于硬切拦腰（修复长句横跨窗口、
+     *    标点全落在前半段时"银行"被切走的缺陷）；
+     * 3. 弱标点（逗号/空格）从窗口末尾回找，同样要求在前 1/4 之后 —— 防碎片化；
+     * 4. 整窗无可用标点才硬切 end。
+     */
     private static int preferredCut(String text, int start, int end) {
-        int min = start + (end - start) / 2;
-        for (String delimiter : new String[]{"。", "！", "？", "；", "\n", ".", "!", "?", ";", "，", ",", " ", "\t"}) {
+        int half = start + (end - start) / 2;
+        int quarter = start + (end - start) / 4;
+        String[] strong = {"。", "！", "？", "；", "\n", ".", "!", "?", ";"};
+        String[] weak = {"，", ",", " ", "\t"};
+        for (String delimiter : strong) {
             int idx = text.lastIndexOf(delimiter, end - 1);
-            if (idx >= min) {
+            if (idx >= half) {
+                return idx + delimiter.length();
+            }
+        }
+        for (String delimiter : strong) {
+            int idx = text.lastIndexOf(delimiter, end - 1);
+            if (idx >= quarter) {
+                return idx + delimiter.length();
+            }
+        }
+        for (String delimiter : weak) {
+            int idx = text.lastIndexOf(delimiter, end - 1);
+            if (idx >= quarter) {
                 return idx + delimiter.length();
             }
         }

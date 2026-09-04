@@ -479,6 +479,13 @@ public class VueAnalyzer {
                             + "el-cascader|el-switch|el-time-picker|el-upload|el-autocomplete)\\b");
             Pattern rulesStartPattern = Pattern.compile("rules\\s*[:=]\\s*\\{");
 
+            // v13.5(Bug B): vant 移动端表单——van-field 自带 name/label/:rules，
+            // 无 el-form-item 包装层，此前整类移动端表单扫描空白
+            Pattern vanFieldPattern = Pattern.compile("<van-field\\b([^>]*?)/?>");
+            Pattern vanNamePattern = Pattern.compile("\\bname\\s*=\\s*\"([^\"]+)\"");
+            Pattern vanLabelPattern = Pattern.compile("\\blabel\\s*=\\s*\"([^\"]+)\"");
+            Pattern vanInlineRulesPattern = Pattern.compile(":rules\\s*=\\s*\"([^\"]*)\"");
+
             for (File file : vueFiles) {
                 String content = readFile(file);
                 if (content == null) {
@@ -530,9 +537,13 @@ public class VueAnalyzer {
                     }
 
                     // 在 form-item 开始标签之后查找控件类型
+                    // v13.7(点1第7条): 旧固定 600 字符窗口——长 label/属性下控件落窗外误记 unknown；
+                    // 改为延伸至下一个 el-form-item 或 1500 字符（既找到更远控件，又避免吃进下一字段的控件）
                     String type = "unknown";
-                    int afterEnd = Math.min(content.length(), fi.end() + 600);
-                    String after = content.substring(fi.end(), afterEnd);
+                    int nextFormItem = content.indexOf("<el-form-item", fi.end());
+                    int windowEnd = (nextFormItem >= 0 ? Math.min(nextFormItem, fi.end() + 1500)
+                            : fi.end() + 1500);
+                    String after = content.substring(fi.end(), Math.min(content.length(), windowEnd));
                     Matcher tm = inputTypePattern.matcher(after);
                     if (tm.find()) {
                         type = tm.group(1);
@@ -547,30 +558,69 @@ public class VueAnalyzer {
                         if (frm.find()) {
                             int arrIdx = frm.end() - 1; // 指向 '['
                             String arrBlock = extractBalanced(rulesBlock, arrIdx, '[', ']');
-                            if (arrBlock != null) {
-                                if (arrBlock.matches("(?s).*required\\s*:\\s*true.*")) {
-                                    rules.add("required");
-                                    required = true;
-                                }
-                                Matcher minM = Pattern.compile("min\\s*:\\s*(\\d+)").matcher(arrBlock);
-                                if (minM.find()) {
-                                    rules.add("min:" + minM.group(1));
-                                }
-                                Matcher maxM = Pattern.compile("max\\s*:\\s*(\\d+)").matcher(arrBlock);
-                                if (maxM.find()) {
-                                    rules.add("max:" + maxM.group(1));
-                                }
-                                Matcher patM = Pattern.compile("pattern\\s*:\\s*([^,}\\]]+)").matcher(arrBlock);
-                                if (patM.find()) {
-                                    rules.add("pattern:" + patM.group(1).trim());
-                                }
-                            }
+                            required = collectRuleArray(arrBlock, rules);
                         }
                     }
 
                     Map<String, Object> field = new HashMap<>();
                     field.put("name", name);
                     field.put("type", type);
+                    field.put("label", label);
+                    field.put("required", required);
+                    field.put("rules", rules);
+                    fields.add(field);
+                }
+
+                // v13.5(Bug B): vant 移动端表单字段——van-field 无包装层，
+                // name 缺失时回退 label 作标识；校验来源 = script rules 块 + 行内 :rules
+                Matcher vf = vanFieldPattern.matcher(content);
+                while (vf.find()) {
+                    String tagAttrs = vf.group(1);
+
+                    String name = null;
+                    Matcher vnm = vanNamePattern.matcher(tagAttrs);
+                    if (vnm.find()) {
+                        name = vnm.group(1);
+                    }
+                    String label = null;
+                    Matcher vlm = vanLabelPattern.matcher(tagAttrs);
+                    if (vlm.find()) {
+                        label = vlm.group(1);
+                    }
+                    if (name == null) {
+                        name = label;
+                    }
+                    if (name == null) {
+                        continue;
+                    }
+
+                    List<String> rules = new ArrayList<>();
+                    boolean required = false;
+                    // ① script rules 块（与 el 同一解析路径）
+                    if (rulesBlock != null) {
+                        Pattern fieldRulePattern = Pattern.compile(Pattern.quote(name) + "\\s*:\\s*\\[");
+                        Matcher frm = fieldRulePattern.matcher(rulesBlock);
+                        if (frm.find()) {
+                            String arrBlock = extractBalanced(rulesBlock, frm.end() - 1, '[', ']');
+                            required = collectRuleArray(arrBlock, rules);
+                        }
+                    }
+                    // ② 行内 :rules="[{ required: true, message: '...' }]"
+                    Matcher vrm = vanInlineRulesPattern.matcher(tagAttrs);
+                    if (vrm.find()) {
+                        String inline = vrm.group(1);
+                        int arrIdx = inline.indexOf('[');
+                        if (arrIdx >= 0) {
+                            String arrBlock = extractBalanced(inline, arrIdx, '[', ']');
+                            if (collectRuleArray(arrBlock, rules)) {
+                                required = true;
+                            }
+                        }
+                    }
+
+                    Map<String, Object> field = new HashMap<>();
+                    field.put("name", name);
+                    field.put("type", "van-field");
                     field.put("label", label);
                     field.put("required", required);
                     field.put("rules", rules);
@@ -594,6 +644,34 @@ public class VueAnalyzer {
             log.warn("extractForms failed: {}", e.getMessage());
         }
         return forms;
+    }
+
+    /**
+     * v13.5(Bug B): 从校验规则数组文本（el rules 块片段 / vant 行内 :rules）提取
+     * required/min/max/pattern。返回是否含 required。
+     */
+    private boolean collectRuleArray(String arrBlock, List<String> rules) {
+        boolean required = false;
+        if (arrBlock == null) {
+            return false;
+        }
+        if (arrBlock.matches("(?s).*required\\s*:\\s*true.*")) {
+            rules.add("required");
+            required = true;
+        }
+        Matcher minM = Pattern.compile("min\\s*:\\s*(\\d+)").matcher(arrBlock);
+        if (minM.find()) {
+            rules.add("min:" + minM.group(1));
+        }
+        Matcher maxM = Pattern.compile("max\\s*:\\s*(\\d+)").matcher(arrBlock);
+        if (maxM.find()) {
+            rules.add("max:" + maxM.group(1));
+        }
+        Matcher patM = Pattern.compile("pattern\\s*:\\s*([^,}\\]]+)").matcher(arrBlock);
+        if (patM.find()) {
+            rules.add("pattern:" + patM.group(1).trim());
+        }
+        return required;
     }
 
     /**
@@ -1632,47 +1710,75 @@ public class VueAnalyzer {
     }
 
     // v1.12: 收集 .vue 文件源码摘要；v7.13: 上限配置化（原 12000/800/700 → 96000/3000/3000）
+    // v13.5(点3): 两遍预算——旧实现"按序填满即 break"，30 个 views 的项目里同优先级按
+    // 字典序只进一半，尾部页面在 LLM prompt 里整体不可见（生成器不知道这些页面存在）。
+    // 新逻辑：默认配额放得下 → 原样；放不下 → 按文件数均摊配额，每个文件都有最小表示，
+    // 尾部按行边界收尾（不再拦腰断行/断 tag）。
     private String collectSourceSnippets(File dir) {
         List<File> vueFiles = new ArrayList<>();
         collectVueFiles(dir, vueFiles);
-
-        StringBuilder sb = new StringBuilder();
-        int totalChars = 0;
-        int maxTotal = vueSourceTotalChars;
-
-        for (File file : vueFiles) {
-            if (totalChars >= maxTotal) break;
-            try {
-                String content = readFile(file);
-                String component = file.getName().replace(".vue", "");
-
-                // 截取 template 部分（v7.13: 最多 vueTemplateChars 字符）
-                int templateStart = content.indexOf("<template>");
-                int templateEnd = content.indexOf("</template>");
-                String template = "";
-                if (templateStart >= 0 && templateEnd > templateStart) {
-                    template = content.substring(templateStart, Math.min(templateEnd + 11, templateStart + vueTemplateChars + 11));
-                }
-
-                // 截取 script 部分（v7.13: 最多 vueScriptChars 字符）
-                int scriptStart = content.indexOf("<script");
-                int scriptEnd = content.indexOf("</script>");
-                String script = "";
-                if (scriptStart >= 0 && scriptEnd > scriptStart) {
-                    script = content.substring(scriptStart, Math.min(scriptEnd + 9, scriptStart + vueScriptChars + 9));
-                }
-
-                String snippet = "=== " + component + ".vue ===\n" + template + "\n" + script + "\n\n";
-                if (totalChars + snippet.length() > maxTotal) {
-                    snippet = snippet.substring(0, maxTotal - totalChars);
-                }
-                sb.append(snippet);
-                totalChars += snippet.length();
-            } catch (Exception e) {
-                // 跳过读取失败的文件
-            }
+        if (vueFiles.isEmpty()) {
+            return "";
         }
-        return sb.toString();
+
+        // 第一遍：默认配额（vueTemplateChars/vueScriptChars）
+        List<String> snippets = new ArrayList<>();
+        int total = 0;
+        for (File file : vueFiles) {
+            String snippet = buildVueSnippet(file, vueTemplateChars, vueScriptChars);
+            snippets.add(snippet);
+            total += snippet.length();
+        }
+        if (total <= vueSourceTotalChars) {
+            return String.join("", snippets);
+        }
+
+        // 第二遍：均摊配额（预留每文件 ~32 字符 header 余量，template:script = 1:1）
+        int perFile = Math.max(64, vueSourceTotalChars / vueFiles.size() - 32);
+        int tCap = perFile / 2;
+        int sCap = perFile - tCap;
+        StringBuilder sb = new StringBuilder();
+        for (File file : vueFiles) {
+            sb.append(buildVueSnippet(file, tCap, sCap));
+        }
+        return lineBounded(sb.toString(), vueSourceTotalChars);
+    }
+
+    /** v13.5(点3): 单文件源码摘要（template/script 分别按配额截取；读取失败返回空串跳过） */
+    private String buildVueSnippet(File file, int templateCap, int scriptCap) {
+        try {
+            String content = readFile(file);
+            String component = file.getName().replace(".vue", "");
+
+            // 截取 template 部分
+            int templateStart = content.indexOf("<template>");
+            int templateEnd = content.indexOf("</template>");
+            String template = "";
+            if (templateStart >= 0 && templateEnd > templateStart) {
+                template = content.substring(templateStart, Math.min(templateEnd + 11, templateStart + templateCap + 11));
+            }
+
+            // 截取 script 部分
+            int scriptStart = content.indexOf("<script");
+            int scriptEnd = content.indexOf("</script>");
+            String script = "";
+            if (scriptStart >= 0 && scriptEnd > scriptStart) {
+                script = content.substring(scriptStart, Math.min(scriptEnd + 9, scriptStart + scriptCap + 9));
+            }
+
+            return "=== " + component + ".vue ===\n" + template + "\n" + script + "\n\n";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** v13.5(点3): 超限时回退到最后一个换行符截断，避免拦腰断行/断 tag */
+    private String lineBounded(String s, int max) {
+        if (s.length() <= max) {
+            return s;
+        }
+        int cut = s.lastIndexOf('\n', max);
+        return cut > 0 ? s.substring(0, cut) + "\n" : s.substring(0, max);
     }
 
     // v1.12: 解析 LLM 返回的补充结果并合并到正则结果中

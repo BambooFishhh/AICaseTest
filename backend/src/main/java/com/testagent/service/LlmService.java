@@ -55,6 +55,21 @@ public class LlmService {
     @Value("${llm.model:gpt-4o}")
     private String model;
 
+    /**
+     * v12.21(A): 文本生成专用模型（默认空→回退 llm.model）。用途：
+     * 视觉多模态必须用支持图像的模型(如 mimo-v2.5)，而纯文本任务(PRD→用例/评审/状态机)
+     * 在长上下文下偶发输出非标 JSON，可指定纯文本 JSON 纪律更强的模型(如 mimo-v2.5-pro)。
+     * 注意：buildOptions 仅被 LlmService 的纯文本 chat/chatStreaming 使用，
+     * 多模态走 MCP(llm_chat_with_image/multimodal_element_locate) 不经过此处，
+     * 因此该覆盖不影响视觉链路。
+     */
+    @Value("${llm.text-model:}")
+    private String textModel;
+
+    private String effectiveModel() {
+        return (textModel != null && !textModel.isBlank()) ? textModel.trim() : model;
+    }
+
     // v5.14: 按任务粒度控制思考模式——分析类任务保留，生成/评审默认关闭
     // v6.0: 咨询性配置（OpenAI starter 不透传 enable_thinking，见类注释）
     @Value("${llm.thinking.analysis:true}")
@@ -262,7 +277,7 @@ public class LlmService {
                                             String userPrompt, double temperature, boolean enableThinking) {
         userPrompt = boundPrompt(userPrompt);
         log.info("[LLM] chat() 开始, provider={}, model={}, prompt长度={}, thinking={}",
-                providerName, model, userPrompt == null ? 0 : userPrompt.length(), enableThinking);
+                providerName, effectiveModel(), userPrompt == null ? 0 : userPrompt.length(), enableThinking);
         if (llmCircuitBreaker != null && !llmCircuitBreaker.allowRequest(channel)) {
             throw new BusinessException(50002, "LLM 熔断打开，请稍后重试", HttpStatus.SERVICE_UNAVAILABLE);
         }
@@ -634,7 +649,7 @@ public class LlmService {
         // v7.3(L8): maxTokens 由硬编码 16384 改为 llm.max-tokens 配置（默认不变）。
         log.debug("[LLM] thinking flag={} (Spring AI OpenAI starter advisory only)", enableThinking);
         return OpenAiChatOptions.builder()
-                .model(model)
+                .model(effectiveModel())
                 .temperature(temperature)
                 .maxTokens(maxTokens)
                 .streamUsage(true)

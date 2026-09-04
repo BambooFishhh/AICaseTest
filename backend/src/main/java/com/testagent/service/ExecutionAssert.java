@@ -78,7 +78,8 @@ public final class ExecutionAssert {
                     + "|不受影响|无影响|显示正确|返回正确|更新正确|展示正确"
                     + "|样式|初始|外观|图标样式|实心|空心|变色|变红|变灰|变橙|状态|空心|实心|高亮|徽标|置灰|不可点击"
                     + "|商品卡片|足迹商品|订单统计|统计项|统计数字|统计信息|列表展示"
-                    + "|总数|商品收藏|收藏总数|足迹总数");
+                    + "|总数|商品收藏|收藏总数|足迹总数"
+                    + "|内容为|页面内容|列表内容|页面主体");
 
     /** v9.11: 列表存在性兜底触发——"至少一个商品卡片"类无内容描述断言的可验证子集：
      *  通过页面总数文案（共 N 件/条）判定列表是否有项 */
@@ -89,8 +90,12 @@ public final class ExecutionAssert {
     static final Pattern LIST_COUNT_PATTERN = Pattern.compile("共\\s*(\\d+)\\s*[件条个只]");
 
     /** v9.5fix: URL 语义子句——含这些词的子句，其引号短语（'/goods/' 等路径）应与 url/title
-     *  比对而非页面正文（正文快照不含 URL，按正文匹配必然误判） */
-    private static final Pattern ASSERT_URL_CLAUSE = Pattern.compile("URL|url|地址|重定向|跳转至|跳转到|路径");
+     *  比对而非页面正文（正文快照不含 URL，按正文匹配必然误判）
+     *  v9.14: 去掉裸词"地址"——"收货地址""地址簿"等业务文案会误触发 URL 比对
+     *  （实测：用户中心页"显示'我的收藏'、'浏览足迹'、'收货地址'等菜单项"因'收货地址'
+     *  命中"地址"被判为 URL 子句，三项引号文案全部拿去与 url/title 比对，必然 failed）；
+     *  URL 语境词改用"页面地址/链接/URL/路径"等明确形态 */
+    private static final Pattern ASSERT_URL_CLAUSE = Pattern.compile("URL|url|链接|路径|重定向|跳转至|跳转到|页面地址");
 
     /** 叙述性前缀（长词优先剥离） */
     private static final String[] ASSERT_PREFIXES = {

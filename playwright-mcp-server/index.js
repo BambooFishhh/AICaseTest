@@ -80,12 +80,71 @@ async function markPoint(page, x, y) {
 async function markSelector(page, selector) {
   await clearClickMarker(page)
   if (!page) return null
-  const box = await page.locator(selector).first().boundingBox().catch(() => null)
+  // v12.20: boundingBox 设 3s 上限，避免 text= 通配/歧义选择器在元素 attach 等待上
+  // 无限拖慢（历史曾把整个 MCP 调用拖到客户端 60s 超时）。仅用于打点标记，失败不阻塞点击。
+  const box = await page.locator(selector).first().boundingBox({ timeout: 3000 }).catch(() => null)
   if (!box) return null
   const x = Math.round(box.x + box.width / 2)
   const y = Math.round(box.y + box.height / 2)
   await markPoint(page, x, y)
   return { x, y }
+}
+
+// v12.17(P1): 选择器候选序列——首个候选超时/未命中时按序退化重试。
+// `text=X >> visible=true` 在无可见同名节点时会落空，退回裸 `text=X` 至少保留
+// 原有行为；瞬时 loading 遮罩造成的 actionability 失败也靠末尾的重试吸收。
+// v12.20(修复 v12.19 回归): 移除 "text=X*" 通配候选。
+// 实测（容器内 playwright chromium，模拟 Vant van-cell + badge 结构）：
+//   `text=X >> visible=true` 命中 1、点击 ~60ms OK；
+//   `text=X`           命中 1、点击 ~45ms OK；
+//   `text=X*`          无论 count() 为 0 还是命中隐藏同名节点，page.click 都会
+//                     卡满整个 timeout（5000ms，非 no-element 快速失败）——通配
+//                     正则选择器触发 Playwright 内部元素等待的重试循环。在
+//                     clickWithFallback 2 轮 × N 候选下成倍放大，叠加 markSelector
+//                     与 MCP 客户端串行开销顶到 60s 请求超时（实测 TC-1102 step11）。
+// 带 badge 文本（"我的收藏 2"）实际由 `text=我的收藏` 的子串匹配命中 cell 父级，
+// 无需通配符；故通配候选纯属负优化，直接移除。
+function selectorCandidates(selector) {
+  const list = [selector]
+  const stripped = String(selector || '').replace(/\s*>>\s*visible=true\s*/g, '').trim()
+  if (stripped && stripped !== selector) list.push(stripped)
+  return list
+}
+
+// v12.18(P0): 单次尝试超时 10s→6s——clickWithFallback 最坏路径（2 轮×2 候选）从 ~40s
+// 收敛到 ~24s，避免并发执行时顶到 MCP 客户端 60s 请求超时（实测 54 次 tools/call 60s 超时）
+async function clickWithFallback(page, selector, timeout = 6000) {
+  const candidates = selectorCandidates(selector)
+  let lastErr = null
+  for (let round = 0; round < 2; round++) {
+    for (const sel of candidates) {
+      try {
+        await page.click(sel, { timeout })
+        return sel
+      } catch (e) {
+        lastErr = e
+      }
+    }
+    if (round === 0) await page.waitForTimeout(600) // 等瞬时遮罩/动画散去
+  }
+  throw lastErr || new Error(`click failed: ${selector}`)
+}
+
+async function fillWithFallback(page, selector, value, timeout = 6000) {
+  const candidates = selectorCandidates(selector)
+  let lastErr = null
+  for (let round = 0; round < 2; round++) {
+    for (const sel of candidates) {
+      try {
+        await page.fill(sel, value, { timeout })
+        return sel
+      } catch (e) {
+        lastErr = e
+      }
+    }
+    if (round === 0) await page.waitForTimeout(600)
+  }
+  throw lastErr || new Error(`fill failed: ${selector}`)
 }
 
 // v7.11(E12): 所有工具共用的可选 session_id 参数描述
@@ -341,7 +400,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { page } = getSession(sid);
         const pos = await markSelector(page, args.selector)
         await page.waitForTimeout(500)
-        await page.click(args.selector, { timeout: 10000 });
+        // v12.17(P1): 走候选回退（visible=true 落空时退回裸选择器 + 一次重试）
+        // v12.18(P0): 10s→6s，最坏路径 ~26s，避免并发下顶到客户端 60s 超时
+        await clickWithFallback(page, args.selector, 6000);
         await page.waitForTimeout(1000);
         const clicked = pos || { x: 0, y: 0 };
         return { content: [{ type: 'text', text: JSON.stringify({ clicked: args.selector, x: clicked.x, y: clicked.y }) }] };
@@ -351,7 +412,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { page } = getSession(sid);
         const fillPos = await markSelector(page, args.selector)
         await page.waitForTimeout(500)
-        await page.fill(args.selector, args.value);
+        // v12.17(P1): 同 dom_click，输入也走候选回退
+        // v12.18(P0): 10s→6s，与点击同口径收敛
+        await fillWithFallback(page, args.selector, args.value, 6000);
         await page.waitForTimeout(600);
         const filled = fillPos || { x: 0, y: 0 };
         return { content: [{ type: 'text', text: JSON.stringify({ filled: args.selector, x: filled.x, y: filled.y }) }] };

@@ -474,4 +474,41 @@ class ExecutionAssertTest {
                 "页面显示暂无足迹的空状态组件",
                 page("http://host/#/footprint", "litemall 商城", "浏览足迹")));
     }
+
+    // ==================== v13.3(②): 泛化子句"页面内容为…列表"回归 ====================
+
+    @Test
+    void vagueContentClauseDroppedWhenQuotedAnchorHits() {
+        // 实测伪失败 14a8f8e2：跳转成功(url=#/footprint、正文以"浏览足迹"开头)，
+        // 但第二子句"页面内容为足迹列表"是元描述非字面文本，3-gram 必然落空 → 旧逻辑 failed。
+        // v13.3: ASSERT_CLAUSE_VAGUE 补"内容为"后该子句剔除，引号锚点命中即 passed
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面标题为'浏览足迹'，且页面内容为足迹列表",
+                page("http://172.31.160.1:6255/#/footprint", "litemall 商城",
+                        "浏览足迹\n共 6 条足迹\n全选\n删除选中\n轻奢纯棉刺绣水洗四件套\n￥899")));
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面标题为'我的收藏'，且页面内容为收藏列表",
+                page("http://172.31.160.1:6255/#/collect", "litemall 商城",
+                        "我的收藏\n共 1 件收藏\n蔓越莓曲奇 200克\n删除")));
+    }
+
+    @Test
+    void quotedAnchorMissStillFailsDespiteVagueClause() {
+        // 回归保护：泛化子句剔除不放过真正未满足的引号锚点——
+        // 期望 toast 文案"已取消收藏"但页面文本没有（toast 竞态由 ① 快照通道解决，不在此处放水）
+        assertEquals("failed", ExecutionAssert.assertExpected(
+                "页面显示'已取消收藏'提示，列表不再包含该商品",
+                page("http://host/#/collect", "litemall 商城",
+                        "我的收藏\n共 1 件收藏\n蔓越莓曲奇 200克")));
+    }
+
+    @Test
+    void toastTextFromActionSnapshotPasses() {
+        // ①快照通道的断言侧等价验证：toast 文案出现在并入的文本里即命中
+        // （实际合并在 ExecutionAgent.executeStateAssert 内完成，此处验证 ExecutionAssert 消费端语义）
+        assertEquals("passed", ExecutionAssert.assertExpected(
+                "页面显示'请先选择'提示",
+                page("http://host/#/footprint", "litemall 商城",
+                        "浏览足迹\n共 6 条足迹\n全选\n删除选中\n请先选择")));
+    }
 }

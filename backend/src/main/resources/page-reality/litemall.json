@@ -1,0 +1,121 @@
+{
+  "_meta": {
+    "version": "v12.23-page-reality-2026-09-03",
+    "source": "被测站点真实前端源码实测采集(Vite dev /src 直接抓取)，非推断",
+    "sampleBase": "http://172.31.160.1:6255/ (litemall H5, iPhone视口)",
+    "purpose": "供 TestGeneratorAgent 生成用例时作为『真实页面事实』注入。引号文案锚点/统计项/页面入口一律以此为准，禁止虚构清单外的概念。"
+  },
+  "site": {
+    "appId": "litemall-h5",
+    "name": "litemall 商城 H5",
+    "authAccount": { "username": "user123", "password": "user123", "pageHint": "登录页明文显示『测试账号：user123 / user123』" }
+  },
+  "routes": {
+    "/": { "name": "Home", "title": "首页", "isTab": true },
+    "/catalog": { "name": "Catalog", "title": "分类", "isTab": true },
+    "/goods/list": { "name": "GoodsList", "title": "商品列表" },
+    "/goods/:id": { "name": "GoodsDetail", "title": "商品详情" },
+    "/cart": { "name": "Cart", "title": "购物车", "isTab": true },
+    "/checkout": { "name": "Checkout", "title": "订单结算" },
+    "/order": { "name": "OrderList", "title": "我的订单" },
+    "/order/:id": { "name": "OrderDetail", "title": "订单详情" },
+    "/user": { "name": "User", "title": "我的", "isTab": true },
+    "/collect": { "name": "MyCollect", "title": "我的收藏" },
+    "/footprint": { "name": "MyFootprint", "title": "浏览足迹" },
+    "/login": { "name": "Login", "title": "登录" },
+    "/register": { "name": "Register", "title": "注册" },
+    "/address": { "name": "AddressList", "title": "收货地址" },
+    "/address/edit": { "name": "AddressEdit", "title": "编辑地址" }
+  },
+  "pages": [
+    {
+      "route": "/user",
+      "title": "我的(会员中心)",
+      "visibleTexts": ["点击登录", "欢迎回来", "待付款", "待发货", "待收货", "待评价", "我的订单", "收货地址", "我的收藏", "浏览足迹", "我的优惠券", "退出登录"],
+      "navEntries": [
+        { "text": "我的收藏", "navigatesTo": "/collect" },
+        { "text": "浏览足迹", "navigatesTo": "/footprint" },
+        { "text": "我的订单", "navigatesTo": "/order" },
+        { "text": "收货地址", "navigatesTo": "/address" }
+      ],
+      "orderStats": ["待付款", "待发货", "待收货", "待评价"],
+      "counterFields": { "collectGoodsCount": "我的收藏入口角标", "footprintCount": "浏览足迹入口角标" },
+      "forbiddenConcepts": ["专题收藏", "我的足迹", "个人中心统计面板", "订单统计面板"],
+      "memberCenterApi": "GET /user/member-center (返回 collectGoodsCount/footprintCount 等)",
+      "uiSelectorHints": [
+        { "purpose": "订单状态 tab(未跳转, 元素存在)", "uiSelector": { "type": "text", "value": "我的订单" } },
+        { "purpose": "我的收藏入口(跳 /collect)", "uiSelector": { "type": "text", "value": "我的收藏" } },
+        { "purpose": "浏览足迹入口(跳 /footprint)", "uiSelector": { "type": "text", "value": "浏览足迹" } },
+        { "purpose": "收货地址入口(跳 /address)", "uiSelector": { "type": "text", "value": "收货地址" } }
+      ]
+    },
+    {
+      "route": "/collect",
+      "title": "我的收藏",
+      "visibleTexts": ["我的收藏", "共", "件收藏", "暂无收藏"],
+      "emptyText": "暂无收藏",
+      "countTemplate": "共 N 件收藏",
+      "countApi": "GET /collect/count?type=0",
+      "listApi": "GET /collect/list",
+      "itemAction": { "click": "进入商品详情 /goods/{valueId}", "singleDelete": "toast『已取消收藏』" },
+      "toasts": ["已取消收藏"],
+      "uiSelectorHints": [
+        { "purpose": "单条删除按钮(每条收藏右侧)", "uiSelector": { "type": "text", "value": "删除" } }
+      ],
+      "apis": { "list": "GET /collect/list", "count": "GET /collect/count?type=0", "iscollect": "GET /collect/iscollect", "addordelete": "POST /collect/addordelete", "delete": "POST /collect/delete" }
+    },
+    {
+      "route": "/footprint",
+      "title": "浏览足迹",
+      "visibleTexts": ["浏览足迹", "共", "条足迹", "暂无足迹", "全选", "删除选中"],
+      "emptyText": "暂无足迹",
+      "countTemplate": "共 N 条足迹",
+      "countApi": "GET /footprint/count",
+      "listApi": "GET /footprint/list",
+      "itemAction": { "click": "进入商品详情 /goods/{goodsId}", "singleDelete": "toast『已删除』" },
+      "batchDelete": { "needSelectFirst": true, "selectAllText": "全选", "deleteSelectedText": "删除选中", "noSelectToast": "请先选择", "successToast": "已删除" },
+      "toasts": ["请先选择", "已删除"],
+      "uiSelectorHints": [
+        { "purpose": "全选复选框(工具栏)", "uiSelector": { "type": "text", "value": "全选" } },
+        { "purpose": "批量删除选中按钮(工具栏)", "uiSelector": { "type": "text", "value": "删除选中" } }
+      ],
+      "apis": { "list": "GET /footprint/list", "count": "GET /footprint/count", "delete": "POST /footprint/delete", "deleteBatch": "POST /footprint/deleteBatch" }
+    },
+    {
+      "route": "/goods/:id",
+      "title": "商品详情",
+      "visibleTexts": ["收藏", "已收藏", "购物车", "客服", "加入购物车", "立即购买", "规格", "库存", "数量"],
+      "collectButton": { "toggle": true, "collectedText": "已收藏", "uncollectedText": "收藏", "toggleToastCollected": "已收藏", "toggleToastUncollected": "已取消收藏" },
+      "actionBar": ["收藏(切换)", "客服(toast『客服暂未开通』)", "购物车", "加入购物车", "立即购买"],
+      "detailApis": ["GET /collect/iscollect", "POST /collect/addordelete"],
+      "uiSelectorHints": [
+        { "purpose": "收藏按钮(底部操作栏, 未收藏态)", "uiSelector": { "type": "text", "value": "收藏" } },
+        { "purpose": "已收藏按钮(底部操作栏, 已收藏态, 点击取消收藏)", "uiSelector": { "type": "text", "value": "已收藏" } },
+        { "purpose": "加入购物车按钮", "uiSelector": { "type": "text", "value": "加入购物车" } },
+        { "purpose": "立即购买按钮", "uiSelector": { "type": "text", "value": "立即购买" } }
+      ],
+      "important": "收藏/取消收藏是同一个按钮文案在『收藏』↔『已收藏』间切换并弹出对应toast，不存在独立的『取消收藏』按钮。要『取消收藏』：先进商品详情，当前为『已收藏』态直接点击即可。"
+    },
+    {
+      "route": "/login",
+      "title": "登录",
+      "visibleTexts": ["欢迎来到商城", "账号", "请输入账号", "密码", "请输入密码", "登录", "测试账号：user123 / user123"],
+      "fields": { "usernamePlaceholder": "请输入账号", "passwordPlaceholder": "请输入密码" },
+      "testAccountHint": "页面明文显示测试账号 user123 / user123",
+      "loginApi": "POST (authApi.login)",
+      "successToast": "登录成功",
+      "postLoginNavigate": "/user",
+      "uiSelectorHints": [
+        { "purpose": "登录按钮(提交)", "uiSelector": { "type": "text", "value": "登录" } },
+        { "purpose": "账号输入框", "uiSelector": { "type": "css", "value": "input[name=username],input[placeholder='请输入账号']" } },
+        { "purpose": "密码输入框", "uiSelector": { "type": "css", "value": "input[name=password],input[placeholder='请输入密码']" } }
+      ]
+    }
+  ],
+  "genericRules": [
+    "菜单项『我的收藏』导航到 /collect 页面，页面标题与文案均为『我的收藏』；不存在『专题收藏』入口或统计。",
+    "菜单项『浏览足迹』导航到 /footprint 页面，页面文案为『浏览足迹』；不存在『我的足迹』。",
+    "收藏/足迹等列表页数据为空时页面显示空态文案(『暂无收藏』/『暂无足迹』)，有数据时顶部显示『共 N 件收藏』/『共 N 条足迹』。",
+    "页面标题来自路由 meta.title(如 /collect 标题为『我的收藏』)，断言页签可用该标题。"
+  ]
+}

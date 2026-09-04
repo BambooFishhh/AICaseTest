@@ -71,6 +71,11 @@ spring:
 llm:
   provider: ${LLM_PROVIDER:bailian}
   model: ${LLM_MODEL:mimo-v2.5}
+  # v12.21(A): 文本生成专用模型——纯文本任务(用例生成/评审/状态机)优先用它；
+  # 空则回退 llm.model。视觉多模态走 MCP(llm.model) 不受影响，可分别配：
+  #   LLM_MODEL=mimo-v2.5        （多模态，支持图像，视觉定位用）
+  #   LLM_TEXT_MODEL=mimo-v2.5-pro（纯文本 JSON 纪律更强，长上下文用例生成用）
+  text-model: ${LLM_TEXT_MODEL:}
   embedding-model: ${LLM_EMBEDDING_MODEL:text-embedding-v4}
   enable-thinking: ${LLM_ENABLE_THINKING:false}
   # v7.10(L3): thinking 为咨询性配置——Spring AI OpenAI starter 无法透传 enable_thinking，

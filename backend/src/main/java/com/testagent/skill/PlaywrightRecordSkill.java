@@ -177,7 +177,66 @@ public class PlaywrightRecordSkill {
      * @param selectorValue  选择器值
      */
     public int[] domClick(String sessionId, String selectorType, String selectorValue) {
-        String cssSelector = buildCssSelector(selectorType, selectorValue);
+        // v12.31(B2): text= 选择器加强重试——vant 的 checkbox/勾选框/select-all（如"全选/删除选中"）
+        // 其可见文本常挂在 label/自定义组件内，严格的 `text=V >> visible=true` 偶发命中失败
+        // （actionability 判定过严 / 文本被拆分）。一旦失败，旧逻辑立即升级视觉坐标→多模态对
+        // checkbox 定位不可靠（实测把"全选"误定位到足迹卡片缩略图坐标 62,150 → 误跳商品页，
+        // 实测 TC-1202）。此处改为按候选定位器序列重试：先严格 text，再逐步放宽/换用 label
+        // 文本 / :has-text 形式，尽量在 DOM 层命中可点元素，避免过早落到不可靠的视觉坐标。
+        List<String> candidates = textClickCandidates(selectorType, selectorValue);
+        if (candidates.size() == 1) {
+            // 非 text 选择器：保持原单次逻辑（异常根因带出不变）
+            String cssSelector = buildCssSelector(selectorType, selectorValue);
+            return domClickOnce(sessionId, selectorType, selectorValue, cssSelector);
+        }
+        RuntimeException last = null;
+        for (String css : candidates) {
+            try {
+                int[] pos = domClickOnce(sessionId, selectorType, selectorValue, css);
+                log.info("DOM text 点击命中: {}={} → selector={}, position={}",
+                        selectorType, selectorValue, css,
+                        pos == null ? "unknown" : pos[0] + "," + pos[1]);
+                return pos;
+            } catch (RuntimeException e) {
+                last = e;
+                log.info("DOM text 候选定位器未命中 {}={} → selector={}, 继续尝试下一候选",
+                        selectorType, selectorValue, css);
+            }
+        }
+        log.error("DOM text 点击全部候选失败: {}={}, last={}", selectorType, selectorValue,
+                last == null ? "无" : last.getMessage());
+        throw last != null ? last
+                : new RuntimeException("DOM text 点击失败: " + selectorType + "=" + selectorValue);
+    }
+
+    /**
+     * v12.31(B2): 生成 text= 候选定位器序列。
+     *  - 非 text 类型：单候选（保持原行为）；
+     *  - text 类型：严格可见 → 放宽（去 visible 过滤，处理 actionability 误判）→
+     *    label 祖先包含文本（vant checkbox 常见 label 包 text）→ 文本任意匹配 :has-text。
+     *    返回 1 个以上候选时表示走加强重试路径。
+     */
+    private List<String> textClickCandidates(String selectorType, String selectorValue) {
+        List<String> out = new ArrayList<>();
+        if (!"text".equals(selectorType)) {
+            out.add(buildCssSelector(selectorType, selectorValue));
+            return out;
+        }
+        String v = selectorValue;
+        // ① 原严格形态
+        out.add("text=" + v + " >> visible=true");
+        // ② 放宽：去 visible 过滤——label 文本可见但 actionability 判定误报时兜底
+        out.add("text=" + v);
+        // ③ vant/自定义 checkbox：文本在 label 内，点 label 祖先（避免直接命中 icon 无事件）
+        out.add("label:has-text('" + v + "')");
+        // ④ 通用 :has-text 任意节点
+        out.add(":has-text('" + v + "')");
+        return out;
+    }
+
+    /** 单次 browser_dom_click 调用；失败抛 RuntimeException（根因带出）。 */
+    private int[] domClickOnce(String sessionId, String selectorType, String selectorValue,
+                               String cssSelector) {
         try {
             String response = mcpClientManager.callTool("playwright", "browser_dom_click",
                     Map.of("session_id", sessionId, "selector", cssSelector));
@@ -186,10 +245,11 @@ public class PlaywrightRecordSkill {
                     position == null ? "unknown" : position[0] + "," + position[1]);
             return position;
         } catch (Exception e) {
-            log.error("DOM 点击失败: {}={}, error={}", selectorType, selectorValue, e.getMessage());
+            log.error("DOM 点击失败: {}={} selector={}, error={}", selectorType, selectorValue,
+                    cssSelector, e.getMessage());
             // v9.4: 根因带出（选择器未命中/超时/MCP 异常），不再只有一句"DOM 点击失败"让排查全靠猜
             throw new RuntimeException("DOM 点击失败: " + selectorType + "=" + selectorValue
-                    + "（" + e.getMessage() + "）", e);
+                    + " selector=" + cssSelector + "（" + e.getMessage() + "）", e);
         }
     }
 
@@ -404,7 +464,13 @@ public class PlaywrightRecordSkill {
             case "text":
                 // v12.16-A: Playwright text 引擎——按钮/链接可见文本的确定性定位
                 // （子串匹配、大小写不敏感；分析器提取的 button/a 可见文本经此透传）
-                return "text=" + selectorValue;
+                //
+                // v12.17(P1): 追加 `>> visible=true` 过滤。
+                // 裸 `text=X` 会命中页面上所有包含该文本的节点，tabbar 未激活项、折叠菜单、
+                // 隐藏面板等同名节点常被优先命中；page.click 随后卡在 actionability 等待
+                // （visible/stable/enabled/receives events）直到 10s 超时，表现为
+                // "元素未渲染或不可点击"的误判。显式限定可见元素后可直接跳到真实可点元素。
+                return "text=" + selectorValue + " >> visible=true";
             case "name":
                 return "[name='" + selectorValue + "']";
             default:

@@ -32,6 +32,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.regex.Pattern;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 
@@ -67,6 +68,10 @@ public class ExecutionService {
     private EvidenceSkill evidenceSkill;
     @Autowired
     private ExecutionAgent executionAgent;
+
+    // v9.14: programmatic 模式无选择器步骤的视觉定位降级（对齐 Agent 模式修复）
+    @Autowired
+    private com.testagent.service.McpBridgeService mcpBridgeService;
 
     @Autowired
     private ProjectAccessService projectAccessService;
@@ -582,6 +587,8 @@ public class ExecutionService {
                 try { playwrightSkill.closeSession(sessionId); } catch (Exception e) { log.warn("Failed to close session", e); }
                 runtimeStore.removeSession(executionId);
             }
+            // v13.3(①): 清理点击即时快照，防跨执行残留造成后续用例误匹配
+            executionAgent.clearActionSnapshot(executionId);
             projectExecutionLimiter.release(testCase.getProjectId(), executionId);
             taskQueueService.markDone(TaskQueueService.EXECUTION_QUEUE, executionId);
         }
@@ -608,8 +615,13 @@ public class ExecutionService {
                 summary = String.format("通过 %d, 失败 %d, 跳过 %d（%s）",
                         passed, failed, skipped, errorMessage);
             } else {
-                status = determineStatus(passed, failed, skipped);
+                // v13.3(④): 伪通过治理——用例标题含验证语义，但断言类步骤没有任何 passed
+                // （全 skipped 或根本没有断言步骤）时，标题承诺的验证从未实际发生，
+                // 整体最多记 skipped，不挂 passed 徽章
+                boolean verificationGap = isVerificationGap(testCase.getTitle(), steps);
+                status = determineStatus(passed, failed, skipped, verificationGap);
                 summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped)
+                        + (verificationGap ? "（验证类步骤未实际通过，已降级为 skipped）" : "")
                         + (errorMessage != null ? "（" + errorMessage + "）" : "");
             }
         }
@@ -800,6 +812,20 @@ public class ExecutionService {
                                 JsonNode selectorNode = node.path("uiSelector");
                                 if ("route".equals(selectorNode.path("type").asText(""))) {
                                     // v9.2: route 选择器 = 页面导航（hash 路由应用先 history 形式未命中自动尝试 hash 形式）
+                                    String routeValue = selectorNode.path("value").asText("");
+                                    // v12.19(P0): 拒绝含 vue-router 占位符或中文描述性占位符的路由——这些
+                                    // 来自生成阶段的参数化模板（data.goodsId 未注入），原 navigateToRoute 用
+                                    // contains 判定会误判为命中、随后商品详情页加载失败成 "参数值不对" toast，
+                                    // 后续视觉定位在空白页找不到任何元素 → 整个用例级联失败。直接标 failed
+                                    // 并给出可执行的修复指引，让用例生成器/用户立刻看到问题。
+                                    if (isRouteWithPlaceholder(routeValue)) {
+                                        stepBuilder.strategy("navigate")
+                                                .result("failed")
+                                                .error("路由含未替换占位符: " + routeValue
+                                                        + "（用例生成阶段未注入真实参数，如 data.goodsId）");
+                                        failed++;
+                                        break;
+                                    }
                                     if (targetUrl == null || targetUrl.isBlank()) {
                                         stepBuilder.strategy("skipped")
                                                 .result("skipped")
@@ -807,8 +833,7 @@ public class ExecutionService {
                                         skipped++;
                                         break;
                                     }
-                                    String hitUrl = navigateToRoute(sessionId, targetUrl,
-                                            selectorNode.path("value").asText(""));
+                                    String hitUrl = navigateToRoute(sessionId, targetUrl, routeValue);
                                     if (hitUrl != null) {
                                         stepBuilder.strategy("navigate")
                                                 .result("passed")
@@ -826,16 +851,47 @@ public class ExecutionService {
                                 if (selectorNode.has("type") && selectorNode.has("value")) {
                                     String selType = selectorNode.path("type").asText();
                                     String selValue = selectorNode.path("value").asText();
-                                    int[] clickPos = playwrightSkill.domClick(sessionId, selType, selValue);
-                                    if (clickPos != null) {
-                                        stepClickX = clickPos[0];
-                                        stepClickY = clickPos[1];
+                                    try {
+                                        int[] clickPos = playwrightSkill.domClick(sessionId, selType, selValue);
+                                        if (clickPos != null) {
+                                            stepClickX = clickPos[0];
+                                            stepClickY = clickPos[1];
+                                        }
+                                        stepBuilder.strategy("dom");
+                                        stepBuilder.result("passed");
+                                        passed++;
+                                    } catch (Exception domEx) {
+                                        // v9.15: DOM 点击失败且 target 为路由形态 → 降级导航兜底。
+                                        // 实测：用例"进入【我的收藏】页面" target=/collect 带 uiSelector
+                                        // text=我的收藏，但当前页面在首页（元素不存在），点击必然超时；
+                                        // litemall 真实路由 /collect /footprint 均可直达，导航是确定性操作，
+                                        // 与 Agent 模式 isNavigationStep 优先判定同语义
+                                        boolean navigated = false;
+                                        if (target != null && target.trim().matches("^/(?:[\\w:{}$-].*)?")
+                                                && !isRouteWithPlaceholder(target.trim())
+                                                && targetUrl != null && !targetUrl.isBlank()) {
+                                            String hitUrl = navigateToRoute(sessionId, targetUrl, target.trim());
+                                            navigated = true;
+                                            if (hitUrl != null) {
+                                                stepBuilder.strategy("navigate-fallback")
+                                                        .result("passed")
+                                                        .coordinates("url=" + hitUrl)
+                                                        .error("DOM 点击失败后降级导航成功（" + selValue + " → " + hitUrl + "）");
+                                                passed++;
+                                            } else {
+                                                stepBuilder.strategy("navigate-fallback")
+                                                        .result("failed")
+                                                        .error("DOM 点击失败（" + domEx.getMessage() + "）且导航未命中路由: " + target.trim());
+                                                failed++;
+                                            }
+                                        }
+                                        if (!navigated) {
+                                            throw domEx;
+                                        }
                                     }
-                                    stepBuilder.strategy("dom");
-                                    stepBuilder.result("passed");
-                                    passed++;
                                 } else if (target != null
                                         && target.trim().matches("^/(?:[\\w:{}$-].*)?")
+                                        && !isRouteWithPlaceholder(target.trim())
                                         && targetUrl != null && !targetUrl.isBlank()) {
                                     // v9.2: 无 uiSelector 但 target 为路由形态的 ui_action（导航首步）——
                                     // 导航是确定性操作，按导航兜底执行，与 Agent 模式路径形态判定同语义
@@ -851,10 +907,62 @@ public class ExecutionService {
                                                 .error("导航后 URL 未命中目标路由: " + target.trim());
                                         failed++;
                                     }
+                                } else if (target != null && !target.isBlank()
+                                        && !target.trim().matches("^/(?:[\\w:{}$-].*)?")   // 路由形态缺 targetUrl 仍走下方 skip（环境问题）
+                                        && !target.trim().matches("(?i)^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\\s+/\\S+$")) {
+                                    // v9.14: 无 uiSelector 的 ui_action 不再直接 skip——对齐 Agent 模式
+                                    // v9.10 修复：以 action+target 为元素描述走多模态视觉定位，命中则按坐标点击。
+                                    // 接口引用形态（"POST /wx/..."）仍如实 skip（生成数据缺陷）
+                                    // v12.19(P1): 视觉降级前预检描述有效性——target 含占位符（"商品A/B/C的XX"、
+                                    // "的ID"）会让视觉模型处理垃圾描述，徒增耗时且必失败。直接 failed 并指明
+                                    // 需要为该步骤补 uiSelector（CSS/text 形态），让用例生成器/用户知道下一步动作。
+                                    String elementDesc = (action == null || action.isBlank() ? "" : action + "：") + target.trim();
+                                    if (containsPlaceholder(target) || containsPlaceholder(action)) {
+                                        stepBuilder.strategy("visual")
+                                                .result("failed")
+                                                .error("target/action 含未替换占位符（" + elementDesc
+                                                        + "），无法视觉定位；请在用例生成阶段注入真实描述，"
+                                                        + "或为该步骤补 uiSelector (css/text)");
+                                        failed++;
+                                        break;
+                                    }
+                                    boolean visualOk = false;
+                                    String visualErr = null;
+                                    // 首屏未命中时向下滚动一次重试（对齐 Agent 模式的滚动重试思路，收敛为两轮）
+                                    for (int attempt = 0; attempt < 2 && !visualOk; attempt++) {
+                                        if (attempt > 0) {
+                                            try {
+                                                playwrightSkill.scroll(sessionId, "down", 600);
+                                            } catch (Exception ignore) {
+                                                // 滚动失败不影响定位重试
+                                            }
+                                        }
+                                        String shot = playwrightSkill.takeScreenshot(sessionId);
+                                        com.testagent.dto.LocateResult lr =
+                                                mcpBridgeService.multimodalElementLocate(shot, elementDesc);
+                                        if (lr != null && lr.isFound()) {
+                                            playwrightSkill.visualClick(sessionId, lr.getClickX(), lr.getClickY());
+                                            stepBuilder.strategy("visual")
+                                                    .result("passed")
+                                                    .coordinates("x=" + lr.getClickX() + ",y=" + lr.getClickY()
+                                                            + ", conf=" + String.format("%.2f", lr.getConfidence()));
+                                            passed++;
+                                            visualOk = true;
+                                        } else {
+                                            visualErr = lr == null ? "视觉定位无返回" : lr.getError();
+                                        }
+                                    }
+                                    if (!visualOk) {
+                                        stepBuilder.strategy("visual")
+                                                .result("failed")
+                                                .error("视觉定位未命中元素（" + elementDesc + "）: "
+                                                        + (visualErr == null ? "未知原因" : visualErr));
+                                        failed++;
+                                    }
                                 } else {
                                     stepBuilder.strategy("skipped")
                                             .result("skipped")
-                                            .error("无 DOM 选择器，Agent 模式支持多模态定位");
+                                            .error("无 uiSelector 且 target 为路由/接口形态、缺目标 URL，无法执行");
                                     skipped++;
                                 }
                                 break;
@@ -997,8 +1105,13 @@ public class ExecutionService {
                 summary = String.format("通过 %d, 失败 %d, 跳过 %d（%s）",
                         passed, failed, skipped, errorMessage);
             } else {
-                status = determineStatus(passed, failed, skipped);
+                // v13.3(④): 伪通过治理——用例标题含验证语义，但断言类步骤没有任何 passed
+                // （全 skipped 或根本没有断言步骤）时，标题承诺的验证从未实际发生，
+                // 整体最多记 skipped，不挂 passed 徽章
+                boolean verificationGap = isVerificationGap(testCase.getTitle(), steps);
+                status = determineStatus(passed, failed, skipped, verificationGap);
                 summary = String.format("通过 %d, 失败 %d, 跳过 %d", passed, failed, skipped)
+                        + (verificationGap ? "（验证类步骤未实际通过，已降级为 skipped）" : "")
                         + (errorMessage != null ? "（" + errorMessage + "）" : "");
             }
         }
@@ -1082,9 +1195,49 @@ public class ExecutionService {
      * 注意：errorMessage 已在调用方折算为 failed（v7.0 E3），此处只看三个计数。
      */
     static String determineStatus(int passed, int failed, int skipped) {
+        return determineStatus(passed, failed, skipped, false);
+    }
+
+    /**
+     * v13.3(④): 带"验证缺口"的终态判定。
+     * verificationGap = 用例标题含验证语义（提示/验证/确认/校验/检查）但断言类步骤零 passed
+     * （全 skipped 或缺失）——标题承诺的验证从未实际发生，整体降级为 skipped，不再伪通过。
+     */
+    static String determineStatus(int passed, int failed, int skipped, boolean verificationGap) {
         if (failed > 0) return "failed";
+        if (verificationGap) return "skipped";
         if (passed == 0 && skipped > 0) return "skipped";
         return "passed";
+    }
+
+    /** v13.3(④): 验证语义标题触发词 */
+    private static final Pattern VERIFICATION_TITLE = Pattern.compile("提示|验证|确认|校验|检查");
+
+    /**
+     * v13.3(④): 验证缺口判定——标题承诺验证，但 strategy 含 assert 的步骤零 passed。
+     * 实证锚点：361af6dd"未选中时点击删除提示错误"8 步 skipped + 末步点击 passed
+     * 即挂 passed 徽章，而提示验证从未发生。
+     */
+    static boolean isVerificationGap(String title, List<ExecutionStep> steps) {
+        if (title == null || !VERIFICATION_TITLE.matcher(title).find()) {
+            return false;
+        }
+        if (steps == null || steps.isEmpty()) {
+            return false;
+        }
+        int assertPassed = 0, assertSkipped = 0, assertSeen = 0;
+        for (ExecutionStep s : steps) {
+            String st = s.getStrategy();
+            if (st != null && st.contains("assert")) {
+                assertSeen++;
+                if ("passed".equals(s.getResult())) {
+                    assertPassed++;
+                } else if ("skipped".equals(s.getResult())) {
+                    assertSkipped++;
+                }
+            }
+        }
+        return assertPassed == 0 && (assertSkipped > 0 || assertSeen == 0);
     }
 
     // v5.7: 执行历史分页 + 全量统计/趋势
@@ -1215,6 +1368,72 @@ public class ExecutionService {
         }
     }
 
+    // v12.26: 可用测试账号注册表（对应用户预置在 litemall_user 的隔离账号池）。
+    // username / password 用于环境 preSteps 登录替换；note 仅作人读标注。
+    private static final Map<String, String[]> ACCOUNT_REGISTRY = new LinkedHashMap<>();
+    static {
+        ACCOUNT_REGISTRY.put("user123", new String[]{"user123", "user123", "默认有数据账号"});
+        ACCOUNT_REGISTRY.put("uitest_a", new String[]{"uitest_a", "uitest123", "空账号(收藏0/足迹0)"});
+        ACCOUNT_REGISTRY.put("uitest_b", new String[]{"uitest_b", "uitest123", "空账号"});
+        ACCOUNT_REGISTRY.put("uitest_c", new String[]{"uitest_c", "uitest123", "空账号"});
+        ACCOUNT_REGISTRY.put("uitest_d", new String[]{"uitest_d", "uitest123", "空账号"});
+        ACCOUNT_REGISTRY.put("uitest_e", new String[]{"uitest_e", "uitest123", "空账号"});
+    }
+
+    /**
+     * v12.27: 解析执行环境声明的账号名到 {username, password}。
+     * 账号名来自 active 执行环境的 account 字段；不在注册表或为空返回 null（退回 preSteps 默认登录凭据）。
+     */
+    private String[] resolveEnvAccount(String account) {
+        if (account == null || account.isBlank()) {
+            return null;
+        }
+        String[] cred = ACCOUNT_REGISTRY.get(account.trim());
+        if (cred == null) {
+            log.warn("[12.27] 执行环境声明账号 {} 不在注册表，退回环境 preSteps 默认登录", account);
+            return null;
+        }
+        return new String[]{cred[0], cred[1]};
+    }
+
+    /**
+     * v12.27: 把单条环境 preSteps 克隆并替换其中的登录凭据为环境声明账号的 username/password。
+     * 命中条件：type=input 且（action 含 输入用户名/输入密码 或 uiSelector css 含 placeholder*="账号"/"密码"）。
+     * 同时更新 inputValue 与 action 里的账号/密码文本，保证日志与断言口径一致。
+     */
+    private JsonNode substituteLoginCredential(JsonNode step, String username, String password) {
+        if (step == null || !"input".equals(step.path("type").asText(""))) {
+            return step;
+        }
+        String action = step.path("action").asText("");
+        String css = step.path("uiSelector").path("value").asText("");
+        boolean isUser = action.contains("用户名") || css.contains("账号");
+        boolean isPass = action.contains("密码") || css.contains("密码");
+        if (!isUser && !isPass) {
+            return step;
+        }
+        String cred = isUser ? username : password;
+        try {
+            ObjectNode node = ((ObjectNode) step).deepCopy();
+            // inputValue → 新凭据
+            node.put("inputValue", cred);
+            // 更新 action：输入用户名：user123 → 输入用户名：uitest_a
+            String newAction = action;
+            int idx = action.indexOf('：');
+            if (idx >= 0) {
+                newAction = action.substring(0, idx + 1) + cred;
+            } else {
+                newAction = action + "：" + cred;
+            }
+            node.put("action", newAction);
+            log.info("[12.27] 环境 preSteps 登录凭据替换为 {} (isUser={})", cred, isUser);
+            return node;
+        } catch (Exception e) {
+            log.warn("[12.27] 替换登录凭据失败: {}", e.getMessage());
+            return step;
+        }
+    }
+
     private JsonNode buildStepNodes(TestCase testCase) {
         ArrayNode all = objectMapper.createArrayNode();
         boolean hasCookies = false;
@@ -1231,10 +1450,15 @@ public class ExecutionService {
                     if (envs.isArray()) {
                         for (JsonNode env : envs) {
                             if (active.equals(env.path("name").asText(""))) {
+                                // v12.27: 执行环境级账号——读 active 环境的 account 字段，
+                                // 用它替换 preSteps 里的登录凭据（而非 per-case 绑定）。
+                                // 数据隔离关键：环境 preSteps 若硬编码 user123，会 UI 登录覆盖注入的
+                                // 空账号身份，故把账号声明下沉到环境配置，跑哪套用例切哪个环境即可。
+                                String[] envCred = resolveEnvAccount(env.path("account").asText(""));
                                 JsonNode pre = env.path("preSteps");
                                 if (pre.isArray()) {
                                     for (JsonNode p : pre) {
-                                        all.add(p);
+                                        all.add(envCred != null ? substituteLoginCredential(p, envCred[0], envCred[1]) : p);
                                     }
                                 }
                                 // v12.17-A: 数据准备步骤——每条用例执行前运行，语义必须是"幂等重置式"
@@ -1456,6 +1680,49 @@ public class ExecutionService {
             routePart = slash >= 0 ? noScheme.substring(slash) : "";
         }
         return routePart.contains(key);
+    }
+
+    // v12.19(P1): 任意描述性字符串是否含未替换占位符——比 isRouteWithPlaceholder 更宽松，
+    // 用于视觉降级前的快速预检，避免给视觉模型喂垃圾描述。
+    private boolean containsPlaceholder(String s) {
+        if (s == null || s.isBlank()) {
+            return false;
+        }
+        String t = s.trim();
+        if (t.matches(".*/:[A-Za-z_][A-Za-z0-9_]*.*")) {
+            return true;
+        }
+        return t.contains("的ID") || t.contains("的id")
+                || t.contains("商品ID") || t.contains("商品id")
+                || t.contains("XXX") || t.contains("xxx")
+                || t.contains("占位符") || t.contains("placeholder")
+                // 描述性"商品A/B/C"形态的占位——如"商品A的商品信息区域"虽然不会让页面崩，
+                // 但视觉模型在列表页有 A/B/C 多个商品时无法确定是哪一个，对应"在商品C上取消收藏"
+                // 这类用例。用例生成时若把 A/B/C 转成具体商品名或顺序索引可解。
+                || t.matches(".*商品[A-Z]的.*");
+    }
+
+    // v12.19(P0): 路由是否含未替换占位符——vue-router 占位符（:id / :xxx）或中文描述性
+    // 占位符（"商品A的ID"、"商品B的ID"）。这些值来自用例生成阶段的参数化模板，
+    // 若未把真实 ID 注入到 data.* 字段，vue-router 会把字面 ":id" 作为 param 跳到
+    // 第一个商品或直接 404/参数错误，导致页面崩成"参数值不对"toast。检测到后
+    // 不调用 navigateToRoute，直接报 failed，避免后续视觉定位在空白页盲目尝试。
+    private boolean isRouteWithPlaceholder(String route) {
+        if (route == null || route.isBlank()) {
+            return false;
+        }
+        String r = route.trim();
+        // vue-router 形态：/goods/:id、/user/:userId 等——单冒号后跟字母数字下划线
+        if (r.matches(".*/:[A-Za-z_][A-Za-z0-9_]*.*")) {
+            return true;
+        }
+        // 中文描述性占位符：商品A的ID、商品B的ID、商品ID等
+        if (r.contains("的ID") || r.contains("的id") || r.contains("商品ID")
+                || r.contains("商品id") || r.contains("XXX") || r.contains("xxx")
+                || r.contains("占位符") || r.contains("placeholder")) {
+            return true;
+        }
+        return false;
     }
 
     // v4.2: 执行取消标志检查

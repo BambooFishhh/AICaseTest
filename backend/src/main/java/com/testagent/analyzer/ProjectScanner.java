@@ -2,6 +2,8 @@ package com.testagent.analyzer;
 
 import com.testagent.analyzer.result.ScanResult;
 import com.testagent.common.BusinessException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -16,8 +18,16 @@ import java.util.regex.Pattern;
 @Component
 public class ProjectScanner {
 
+    private static final Logger log = LoggerFactory.getLogger(ProjectScanner.class);
+
     private static final Pattern VUE_VERSION_PATTERN =
             Pattern.compile("\"vue\"\\s*:\\s*\"([^\"]+)\"");
+    // v13.1: 前端框架依赖信号——判定"某个 package.json 是否真属于前端工程"。
+    // 仅凭 package.json 存在就认定前端根是错的：monorepo / workspace 根目录的 package.json
+    // 通常只有 workspaces/scripts 配置、不含框架依赖，会把真正的 frontend/ 子目录挤掉，
+    // 导致后续 routes 提取落空（src/router 找不到）且无任何告警。
+    private static final Pattern FRONTEND_FRAMEWORK_PATTERN =
+            Pattern.compile("\"(vue|react|angular|svelte)\"\\s*:\\s*\"[^\"]+\"");
     private static final Pattern SPRING_BOOT_PARENT_VERSION_PATTERN =
             Pattern.compile("<artifactId>spring-boot-starter-parent</artifactId>\\s*<version>([^<]+)</version>");
     private static final Pattern SPRING_BOOT_VERSION_PROPERTY_PATTERN =
@@ -32,7 +42,18 @@ public class ProjectScanner {
         ScanContext ctx = new ScanContext();
         ctx.frontendDepth = Integer.MAX_VALUE;
         ctx.backendDepth = Integer.MAX_VALUE;
+        ctx.weakFrontendDepth = Integer.MAX_VALUE;
         walk(root, 0, ctx);
+
+        // v13.1: 无任何含框架依赖的前端根时回退最浅弱候选——
+        // 保守兼容旧行为（不至于从"能扫"退化成"扫不到"），但显式告警，避免静默失败
+        if (ctx.frontendDir == null && ctx.weakFrontendDir != null) {
+            ctx.frontendDir = ctx.weakFrontendDir;
+            ctx.frontendDepth = ctx.weakFrontendDepth;
+            log.warn("[Scan] 未找到含前端框架依赖(vue/react/angular/svelte)的 package.json，"
+                            + "回退到最浅候选: {}（若为 monorepo/workspace 根，routes 与前端技术栈可能提取不全）",
+                    ctx.weakFrontendDir);
+        }
 
         Map<String, Object> techStack = new HashMap<>();
         if (ctx.frontendDir != null) {
@@ -59,10 +80,19 @@ public class ProjectScanner {
             return;
         }
 
-        if (ctx.frontendDir == null || depth < ctx.frontendDepth) {
-            if (new File(dir, "package.json").exists()) {
-                ctx.frontendDir = dir.getAbsolutePath();
-                ctx.frontendDepth = depth;
+        // v13.1: 前端根分两级判定——含框架依赖的才算"合格前端根"，
+        // 仅有 package.json（workspace 根/工具配置根）的降级为弱候选，
+        // 让更深层真正的前端目录有机会胜出；全部无合格时回退最浅弱候选（见 scan）。
+        File packageJson = new File(dir, "package.json");
+        if (packageJson.exists()) {
+            if (hasFrontendFramework(packageJson)) {
+                if (ctx.frontendDir == null || depth < ctx.frontendDepth) {
+                    ctx.frontendDir = dir.getAbsolutePath();
+                    ctx.frontendDepth = depth;
+                }
+            } else if (ctx.weakFrontendDir == null || depth < ctx.weakFrontendDepth) {
+                ctx.weakFrontendDir = dir.getAbsolutePath();
+                ctx.weakFrontendDepth = depth;
             }
         }
         if (ctx.backendDir == null || depth < ctx.backendDepth) {
@@ -101,9 +131,10 @@ public class ProjectScanner {
             if (m.find()) {
                 String version = m.group(1);
                 techStack.put("vueVersion", version);
-                if (version.startsWith("3")) {
+                String majorPrefix = stripVersionPrefix(version);
+                if (majorPrefix.startsWith("3")) {
                     techStack.put("frontendVersion", "vue3");
-                } else if (version.startsWith("2")) {
+                } else if (majorPrefix.startsWith("2")) {
                     techStack.put("frontendVersion", "vue2");
                 }
             }
@@ -112,6 +143,9 @@ public class ProjectScanner {
                 techStack.put("uiFramework", "element-plus");
             } else if (content.contains("\"element-ui\"")) {
                 techStack.put("uiFramework", "element-ui");
+            } else if (content.contains("\"vant\"") || content.contains("\"@vant/")) {
+                // v13.5(Bug B): vant 移动端组件库此前不识别——litemall-mall(vant) 落库无 uiFramework
+                techStack.put("uiFramework", "vant");
             }
             if (content.contains("\"axios\"")) {
                 techStack.put("httpClient", "axios");
@@ -169,7 +203,11 @@ public class ProjectScanner {
             } else if (content.contains("spring-boot-starter-security")) {
                 techStack.put("security", "spring-security");
             }
-            if (content.contains("spring-boot-starter-data-jpa") || content.contains("hibernate")) {
+            // v13.1: 原 contains("hibernate") 过宽——hibernate-validator 是 Bean Validation
+            // 实现（参数校验，与 ORM 无关），会把纯 mybatis 项目误标为 jpa 持久层
+            // （litemall 实测：仅引入 hibernate-validator，却被判 persistence=jpa）。
+            // 收紧为 data-jpa starter 或 hibernate-core（真正的 ORM 内核）。
+            if (content.contains("spring-boot-starter-data-jpa") || content.contains("hibernate-core")) {
                 techStack.put("persistence", "jpa");
             }
             if (content.contains("redis") || content.contains("spring-boot-starter-data-redis")) {
@@ -183,11 +221,38 @@ public class ProjectScanner {
         }
     }
 
+    /**
+     * v13.1: package.json 是否含前端框架依赖信号（vue/react/angular/svelte）。
+     * 读取失败时返回 true——不因 IO 问题把合格前端根误降级（保守沿用最浅优先语义）。
+     */
+    private boolean hasFrontendFramework(File packageJson) {
+        try {
+            String content = Files.readString(packageJson.toPath(), StandardCharsets.UTF_8);
+            return FRONTEND_FRAMEWORK_PATTERN.matcher(content).find();
+        } catch (IOException e) {
+            return true;
+        }
+    }
+
+    /**
+     * v13.1: npm 版本号常带 "^" / "~" / ">= " 等语义化前缀（如 "^3.5.13"），
+     * 直接 startsWith("3") 恒为 false，会导致 vue2/vue3 判定永久失效、frontendVersion 静默缺失。
+     */
+    private static String stripVersionPrefix(String version) {
+        if (version == null) {
+            return "";
+        }
+        return version.replaceAll("^[\\^~><=\\s]+", "");
+    }
+
     private static class ScanContext {
         private String frontendDir;
         private String backendDir;
+        /** v13.1: 有 package.json 但无框架依赖的弱候选（workspace 根/工具配置根） */
+        private String weakFrontendDir;
         private int frontendDepth;
         private int backendDepth;
+        private int weakFrontendDepth;
         private int fileCount;
     }
 }

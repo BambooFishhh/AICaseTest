@@ -143,8 +143,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2g
-          cpus: "2.0"
+          # v12.22(P1): 4 路并发（多 playwright 子进程 + 4 并发 Chromium）需更高配额。
+          # 原 2c/2g 在 4 并发真实负载下会资源争抢顶到 60s MCP 请求超时（v9.14 曾实测 54 次）。
+          memory: 4g
+          cpus: "4.0"
     ports:
       - "8000:8000"
     environment:
@@ -153,6 +155,9 @@ services:
       - LLM_PROVIDER=${LLM_PROVIDER:-bailian}
       - LLM_API_KEY=${LLM_API_KEY:-}
       - LLM_MODEL=${LLM_MODEL:-mimo-v2.5}
+      # v12.21(A): 文本生成专用模型（默认空=回落 LLM_MODEL）。配 mimo-v2.5-pro 时
+      # 纯文本任务用它、视觉多模态仍用 LLM_MODEL(mimo-v2.5)。见 application.yml 注释。
+      - LLM_TEXT_MODEL=${LLM_TEXT_MODEL:-}
       - EXECUTOR_LLM_CONCURRENCY=${EXECUTOR_LLM_CONCURRENCY:-4}
       - LLM_BASE_URL=${LLM_BASE_URL:-https://opencode.ai/zen/go/v1}
       # embedding 独立端点与 key（chat 继续走 LLM_BASE_URL / LLM_API_KEY）
@@ -212,6 +217,14 @@ services:
       - LLM_CIRCUIT_OPEN_SECONDS=${LLM_CIRCUIT_OPEN_SECONDS:-30}
       # v7.9: 执行链路收敛——批量排队超时（分钟，<=0 禁用）与复制执行权限（true 要求 OPERATE）
       - EXECUTOR_PROJECT_ACQUIRE_TIMEOUT_MINUTES=${EXECUTOR_PROJECT_ACQUIRE_TIMEOUT_MINUTES:-30}
+      # v9.14: 单项目执行并发上限——曾因单 playwright 进程 + 低配额在 4 并发下出现
+      # 54 次 tools/call 60s 超时，降为 1 串行保稳定。
+      # v12.22(P1): 恢复 4 路并发——配套多 playwright 子进程池(APP_MCP_PLAYWRIGHT_POOL_SIZE=4)
+      # + 容器配额提至 4c/4g，消除单通道争抢，真并行执行。调 0/1 可退回串行。
+      - APP_EXECUTOR_PROJECT_EXECUTION_MAX=${APP_EXECUTOR_PROJECT_EXECUTION_MAX:-4}
+      # v12.22(P1): playwright 多进程连接池大小（每路执行独立子进程，消除单 stdio 通道争抢）。
+      # 需 >= 并发上限，否则多执行会挤在同一子进程。设为 1 即退回单进程旧行为。
+      - APP_MCP_PLAYWRIGHT_POOL_SIZE=${APP_MCP_PLAYWRIGHT_POOL_SIZE:-4}
       - APP_COPY_EXECUTE_REQUIRE_OPERATE=${APP_COPY_EXECUTE_REQUIRE_OPERATE:-false}
         # v8.9.7(临时): 浏览器设备模拟预设（iPhone 14）。默认空=桌面；移移动端项目时注入
       - APP_EXECUTION_BROWSER_DEVICE=${APP_EXECUTION_BROWSER_DEVICE:-iPhone 14}

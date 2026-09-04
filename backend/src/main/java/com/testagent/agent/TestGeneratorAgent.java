@@ -1,5 +1,6 @@
 package com.testagent.agent;
 
+import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -22,6 +23,7 @@ import com.testagent.service.SemanticService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
@@ -45,6 +47,23 @@ public class TestGeneratorAgent {
 
     private static final Logger log = LoggerFactory.getLogger(TestGeneratorAgent.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /**
+     * v12.21(B): 宽松 ObjectMapper——容忍 mimo-v2.5 等模型在长上下文下偶发的非标 JSON
+     * （字段名无引号 {title:"x"}、单引号、尾随逗号、注释等）。
+     * 仅作为标准解析失败后的兜底，不替换 objectMapper 主路径。
+     * 用 legacy JsonParser.Feature 逐个 enable，兼容各类 jackson 版本。
+     */
+    private final ObjectMapper lenientMapper = buildLenientMapper();
+
+    private static ObjectMapper buildLenientMapper() {
+        ObjectMapper m = new ObjectMapper();
+        m.enable(JsonParser.Feature.ALLOW_UNQUOTED_FIELD_NAMES);
+        m.enable(JsonParser.Feature.ALLOW_SINGLE_QUOTES);
+        m.enable(JsonParser.Feature.ALLOW_TRAILING_COMMA);
+        m.enable(JsonParser.Feature.ALLOW_COMMENTS);
+        return m;
+    }
 
     // v8.6.2(9.8): 出参契约校验器——字段默认 null（直 new 单测不受影响），null 时跳过校验
     private com.testagent.service.LlmSchemaValidator llmSchemaValidator;
@@ -155,6 +174,16 @@ public class TestGeneratorAgent {
     
     @Value("${app.generation.rules-context-max:150}")
     private int rulesContextMax = 150;
+
+    // v12.23: 『真实页面事实』注入——生成前把被测站实测页面结构(page-reality/{appId}.json)注入 prompt，
+    // 让引号文案锚点/统计项/页面入口一律以真实页面为准，消灭『专题收藏』这类 H5 上不存在的虚构概念断言。
+    // 支持任意被测站：每个被测站一份 {appId}.json，换站即换文件，注入逻辑不动。
+    // 被测站 URL 目前仅执行时提供，故本期按固定 appId 加载(默认 litemall)；后续 URL 若提前到生成阶段，
+    // 只需把该配置改为按项目/请求动态解析的采样源标识，注入逻辑不变。
+    @Value("${app.generation.page-reality-app:litemall}")
+    private String pageRealityApp = "litemall";
+    /** pageReality 顶层对象(Map)缓存，未启用/加载失败为 null；避免每轮生成重复读文件解析 */
+    private volatile Object pageRealityCache;
     
     // v8.4: prompt 截断阈值参数化（适配 256k 上下文）——旧值硬编码：
     // ragContexts 1200×6 / ragFailures 800×3 / 文档 3000×3 / checklist 150 / gaps 40~80
@@ -343,7 +372,11 @@ public class TestGeneratorAgent {
         }
 
         private void parseAndCallback(String objJson) throws Exception {
-            JsonNode node = objectMapper.readTree(objJson);
+            JsonNode node = parseJsonLenient(objJson);
+            if (node == null) {
+                throw new RuntimeException("对象无法解析为标准/宽松 JSON: "
+                        + (objJson != null && objJson.length() > 120 ? objJson.substring(0, 120) + "..." : objJson));
+            }
             TestCase tc = new TestCase();
             tc.setTitle(node.path("title").asText("未命名测试用例"));
             tc.setModule(node.path("module").asText("未分类"));
@@ -519,6 +552,27 @@ public class TestGeneratorAgent {
 
     private static final String SYSTEM_PROMPT_PRD_FOOTER = """
 
+            ## pageReality 真实页面事实（v12.23，若提供则必须严格遵守）
+            pageReality 是【被测系统真实运行页面】的实测清单（含真实路由 routes、每页可见文案 visibleTexts、
+            可点入口 navEntries、空态文案、统计文案模板、操作 toast、关联接口 apis），是 UI 断言的唯一事实来源，
+            优先级高于一切基于 PRD/代码的推测：
+            - 引号引用的页面文案必须来自 pageReality.pages[].visibleTexts / emptyText / toasts / 导航文案，
+              禁止虚构清单外的任何统计项/入口/页签（如清单无『专题收藏』则不得断言『专题收藏』相关文案或数值）
+            - 数量类断言引用 pageReality 的 countTemplate（如『共 N 件收藏』），用占位符 N 写，禁止写死具体数，
+              也不得为清单外的『统计项数值』(如某面板只显示入口无统计值时不得断言其数字)
+            - 页面入口/跳转断言目标只从 pageReality.navEntries 与 routes 取（如『我的收藏』→/collect、『浏览足迹』→/footprint）
+            - 若 pageReality.pages[].forbiddenConcepts 存在，其中概念一律不得作为断言对象或覆盖目标
+            - 按钮/操作语义以 pageReality 的按钮说明为准（如商品详情『收藏』是同一按钮在
+              『收藏』↔『已收藏』间切换并弹对应 toast，不存在独立『取消收藏』按钮——
+              取消收藏=进入已收藏商品详情点击当前『已收藏』按钮）
+            - 前置准备可用 preSteps 注入登录态；涉及收藏/足迹等需真实数据的操作，按 pageReality 的 apis 关联理解
+            - v12.24: uiSelectorHints 是页面页面真实存在的可点元素清单（按钮/入口/输入框）——
+              生成 ui_action 步骤时**必须优先使用 uiSelectorHints 的 type+value**（如
+              {type:"text", value:"已收藏"} / {type:"text", value:"删除选中"} / {type:"text", value:"登录"}），
+              不要回到视觉坐标定位（视觉模型对底部小图标等场景坐标漂移导致点击不到真实按钮）；
+              uiSelectorHints 未列出该元素时才允许省略 uiSelector 字段让前端分析结果兜底
+            - pageReality 未提供对应页面时不强求，仍以需求语义生成但不虚构该页文案锚点
+
             ## ragContexts / ragFailures（v6.4 补充）
             - ragContexts：检索到的相关需求/上下文切片，作为 PRD 之外的补充约束
             - ragFailures：历史执行失败经验；生成时避免重复失败路径，必要时增加对应校验与断言
@@ -579,10 +633,14 @@ public class TestGeneratorAgent {
             - v7.15(A): ui_action 的 target 必须是页面元素/区域的人话描述（如"登录按钮"、"商品卡片"），
               严禁出现 HTTP 方法+路径格式（如 "GET /wx/home/index"、"POST /api/order"）
             - ui_action 步骤可携带 uiSelector：{type, value}
-              - type 白名单（执行器仅支持这些）：id / css / class / data-testid / aria-label / xpath；导航首步用 route
-              - 禁止编造 text / path / ref 等执行器不支持的类型
-              - value 从 frontendSelectors 中选最匹配的真实选择器；无精确匹配时省略 uiSelector 字段
-                （后端会按前端分析结果自动补齐），严禁虚构选择器值——
+              - type 白名单（执行器支持这些）：id / css / class / data-testid / aria-label / xpath / text；导航首步用 route
+              - text 用法（v12.24 起允许）：按钮/链接/入口若有唯一可见文本，优先用 {type:"text", value:"该文本"}
+                （执行器 v12.16 起支持 Playwright text=… >> visible=true 定位，确定性远高于视觉坐标）；
+                多处同名/不可见文本仍应走 pageReality.uiSelectorHints 的 css/xpath 兜底
+              - 禁止编造 path / ref 等执行器不支持的类型
+              - value 从 frontendSelectors 中选最匹配的真实选择器；无精确匹配时**优先使用**
+                pageReality.pages[].uiSelectorHints（v12.24 加入）提供的真实文本/选择器；仍无时省略
+                uiSelector 字段（后端会按前端分析结果自动补齐），严禁虚构选择器值——
                 **唯一例外：导航首步的 route 选择器不来自 frontendSelectors、不算虚构**，
                 必须直接写 {"type":"route","value":"路由"}（见 v8.9.7 条）
             - 输入类步骤用 type=input，必带 inputValue（真实具体值）+ uiSelector
@@ -624,10 +682,12 @@ public class TestGeneratorAgent {
               必然 blocked；除非 PRD 明确要求鉴权矩阵且提供独立无登录执行环境，否则不生成
               "未登录访问被重定向"类用例
             - 12.21: 断言设计三档原则——模糊与精确的界限按"页面文本快照能否验证"划线：
-              ① 精确档（首选）：页面稳定文案（页面标题、按钮/入口文字、列表项中的商品名等
-                 真实数据值）与 URL 路由——写引号锚点或"页面URL包含'/xxx'"。列表展示断言必须引用至少一个
-     已知真实数据值（如商品名'蔓越莓曲奇'）作锚点，或改断言总数'共 N 件收藏'；
-     禁止"包含商品图片、名称和价格"这类无内容描述（执行器会按总数兜底验证）
+              ① 精确档（首选）：页面稳定文案（页面标题、按钮/入口/toast、'共 N 件收藏'占位总数、
+                 URL 路由）——写引号锚点或"页面URL包含'/xxx'"。注意：**具体商品名/昵称等运行时数据值
+                 （如'蔓越莓曲奇'）不得作强制包含的引号锚点**——它随账号/时刻漂移，写死必然失败；
+                 列表内容断言用存在性形态"展示至少一个<对象>卡片（名称、价格）"（执行器按'共 N 件/条'
+                 兜底：N≥1 通过/空列表失败），或仅以"例如'X'"作举例性锚点（非强制），或改断言总数
+                 '共 N 件收藏'；禁止"包含商品图片、名称和价格"这类无内容描述（执行器会按总数兜底验证）
               ② 占位档（次选）：数量类一律写'共 N 件收藏'/'共 N 条足迹'，禁止写死具体数字
                  （'共 3 件收藏'数字随数据变化必然失败），禁止 N-1/N+1 算术；条目增减断言写
                  "列表不再包含'<商品名>'"（引用真实商品名）
@@ -1164,6 +1224,9 @@ public class TestGeneratorAgent {
         normalizeModules(result, prdResult, frontendResult);
         // v9.2: 导航步骤 route 选择器确定性注入——模型对"必须携带"遵守率不稳定
         injectRouteSelectors(result);
+        // v12.28: pageReality 确定性修复——拆占位/混合 target、为缺 uiSelector 语义步骤补真实选择器、
+        // 交互前置展开。见 outputs/exec_analysis/V1228_DIAGNOSIS_PASSRATE_20260903.md。无 pageReality 时 no-op。
+        enforcePageRealitySteps(result);
 
         // v5.12: 覆盖缺口评审 + coverageRefs 补全（先评审后评分/去重）
         // v7.1(G2/G5): 评审丢弃数与 LLM 评审降级信号由 TestCaseReviewAgent 写入报告
@@ -1189,9 +1252,28 @@ public class TestGeneratorAgent {
         // '共 5 条足迹'），数字随数据变化必然脆断；正则替换为占位符 N（执行器按数字语义
         // 匹配，语义等价且不再脆断）。不指望 LLM 的确定性兜底，与 normalizeModules 同思路
         normalizeExpectationCounts(result);
+        // v12.30: 列表内容断言点名"业务数据名"（如 商品名称'蔓越莓曲奇'）——商品名是运行时数据，
+        // 跨账号/时刻会漂移，写死引号锚点必失败（实测 TC-1193 step9 failed：列表已正常显示 共N件，
+        // 仅因 user123 收藏的是'趣味粉彩坐垫'而非'蔓越莓曲奇'）。确定性改写为引擎已支持的相对形态：
+        // 有占位总数锚(共N件/条)→剥离业务名保留总数锚；独立点名商品名→'展示至少一个<对象>卡片'触发
+        // LIST_PRESENCE 兜底(共N≥1通过/空列表失败)。与 normalizeExpectationCounts 同属不指望 LLM 的兜底。
+        demotePinnedBusinessNames(result);
         // v9.13: api_call 步骤确定性剔除——pro 模型会复活"模拟调用XX接口"步骤（v9.2 已禁止），
         // UI 执行器对 api_call 一律 skip，保留只是废步骤；prompt 遵从不可靠，落库前硬剔除
         stripApiCallSteps(result);
+        // v12.31: 伪接口断言步确定性剔除——比 api_call 更隐蔽：模型把"模拟发送非法请求体→断言
+        // 前端报错"写成 type=state_assert + data{ids/incomplete_body}，看似是断言实则无任何 UI 锚点
+        //（action 明说"测试脚本模拟/构造非法请求体"，执行器无处可点，断言目标接口错误也不在页面呈现，
+        // 必然 failed——实测 TC-1208/1209/1215）。UI 负向语义改由"点击真实按钮看前端校验/空态提示"表达。
+        stripFakeApiAssertSteps(result);
+        // v13.11: 结构性剔除——type=input 且无 uiSelector 且无 inputValue 的步骤在执行端
+        // 必然报"输入步骤缺少 uiSelector.value"（实测 TC-1290/1293/1294/1264 三种措辞变体），
+        // 不再按话术追变体，直接按结构判定不可执行
+        stripUnexecutableInputSteps(result);
+        // v13.9: state_assert 型"进入页面"步确定性拆分为 导航+断言——LLM 把"进入【我的收藏】页面"
+        // 写成 state_assert（实测 TC-1262 s9：执行器只做断言不导航，页面停在 /goods 断言必败）。
+        // 触发条件从严：action 含 进入/跳转/返回/打开/前往 且 target 为路由或 uiSelector=route。
+        splitAssertNavigationSteps(result);
 
         // v9.9: 按模块归组排序后再分配 id/落库——并发生成的到达序会把平台 id 与模块块
         // 打散（实测 TC-1004 插在 TC-998/TC-999 之间），project_seq 按模块重排后与 id
@@ -1229,6 +1311,78 @@ public class TestGeneratorAgent {
         }
     }
 
+    /**
+     * v12.31: 剔除"伪接口断言步"——比 api_call 更隐蔽的形态：模型把负向/异常语义写成
+     * type=state_assert，action 却明示"测试脚本模拟发送/构造非法请求体/模拟调用"，target 是接口名，
+     * data 携带 {ids:[...]} / {incomplete_body:{...}} 这类"请求体模拟"。执行器是纯 UI 操作者，
+     * 对这些步无真实元素可点（接口错误本就不以页面文案呈现），必然 failed 且留下错误印象
+     * （实测 TC-1208/1209/1215 的 ids=[9999999]/ids=[]/incomplete_body 伪接口步）。
+     * 不指望 LLM 遵从 prompt（v9.2 已禁接口化步骤，pro 模型仍复活），落库前确定性剔除。
+     * 与 stripApiCallSteps 的差异：这些步 type 是 state_assert 而非 api_call，故需按
+     * action/data 语义判定，不能仅按 type 过滤。纯 UI 可测的负向语义（点击按钮看前端校验提示）
+     * 是 ui_action 形态，本方法不会误删。
+     */
+    void stripFakeApiAssertSteps(List<TestCase> cases) {
+        for (TestCase tc : cases) {
+            if (tc.getStructuredSteps() == null) {
+                continue;
+            }
+            List<Map<String, Object>> steps;
+            try {
+                steps = JsonHelper.parseListMap(tc.getStructuredSteps());
+            } catch (Exception e) {
+                continue;
+            }
+            int before = steps.size();
+            steps.removeIf(TestGeneratorAgent::isFakeApiAssertStep);
+            if (steps.size() != before) {
+                tc.setStructuredSteps(toJson(steps));
+            }
+        }
+    }
+
+    /** 判定单个步骤是否属"伪接口断言步"：state_assert + 接口模拟语义 action/target + data 请求体模拟键 */
+    static boolean isFakeApiAssertStep(Map<String, Object> step) {
+        String type = String.valueOf(step.get("type"));
+        String action = String.valueOf(step.getOrDefault("action", ""));
+        String target = String.valueOf(step.getOrDefault("target", ""));
+        // v13.8: input 型变体——实测 TC-1264"通过开发者工具或断点模拟缺失type的取消请求"，
+        // 无 UI 锚点必然不可执行。信号从严：开发者工具/断点/拦截/伪造，或"模拟"+接口/请求；
+        // "模拟用户输入用户名"类正常措辞不误伤（不含接口/请求词）。
+        // v13.10: 第二变体（实测 TC-1290/1293/1294）"在Console中执行fetch请求/在控制台输入
+        // 接口调用代码"——Console/fetch/控制台同为非 UI 话术。
+        if ("input".equals(type)) {
+            String lower = action.toLowerCase();
+            boolean devSpeech = action.contains("开发者工具") || action.contains("断点")
+                    || action.contains("拦截") || action.contains("伪造")
+                    || action.contains("控制台") || lower.contains("console") || lower.contains("fetch");
+            boolean apiMock = action.contains("模拟")
+                    && (action.contains("接口") || action.contains("请求"));
+            return devSpeech || apiMock;
+        }
+        if (!"state_assert".equals(type)) {
+            return false;
+        }
+        // 接口模拟话术：action 明示"测试脚本/模拟/构造非法请求/发送请求"，或 target 是"XX接口"
+        boolean mockSpeech = action.contains("测试脚本") || action.contains("模拟")
+                || action.contains("构造非法") || action.contains("构造不完整")
+                || action.contains("发送一个") || action.contains("发送一个不完整");
+        boolean apiTarget = target.contains("接口");
+        if (!mockSpeech && !apiTarget) {
+            return false;
+        }
+        // data 携带请求体模拟键（ids / incomplete_body / body）进一步确认是"接口请求模拟"而非页面动作
+        Object dataObj = step.get("data");
+        if (dataObj instanceof Map<?, ?> data) {
+            if (data.containsKey("ids") || data.containsKey("incomplete_body")
+                    || data.containsKey("body") || data.containsKey("requestBody")) {
+                return true;
+            }
+        }
+        // 无 data 但 target 明确是接口名 + action 模拟话术，同样判伪接口步
+        return mockSpeech && apiTarget;
+    }
+
     /** v9.13: expected 中的写死数量（共 3 件/共 5 条）→ 占位符 N */
     private static final java.util.regex.Pattern FIXED_COUNT =
             java.util.regex.Pattern.compile("共\\s*\\d+\\s*([件条个只])");
@@ -1262,16 +1416,315 @@ public class TestGeneratorAgent {
     }
 
     /**
+     * v12.30: 列表/详情内容断言的"字段名:具体业务名"去钉化——生成侧会被 12.21 教着把
+     * 运行时数据值（商品名/昵称等）写死成引号锚点（如 包含商品名称'蔓越莓曲奇'），而商品名
+     * 跨账号/时刻漂移，写死必失败。判别只针对"前导字段词(名称/商品名/昵称等) + 引号值"结构：
+     * 引号值是字段名描述的运行时数据，非固定 UI 文案（登录提示/按钮/toast 等前无"名称"字段词，
+     * 不会被触碰）。改写为引擎已支持的相对形态，保证页面行为正确即通过：
+     *  - 句内含 '共 N 件/条' 或 URL 等其他锚点 → 仅剥离字段值引号，断言由其余锚点正常判定；
+     *  - 字段值是该句唯一内容（列表内容断言） → 改写为"展示至少一个…"触发 LIST_PRESENCE
+     *    兜底（ExecutionAssert 按页面 共N≥1 判 passed / 空列表判 failed）。
+     */
+    /**
+     * v13.11: 结构性剔除不可执行 input 步——type=input 且无 uiSelector.value 且无
+     * inputValue（步骤级或 data 级）即判不可执行。执行端对这类步骤一律报
+     * "输入步骤缺少 uiSelector.value"（实测三种措辞变体均如此），措辞词网追不完，
+     * 改按结构判定。登录凭据等合法输入步都带 css/placeholder 选择器，不受影响。
+     */
+    void stripUnexecutableInputSteps(List<TestCase> cases) {
+        for (TestCase tc : cases) {
+            if (tc.getStructuredSteps() == null || !tc.getStructuredSteps().contains("\"input\"")) {
+                continue;
+            }
+            List<Map<String, Object>> steps;
+            try {
+                steps = JsonHelper.parseListMap(tc.getStructuredSteps());
+            } catch (Exception e) {
+                continue;
+            }
+            int before = steps.size();
+            steps.removeIf(TestGeneratorAgent::isUnexecutableInputStep);
+            if (steps.size() != before) {
+                tc.setStructuredSteps(toJson(steps));
+            }
+        }
+    }
+
+    static boolean isUnexecutableInputStep(Map<String, Object> step) {
+        if (!"input".equals(step.get("type"))) {
+            return false;
+        }
+        Object ui = step.get("uiSelector");
+        if (ui instanceof Map<?, ?> u && u.get("value") != null && !String.valueOf(u.get("value")).isBlank()) {
+            return false;
+        }
+        if (step.get("inputValue") != null && !String.valueOf(step.get("inputValue")).isBlank()) {
+            return false;
+        }
+        Object data = step.get("data");
+        return !(data instanceof Map<?, ?> d && d.get("inputValue") != null
+                && !String.valueOf(d.get("inputValue")).isBlank());
+    }
+
+    /**
+     * v13.11: 泛化去钉——列表语境断言里的引号值若不在 pageReality 固定文案集内，
+     * 一律视为运行时数据剥掉（措辞变体打地鼠的根治：不再枚举"商品名/价格/昵称"等字段词）。
+     * 固定文案（'我的收藏'/'请先选择'/'已收藏'等）在 pageReality 有权威记录会保留；
+     * '共 N 件'计数与 URL 形态额外豁免。pageReality 未加载（其他项目/单测默认态）时不激活。
+     */
+    static String demoteRuntimeQuotedValues(String expected, java.util.Set<String> fixedTexts) {
+        if (fixedTexts == null || fixedTexts.isEmpty() || !isListContentPhrase(expected)) {
+            return expected;
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("'([^']{1,20})'").matcher(expected);
+        List<String> drops = new ArrayList<>();
+        while (m.find()) {
+            String val = m.group(1).trim();
+            if (val.isEmpty() || fixedTexts.contains(val)) {
+                continue;
+            }
+            if (val.contains("共 N") || val.matches(".*共\\s*N\\s*[件条个只].*")) {
+                continue;
+            }
+            if (val.startsWith("/")) {
+                continue;
+            }
+            drops.add(val);
+        }
+        if (drops.isEmpty()) {
+            return expected;
+        }
+        String out = expected;
+        for (String v : drops) {
+            // 与既有 demote 语义一致：值整段移除（而非去引号保留裸值），避免 3-gram 仍命中漂移数据
+            out = out.replace("'" + v + "'", "");
+        }
+        out = out.replaceAll("  +", " ");
+        String trimmed = out.trim();
+        if (hasVerifiableAnchor(trimmed)) {
+            return out;
+        }
+        return trimmed + "，页面展示至少一个商品列表条目";
+    }
+
+    /** v13.11: 递归收集 pageReality 树中全部字符串叶子为固定文案集（组合串按顿号/逗号拆分） */
+    static void collectFixedTexts(Object node, java.util.Set<String> out) {
+        if (node instanceof Map<?, ?> m) {
+            for (Object v : m.values()) {
+                collectFixedTexts(v, out);
+            }
+        } else if (node instanceof List<?> l) {
+            for (Object v : l) {
+                collectFixedTexts(v, out);
+            }
+        } else if (node instanceof String s && !s.isBlank()) {
+            out.add(s.trim());
+            for (String part : s.split("[、，,;；/\\n]")) {
+                if (!part.isBlank()) {
+                    out.add(part.trim());
+                }
+            }
+        }
+    }
+
+    void demotePinnedBusinessNames(List<TestCase> cases) {
+        // v13.11: pageReality 固定文案集（未加载时泛化去钉不激活，行为与旧版一致）
+        java.util.Set<String> fixedTexts = new java.util.HashSet<>();
+        Object reality = pageRealityCache;
+        if (reality != null) {
+            collectFixedTexts(reality, fixedTexts);
+        }
+        for (TestCase tc : cases) {
+            if (tc.getStructuredSteps() == null || !tc.getStructuredSteps().contains("\"type\":\"state_assert\"")) {
+                continue;
+            }
+            List<Map<String, Object>> steps;
+            try {
+                steps = JsonHelper.parseListMap(tc.getStructuredSteps());
+            } catch (Exception e) {
+                continue;
+            }
+            boolean changed = false;
+            for (Map<String, Object> step : steps) {
+                Object expected = step.get("expected");
+                if (!(expected instanceof String exp) || exp.isBlank()) {
+                    continue;
+                }
+                String rewritten = demotePinnedInText(exp);
+                if (!fixedTexts.isEmpty()) {
+                    rewritten = demoteRuntimeQuotedValues(rewritten, fixedTexts);
+                }
+                if (!rewritten.equals(exp)) {
+                    step.put("expected", rewritten);
+                    changed = true;
+                }
+            }
+            if (changed) {
+                tc.setStructuredSteps(toJson(steps));
+            }
+        }
+    }
+
+    /** 单条 expected 文本去钉化；无"字段名:值"结构时原样返回 */
+    static String demotePinnedInText(String expected) {
+        String out = expected;
+        boolean pinned = false;
+        // 字段名(名称/商品名称/名为/昵称等) + 引号数据值：整段剥成字段名
+        for (java.util.regex.Pattern p : PINNED_FIELD_VALUE) {
+            if (p.matcher(out).find()) {
+                pinned = true;
+                out = p.matcher(out).replaceAll("$1");
+            }
+        }
+        if (!pinned) {
+            return expected;
+        }
+        String trimmed = out.trim();
+        // 去钉后是否仍具备可验证锚点：其余引号 / '共 N 件条' 占位 / URL 语义 / '至少一个'
+        boolean hasAnchor = hasVerifiableAnchor(trimmed);
+        if (hasAnchor) {
+            return out;
+        }
+        // 列表内容断言语境：改写为存在性断言触发 LIST_PRESENCE
+        if (isListContentPhrase(trimmed)) {
+            return trimmed + "，页面展示至少一个商品列表条目";
+        }
+        // 非列表语境仍无锚 → 保留去钉文本（宁弱化不误报失败）
+        return out;
+    }
+
+    private static final List<java.util.regex.Pattern> PINNED_FIELD_VALUE = List.of(
+            // 组1=字段名(商品名称/名称/昵称/用户名)，组2=引号数据值；把整段替换为字段名
+            java.util.regex.Pattern.compile("((?:商品)?名称)\\s*'([^']{1,18})'"),
+            java.util.regex.Pattern.compile("((?:商品)?名称)\\s*为\\s*'([^']{1,18})'"),
+            java.util.regex.Pattern.compile("(名为)\\s*'([^']{1,18})'"),
+            java.util.regex.Pattern.compile("(昵称|用户名)\\s*'([^']{1,18})'"),
+            java.util.regex.Pattern.compile("((?:商品)?名称)\\s*为\\s*：\\s*'([^']{1,18})'"),
+            java.util.regex.Pattern.compile("((?:商品)?名称)\\s*：\\s*'([^']{1,18})'"),
+            // v13.10: 倒置形态（实测 TC-1310）——"包含'蔓越莓曲奇'等商品名"：引号值在前、
+            // 字段名在后；剥掉引号值保留"等字段名"，组1 即替换文本
+            java.util.regex.Pattern.compile("'[^']{1,18}'\\s*等\\s*((?:商品)?名称|商品名|昵称|用户名)"));
+
+    private static boolean hasVerifiableAnchor(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        // 剩余引号锚点
+        if (text.contains("'") || text.contains("」") || text.contains("“")) {
+            return true;
+        }
+        // 总数占位 '共 N 件/条'（可能去引号后形态为 共 N 件收藏）
+        if (java.util.regex.Pattern.compile("共\\s*N\\s*[件条]").matcher(text).find()) {
+            return true;
+        }
+        // URL 语义
+        if (java.util.regex.Pattern.compile("(?i)/[a-z0-9_/-]{2,}|URL|url|路径|跳转").matcher(text).find()) {
+            return true;
+        }
+        return java.util.regex.Pattern.compile("至少一个|至少一项").matcher(text).find();
+    }
+
+    private static boolean isListContentPhrase(String text) {
+        if (text == null) {
+            return false;
+        }
+        return java.util.regex.Pattern.compile("列表|卡片|条目|展示|包含.*名称|商品|足迹|收藏").matcher(text).find();
+    }
+
+    /**
      * v9.9: 用例按模块归组排序——模块按首次出现序（LinkedHashMap 保序），组内保持原
      * 相对顺序（List.sort 稳定排序）。放在 id 分配/落库之前，保证平台 id、project_seq、
      * 模块分组渲染三者单调一致。包级可见供单测。
      */
+    /**
+     * v13.9: state_assert 型"进入页面"步拆分为 导航+断言 两步。
+     * 实测 TC-1262：LLM 把"进入【我的收藏】页面"写成 state_assert + route uiSelector，
+     * 执行器走断言路径只检查页面文本不导航，页面停在 /goods/1116011，断言必败。
+     * 拆为：ui_action 导航步（target=路由, uiSelector route，执行器确定性跳转）
+     *      + state_assert（保留原 expected，剔除 route 选择器防混淆）。
+     * 触发从严：type=state_assert + action 含 进入/跳转/返回/打开/前往 + target 为路由或 uiSelector=route。
+     */
+    void splitAssertNavigationSteps(List<TestCase> cases) {
+        for (TestCase tc : cases) {
+            if (tc.getStructuredSteps() == null) {
+                continue;
+            }
+            List<Map<String, Object>> steps;
+            try {
+                steps = JsonHelper.parseListMap(tc.getStructuredSteps());
+            } catch (Exception e) {
+                continue;
+            }
+            boolean changed = false;
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Map<String, Object> step : steps) {
+                String route = assertNavRoute(step);
+                if (route == null) {
+                    out.add(step);
+                    continue;
+                }
+                Map<String, Object> nav = new java.util.LinkedHashMap<>();
+                nav.put("order", 0);
+                nav.put("phase", step.getOrDefault("phase", "verify"));
+                nav.put("action", String.valueOf(step.get("action")));
+                nav.put("target", route);
+                nav.put("expected", "页面为 " + route);
+                nav.put("data", Map.of());
+                nav.put("type", "ui_action");
+                nav.put("uiSelector", Map.of("type", "route", "value", route));
+                out.add(nav);
+                Map<String, Object> assertStep = new java.util.LinkedHashMap<>(step);
+                assertStep.put("target", route);
+                assertStep.remove("uiSelector");
+                out.add(assertStep);
+                changed = true;
+            }
+            if (changed) {
+                for (int i = 0; i < out.size(); i++) {
+                    out.get(i).put("order", i + 1);
+                }
+                tc.setStructuredSteps(toJson(out));
+            }
+        }
+    }
+
+    /** v13.9: 判定 state_assert 步是否实为"进入页面"导航，是则返回目标路由，否则 null */
+    private String assertNavRoute(Map<String, Object> step) {
+        if (!"state_assert".equals(step.get("type"))) {
+            return null;
+        }
+        String action = String.valueOf(step.getOrDefault("action", ""));
+        boolean navSpeech = action.contains("进入") || action.contains("跳转")
+                || action.contains("返回") || action.contains("打开") || action.contains("前往");
+        if (!navSpeech) {
+            return null;
+        }
+        Object ui = step.get("uiSelector");
+        if (ui instanceof Map<?, ?> u && "route".equals(u.get("type")) && u.get("value") != null) {
+            return String.valueOf(u.get("value"));
+        }
+        String target = String.valueOf(step.getOrDefault("target", ""));
+        return target.startsWith("/") ? target : null;
+    }
+
     void sortCasesByModule(List<TestCase> cases) {
         Map<String, Integer> moduleOrder = new LinkedHashMap<>();
         for (TestCase tc : cases) {
             moduleOrder.putIfAbsent(moduleKey(tc), moduleOrder.size());
         }
-        cases.sort(Comparator.comparingInt(tc -> moduleOrder.get(moduleKey(tc))));
+        // v13.9: 同模块内状态变更类（删除/取消收藏/清空/移除）排到只读类之后——
+        // 实测 TC-1262 先取消收藏清空数据，后续只读列表用例（1263/1265/1277）跑在
+        // "共 0 件收藏"上级联失败。启发式：标题或步骤文本含状态变更动词即视为变更类。
+        cases.sort(Comparator
+                .comparingInt((TestCase tc) -> moduleOrder.get(moduleKey(tc)))
+                .thenComparingInt(tc -> isStateMutating(tc) ? 1 : 0));
+    }
+
+    /** v13.9: 用例是否含状态变更动作（标题+步骤文本启发式） */
+    private boolean isStateMutating(TestCase tc) {
+        String blob = String.valueOf(tc.getTitle()) + "|" + String.valueOf(tc.getStructuredSteps());
+        return blob.contains("删除") || blob.contains("取消收藏")
+                || blob.contains("清空") || blob.contains("移除");
     }
 
     private String moduleKey(TestCase tc) {
@@ -1475,6 +1928,393 @@ public class TestGeneratorAgent {
                 }
             }
         }
+    }
+
+    // ==================== v12.28: pageReality 确定性修复 pass ====================
+    // 背景：生成提示词对"缺 uiSelector / :id 占位 / 导航+点击揉成单一 target / 交互前置
+    // (needSelectFirst)"仅作软约束，LLM 不遵守即放行到执行期才判失败(实测稳定失败 12 条多为此类)。
+    // 本 pass 与 normalizeExpectationCounts/stripApiCallSteps 同属确定性兜底哲学("不指望 LLM")：
+    // 读取已缓存的 page-reality/{appId}.json 硬事实(pageRealityCache)，项目无关——凡配了
+    // page-reality 的被测站都受益。无 pageReality 时整体 no-op，不影响既有生成路径。
+    //
+    // 覆盖三件事(见 outputs/exec_analysis/V1228_DIAGNOSIS_PASSRATE_20260903.md)：
+    //  A. 占位/混合 target 拆步：把 /goods/1116011及收藏按钮(路径粘连中文动作)、/goods/:id(未实例化)
+    //     这类目标确定性拆成"纯导航 + 独立按钮点击"两步，URL 内不混中文、不留 :id 字面量。
+    //  B. pageReality 选择器补齐：语义 ui_action/input 缺 uiSelector 时，按当前路由匹配该页
+    //     uiSelectorHints，命中则附 {type,value} 确定性定位(与执行期 v12.25 text 兜底双保险)。
+    //  C. 交互序列展开：读 batchDelete.needSelectFirst/collectButton 事实，为"删除/取消收藏"
+    //     补真实可达前置(足迹删除前补「全选」)，避免按不存在的常驻按钮臆造点击。
+    void enforcePageRealitySteps(List<TestCase> cases) {
+        if (cases == null || cases.isEmpty()) {
+            return;
+        }
+        Object reality = pageRealityCache;
+        if (!(reality instanceof Map<?, ?> prMap)
+                || !(prMap.get("pages") instanceof List<?> pagesList)) {
+            return;   // 无 pageReality 或结构异常：no-op(通用性：非 litemall 站点跳过)
+        }
+        // 建路由 → 页面事实索引；商品 id 池收集(pageReality 里无真实 id，取 frontend route 样本)
+        Map<String, Map<String, Object>> pageByRoute = new LinkedHashMap<>();
+        for (Object p : pagesList) {
+            if (p instanceof Map<?, ?> pm) {
+                Object route = pm.get("route");
+                if (route != null) {
+                    pageByRoute.putIfAbsent(normalizePageRoute(String.valueOf(route)), asStringMap(pm));
+                }
+            }
+        }
+        for (TestCase tc : cases) {
+            List<Map<String, Object>> steps = JsonHelper.parseListMap(tc.getStructuredSteps());
+            if (steps.isEmpty()) {
+                continue;
+            }
+            boolean changed = false;
+            String currentRoute = null;
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Map<String, Object> step : steps) {
+                String type = String.valueOf(step.get("type"));
+                Object selObj = step.get("uiSelector");
+                if ("ui_action".equals(type) && selObj instanceof Map<?, ?> m
+                        && "route".equals(String.valueOf(m.get("type")))) {
+                    currentRoute = normalizePageRoute(String.valueOf(m.get("value")));
+                }
+                if ("ui_action".equals(type)) {
+                    String target = step.get("target") == null ? "" : String.valueOf(step.get("target")).trim();
+                    // A: 占位/混合 target 处理。返回：null=无需处理；[单步]=就地实例化保留；
+                    //    [两步]=已拆为 导航+点击，替换原步。空列表视为不可处理。
+                    List<Map<String, Object>> fixed = fixMixedOrPlaceholderTarget(step, target, pageByRoute);
+                    if (fixed != null) {
+                        if (fixed.isEmpty()) {
+                            out.add(step);   // 无法拆解，原样保留
+                        } else {
+                            out.addAll(fixed);
+                            changed = true;
+                        }
+                        continue;   // 跳过下方 B(该步 target 非语义可点击或已补路由)
+                    }
+                }
+                // B: 缺 uiSelector 的语义 ui_action/input → pageReality uiSelectorHints 补齐
+                if (step.get("uiSelector") == null && ("ui_action".equals(type) || "input".equals(type))) {
+                    String target = step.get("target") == null ? "" : String.valueOf(step.get("target")).trim();
+                    String action = step.get("action") == null ? "" : String.valueOf(step.get("action"));
+                    Map<String, Object> filled = fillSelectorFromPageReality(
+                            currentRoute, target, action, pageByRoute);
+                    if (filled != null) {
+                        step.put("uiSelector", filled);
+                        changed = true;
+                    }
+                }
+                // C(v12.29): 逐条 checkbox 选择(勾选第X条/首条/某项, 无 uiSelector 的视觉漂移点)在
+                // needSelectFirst 页重写为确定性"点击全选"(selectAllText)。实测 TC-1185 类用例"勾选第一条
+                // 复选框"无确定性选择器→视觉定位单条 checkbox 漂移→后续删除选中点不到；页级全选按钮有
+                // text 确定性选择器更可靠。仅当页面声明 batchDelete.needSelectFirst 且给了 selectAllText 才重写。
+                if (step.get("uiSelector") == null && "ui_action".equals(type)) {
+                    String target = step.get("target") == null ? "" : String.valueOf(step.get("target")).trim();
+                    String action = step.get("action") == null ? "" : String.valueOf(step.get("action"));
+                    String selAll = pageSelectAllText(currentRoute, pageByRoute);
+                    if (selAll != null && isPerItemCheckboxSelect(action, target)) {
+                        // 不重复造"全选"：仅当前 out 尾部不是全选点击时才落改写
+                        if (!lastStepIsSelectAll(out, pageByRoute, currentRoute)) {
+                            step.put("action", "点击【" + selAll + "】复选框");
+                            step.put("target", selAll + "复选框");
+                            step.put("uiSelector", Map.of("type", "text", "value", selAll));
+                            changed = true;
+                        } else {
+                            // 尾部已是全选(如 TC-1182 已有"全选"步)：本"勾选第X条"冗余且无选择器，直接丢弃
+                            changed = true;
+                            continue;
+                        }
+                    }
+                }
+                out.add(step);
+            }
+            if (changed) {
+                tc.setStructuredSteps(toJson(out));
+            }
+        }
+    }
+
+    /** 归一路由串(丢弃 query/hash/尾斜杠)，用于 pageByRoute 匹配。 */
+    private String normalizePageRoute(String route) {
+        if (route == null || route.isBlank()) {
+            return "";
+        }
+        String r = route.trim();
+        int q = r.indexOf('?');
+        if (q >= 0) {
+            r = r.substring(0, q);
+        }
+        while (r.endsWith("/")) {
+            r = r.substring(0, r.length() - 1);
+        }
+        // /goods/1116011 → /goods/{id}；/goods/:id → /goods/{id}，统一成占位态便于与 pageReality 路由匹配
+        if (r.matches("^/goods/\\d+$")) {
+            return "/goods/:id";
+        }
+        return r;
+    }
+
+    private Map<String, Object> asStringMap(Map<?, ?> pm) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : pm.entrySet()) {
+            r.put(String.valueOf(e.getKey()), e.getValue());
+        }
+        return r;
+    }
+
+    /** 从 target 抽取可作为 text 选择器的按钮文案：优先【X】、引号"X"、'X'、否则"X按钮"的 X。 */
+    private String extractClickableText(String target, String action) {
+        if (target == null || target.isBlank()) {
+            return null;
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("【([^】]+)】").matcher(target);
+        if (m.find()) {
+            return m.group(1);
+        }
+        m = java.util.regex.Pattern.compile("[\"'“”‘’]([^\"'“”‘’]{1,12})[\"'“”‘’]").matcher(target);
+        if (m.find()) {
+            return m.group(1);
+        }
+        m = java.util.regex.Pattern.compile("^(.*?)按钮$").matcher(target.trim());
+        if (m.find()) {
+            String cand = m.group(1).trim();
+            return cand.isEmpty() ? null : cand;
+        }
+        return null;
+    }
+
+    /**
+     * A: 占位/混合 target 确定性修复。
+     * 返回语义(null 无需处理 / List 替换原步)：
+     *   - null                     → target 非"路由混合动作/占位导航"形态，原样交由后续 B 补选择器；
+     *   - 空 List                  → 识别为需实例化的占位导航但无法实例化，原步保留；
+     *   - List[nav]                → 占位路由已就地实例化为具体路由，用该导航步替换原步；
+     *   - List[nav, click]         → target 为"/goods/1116011及收藏按钮"式混合，拆成 导航步+按钮点击步。
+     */
+    private List<Map<String, Object>> fixMixedOrPlaceholderTarget(
+            Map<String, Object> step, String target,
+            Map<String, Map<String, Object>> pageByRoute) {
+        if (target.isEmpty()) {
+            return null;
+        }
+        String t = target.trim();
+        // 2) 混合形态：ASCII 路由前缀后粘连中文动作(/goods/1116011及收藏按钮、/user及浏览足迹入口)
+        java.util.regex.Matcher mixed = java.util.regex.Pattern
+                .compile("^(/[A-Za-z0-9_{}:$.-]*(?:/[A-Za-z0-9_{}:$.-]*)*?)"
+                        + "(?=[\\u4e00-\\u9fa5])([\\u4e00-\\u9fa5][^/]*)$").matcher(t);
+        boolean mixedNav = mixed.matches() && mixed.group(1).startsWith("/");
+        String navPart = mixedNav ? mixed.group(1) : null;
+        String actionPart = mixedNav ? mixed.group(2).trim() : null;
+        if (mixedNav) {
+            // 混合 target：一律拆成 纯导航 + 按钮点击两步。先实例化导航占位(若有 :id)
+            navPart = instantiateIfNeeded(navPart, pageByRoute);
+            Map<String, Object> nav = new LinkedHashMap<>();
+            nav.put("order", step.get("order"));
+            nav.put("type", "ui_action");
+            nav.put("action", "进入页面");
+            nav.put("target", navPart);
+            nav.put("expected", "页面正常跳转加载");
+            nav.put("uiSelector", Map.of("type", "route", "value", navPart));
+            Map<String, Object> click = new LinkedHashMap<>();
+            click.put("order", step.get("order"));
+            click.put("type", "ui_action");
+            String btnText = extractClickableText(actionPart, "");
+            if (btnText != null) {
+                click.put("action", "点击【" + btnText + "】按钮");
+                click.put("target", btnText + "按钮");
+                click.put("expected", "点击按钮成功，页面状态按要求变化");
+                // 尽量给按钮附 pageReality text 选择器
+                Map<String, Object> hint = findHintForText(pageByRoute, normalizePageRoute(navPart), btnText);
+                if (hint != null) {
+                    click.put("uiSelector", hint);
+                }
+            } else {
+                click.put("action", actionPart);
+                click.put("target", actionPart);
+                click.put("expected", "操作成功，页面状态按要求变化");
+            }
+            List<Map<String, Object>> r = new ArrayList<>(2);
+            r.add(nav);
+            r.add(click);
+            return r;
+        }
+        // 3) 占位导航(/goods/:id 或整串含 :id)未混合动作 → 就地实例化
+        if (isPlaceholderRoute(t) || t.contains("/:")) {
+            String inst = instantiateIfNeeded(t, pageByRoute);
+            if (!inst.equals(t)) {
+                Map<String, Object> nav = new LinkedHashMap<>(step);
+                nav.put("target", inst);
+                nav.put("uiSelector", Map.of("type", "route", "value", inst));
+                List<Map<String, Object>> r = new ArrayList<>(1);
+                r.add(nav);
+                return r;
+            }
+            return List.of();   // 无法实例化，保留原步
+        }
+        return null;
+    }
+
+    private boolean isPlaceholderRoute(String r) {
+        return r.matches(".*/:[A-Za-z_][A-Za-z0-9_]*.*")
+                || r.contains("的ID") || r.contains("的id")
+                || r.contains("商品ID") || r.contains("占位")
+                || r.matches(".*商品[A-Z]的.*");
+    }
+
+    /** 占位导航实例化：/goods/:id → /goods/1006002（litemall 商品详情真实样例）；未知占位原样返回。 */
+    private String instantiateIfNeeded(String route, Map<String, Map<String, Object>> pageByRoute) {
+        String norm = normalizePageRoute(route);
+        if ("/goods/:id".equals(norm) || "/goods/:goodsId".equals(norm)) {
+            return "/goods/1006002";
+        }
+        // 其它占位路由若 pageReality 已知，仍无法得真实 id → 保守原样(执行期占位守卫会明确报错而非乱跳)
+        return route;
+    }
+
+    /** 在当前页面 uiSelectorHints 里按目的关键词匹配 text/css 选择器(与 target/action 做子串打分)。 */
+    private Map<String, Object> findHintForText(Map<String, Map<String, Object>> pageByRoute,
+                                                 String route, String desc) {
+        if (desc == null || desc.isBlank()) {
+            return null;
+        }
+        Map<String, Object> page = pageByRoute.get(route);
+        if (page == null) {
+            return null;
+        }
+        if (page.get("uiSelectorHints") instanceof List<?> hints) {
+            for (Object h : hints) {
+                if (h instanceof Map<?, ?> hm && hm.get("uiSelector") instanceof Map<?, ?> sel) {
+                    String value = String.valueOf(sel.get("value"));
+                    if (value != null && !value.isBlank() && !value.startsWith(".") && !value.startsWith("#")
+                            && value.contains(desc)) {
+                        return asStringMap((Map<?, ?>) sel);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * B: pageReality 选择器补齐——按当前路由在该页 uiSelectorHints 里，用 target/action 关键词
+     * 匹配 hint 的 purpose，命中则返回确定性 {type,value}(排除 route 型，route 已由导航处理)。
+     * 避免把"我的收藏入口"(/user 页)配到 /collect 页同文案元素的跨页误配——必须路由内匹配。
+     */
+    private Map<String, Object> fillSelectorFromPageReality(String currentRoute, String target,
+                                                             String action,
+                                                             Map<String, Map<String, Object>> pageByRoute) {
+        String route = (currentRoute == null || currentRoute.isBlank()) ? null : currentRoute;
+        if (route == null) {
+            return null;   // 无法确定路由作用域，宁缺毋滥(对齐 enrichSelectors 路由收敛)
+        }
+        Map<String, Object> page = pageByRoute.get(route);
+        if (page == null || !(page.get("uiSelectorHints") instanceof List<?> hints)) {
+            return null;
+        }
+        String targetDesc = (target == null ? "" : target);
+        String actionDesc = (action == null ? "" : action);
+        String hay = actionDesc + " " + targetDesc;
+        // 收藏切换按钮：读 collectButton 事实(收藏/已收藏 是同按钮随状态切换)
+        Object collect = page.get("collectButton");
+        String matchedValue = null;
+        for (Object h : hints) {
+            if (!(h instanceof Map<?, ?> hm) || !(hm.get("uiSelector") instanceof Map<?, ?> sel)) {
+                continue;
+            }
+            String type = String.valueOf(sel.get("type"));
+            String value = String.valueOf(sel.get("value"));
+            String purpose = hm.get("purpose") == null ? "" : String.valueOf(hm.get("purpose"));
+            if (value == null || value.isBlank() || type == null) {
+                continue;
+            }
+            // purpose 与 target/action 关键词含对方 → 候选
+            if ((!purpose.isBlank() && hay.contains(purpose))
+                    || (purpose.contains("收藏") && hay.contains("收藏"))
+                    || (purpose.contains("删除") && hay.contains("删除"))
+                    || (purpose.contains("全选") && hay.contains("全选"))) {
+                // route 型不补(导航由别处处理)；css/text/其他均可补
+                if ("route".equals(type)) {
+                    continue;
+                }
+                matchedValue = value;
+                break;
+            }
+        }
+        if (matchedValue == null && collect instanceof Map<?, ?> cb) {
+            // 按钮文案随收藏状态变：target 提到"收藏/已收藏"→ 附 text=收藏(执行期 v12.25 会按状态取文案)
+            if (hay.contains("收藏") && (hay.contains("收藏按钮") || hay.contains("已收藏"))) {
+                String t = String.valueOf(cb.get("uncollectedText") == null ? "收藏" : cb.get("uncollectedText"));
+                matchedValue = t;
+            }
+        }
+        if (matchedValue != null && !matchedValue.isBlank()) {
+            // 补 text 确定性选择器(走 execute 白名单 text 型)
+            return Map.of("type", "text", "value", matchedValue);
+        }
+        return null;
+    }
+
+    /**
+     * v12.29(C): 当前页是否声明了"批量删除需先勾选"的 selectAllText 文案。
+     * 命中 needSelectFirst 且 selectAllText 非空 → 返回该全选按钮文案；否则 null。
+     */
+    private String pageSelectAllText(String currentRoute, Map<String, Map<String, Object>> pageByRoute) {
+        if (currentRoute == null || currentRoute.isBlank()) {
+            return null;
+        }
+        Map<String, Object> page = pageByRoute.get(currentRoute);
+        if (page == null || !(page.get("batchDelete") instanceof Map<?, ?> bd)) {
+            return null;
+        }
+        Object needFirst = bd.get("needSelectFirst");
+        Object selectAll = bd.get("selectAllText");
+        if (!Boolean.TRUE.equals(needFirst) || selectAll == null
+                || String.valueOf(selectAll).isBlank()) {
+            return null;
+        }
+        return String.valueOf(selectAll).trim();
+    }
+
+    /**
+     * v12.29(C): 判断步骤是否为"逐条 checkbox 选择"语义(勾选第一条/首条/某项的复选框)，且指向单条。
+     * 这类步骤常无确定性选择器→视觉定位单条 checkbox 漂移。判定：动作含勾选/选中/复选框，且不是
+     * 工具栏级"全选"(全选有确定性 text 选择器、且可能已被 C 保留或本应直接点到删除选中)。
+     */
+    private boolean isPerItemCheckboxSelect(String action, String target) {
+        String hay = (action == null ? "" : action) + " " + (target == null ? "" : target);
+        boolean isCheck = hay.contains("勾选") || hay.contains("选中") || hay.contains("复选框");
+        if (!isCheck) {
+            return false;
+        }
+        // 明确是"全选"本身(工具栏级, 已有确定性 text 选择器) → 不重写
+        if (hay.contains("全选")) {
+            return false;
+        }
+        // 指向单条 checkbox：含逐条指示词，或描述本身即 checkbox 而非常驻"删除选中/批量"按钮
+        return hay.matches(".*(首条|第一条|第[一二三四五六七八九十\\d]+条|某项|某个|对应|该足迹|该商品|此项|这条).*")
+                || hay.contains("复选框");
+    }
+
+    /**
+     * v12.29(C): out 尾部是否已是"点击 selectAllText 全选"步——避免"勾选第X条"重写后与既有全选步
+     * 相邻重复(第二次全选在 Vant 会把已全选再 toggle 回未选，破坏状态)。
+     */
+    private boolean lastStepIsSelectAll(List<Map<String, Object>> out,
+                                        Map<String, Map<String, Object>> pageByRoute, String currentRoute) {
+        if (out.isEmpty()) {
+            return false;
+        }
+        String selAll = pageSelectAllText(currentRoute, pageByRoute);
+        if (selAll == null) {
+            return false;
+        }
+        Map<String, Object> last = out.get(out.size() - 1);
+        Object lastSel = last.get("uiSelector");
+        if (!(lastSel instanceof Map<?, ?> m)) {
+            return false;
+        }
+        return "text".equals(String.valueOf(m.get("type")))
+                && selAll.equals(String.valueOf(m.get("value")));
     }
 
     /**
@@ -1742,8 +2582,13 @@ public class TestGeneratorAgent {
     // text/path/ref 等 LLM 编造类型会转成无效 CSS 必然定位失败；解析与补齐后统一清洗，
     // 非法 uiSelector 整体剔除（后续 enrichStructuredSteps 可再按前端分析结果补真实选择器）
     // v12.16-A: 放开 text（Playwright text= 引擎，按钮可见文本）与 name（表单字段）
+    // v12.19(P0): 集合加入 "route"——route 选择器是导航语义标记（如 uiSelector.type="route"），
+    // ExecutionService 第 805 行专门识别该类型并走 navigateToRoute 分支，sanitizeUiSelectors
+    // 原本误把它当非法 DOM 选择器剔除，导致含 /goods/:id / /collect 等目标路径的步骤
+    // 在执行期 enrichSelectors 后丢失 uiSelector，被错判为"无 uiSelector"而误跳。
+    // 该选择器形态 v8.9.8(12.14-A) 起就是导航标准语义，不可与 DOM 选择器混池剔除。
     private static final Set<String> EXECUTABLE_SELECTOR_TYPES =
-            Set.of("id", "css", "class", "data-testid", "aria-label", "xpath", "text", "name");
+            Set.of("id", "css", "class", "data-testid", "aria-label", "xpath", "text", "name", "route");
 
     String sanitizeUiSelectors(String stepsJson) {
         if (stepsJson == null || stepsJson.isBlank()) {
@@ -2173,6 +3018,8 @@ public class TestGeneratorAgent {
             }
         }
         putFrontendContext(context, frontendForPrompt, slice);
+        // v12.23: 注入被测站『真实页面事实』——供引号锚点/统计项/入口断言以真实页面为准
+        injectPageReality(context);
         // v6.1 (前端 Agentic RAG): 需求命中的组件语义摘要，供端到端用例融合 UI 交互步骤
         if (!businessComponents.isEmpty()) {
             context.put("frontendComponents", businessComponents);
@@ -2264,42 +3111,87 @@ public class TestGeneratorAgent {
         checkCancelled(cancelled);  // v3.3: LLM 调用前检查（耗时操作，最关键的取消点）
         // v3.4: 动态构建 PRD system prompt + temperature 参数化
         // v3.7: caseCb 非空时启用流式调用 + 增量解析
-        if (caseCb != null) {
-            StreamingTestCaseParser parser = new StreamingTestCaseParser(caseCb);
-            // v7.3(L1): 取消信号 per-request 传入，避免全局取消误杀并发流
-            // v8.4fix: 重试重置钩子——重试前清空解析器并通知 SSE 消费端，避免重复推送造成重复用例
-            String response = llmService.chatStreaming(
-                    buildPrdDrivenPrompt(params), userPrompt, resolveTemperature(params), parser::append,
-                    cancelled == null ? null : cancelled::isCancelled,
-                    () -> {
-                        parser.reset();
-                        try { caseCb.onRetryReset(); } catch (Exception ex) {
-                            log.warn("onRetryReset 回调失败，仅重置解析器: {}", ex.getMessage());
-                        }
-                    });
-            // v7.3(L8): 流结束后检测截断——braceDepth 不归零时告警 + 局部补全抢救最后一条
-            if (parser.finish() && report != null) {
-                report.streamTruncated = true;
-                report.truncatedRecovered = parser.getRecovered();
-            }
-            // v7.10(G8): 流式解析结果为唯一返回源（消除双解析索引错位）；
-            // 解析数为 0 时（数组起点检测失败等边角）兜底全量重解析并推送全部
-            List<TestCase> roundCases = parser.getCollected();
-            if (roundCases.isEmpty()) {
-                List<TestCase> reparsed = parseTestCases(extractJsonArray(response), null);
-                for (TestCase tc : reparsed) {
-                    try { caseCb.onCase(tc); } catch (Exception ex) {
-                        log.warn("兜底推送失败: {}", ex.getMessage());
+        // v12.21(C): 单轮解析失败（含 v12.21-B 容错后仍失败）时，带"严格 JSON 输出"提示重试一次，
+        // 再失败才向上抛——mimo 系模型长上下文下偶发输出散文/非标 JSON 时避免整批生成失败。
+        String strictSuffix = "\n\n【重要】上一次输出未被解析为合法 JSON 数组。本次必须严格只输出一个合法 JSON 数组："
+                + "① 顶层必须是 [ ] 数组；② 所有字段名一律用英文双引号包裹（禁止裸字段名如 {title:\"x\"}）；"
+                + "③ 所有字符串值用英文双引号；④ 禁止 markdown 代码围栏(```)、禁止任何说明文字/前后缀；"
+                + "⑤ 不要截断，完整输出全部用例后闭合 ]。";
+        List<TestCase> parsedThisRound = null;
+        RuntimeException lastParseErr = null;
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            String attemptPrompt = attempt == 1 ? userPrompt : userPrompt + strictSuffix;
+            if (caseCb != null) {
+                StreamingTestCaseParser parser = new StreamingTestCaseParser(caseCb);
+                String response;
+                try {
+                    response = llmService.chatStreaming(
+                            buildPrdDrivenPrompt(params), attemptPrompt, resolveTemperature(params), parser::append,
+                            cancelled == null ? null : cancelled::isCancelled,
+                            () -> {
+                                parser.reset();
+                                try { caseCb.onRetryReset(); } catch (Exception ex) {
+                                    log.warn("onRetryReset 回调失败，仅重置解析器: {}", ex.getMessage());
+                                }
+                            });
+                } catch (GenerationCancelledException gce) {
+                    throw gce;
+                } catch (Exception e) {
+                    // LLM 传输层失败交给 LlmService 内部重试；此处仅缓存并交由上层处理
+                    if (e instanceof RuntimeException re && !(e instanceof GenerationCancelledException)) {
+                        lastParseErr = re;
                     }
+                    throw e;
                 }
-                return reparsed;
+                // v7.3(L8): 流结束后检测截断——braceDepth 不归零时告警 + 局部补全抢救最后一条
+                if (parser.finish() && report != null) {
+                    report.streamTruncated = true;
+                    report.truncatedRecovered = parser.getRecovered();
+                }
+                // v7.10(G8): 流式解析结果为唯一返回源（消除双解析索引错位）；
+                // 解析数为 0 时（数组起点检测失败等边角）兜底全量重解析并推送全部
+                List<TestCase> roundCases = parser.getCollected();
+                if (!roundCases.isEmpty()) {
+                    parsedThisRound = roundCases;
+                    break;
+                }
+                try {
+                    List<TestCase> reparsed = parseTestCases(extractJsonArray(response), null);
+                    for (TestCase tc : reparsed) {
+                        try { caseCb.onCase(tc); } catch (Exception ex) {
+                            log.warn("兜底推送失败: {}", ex.getMessage());
+                        }
+                    }
+                    parsedThisRound = reparsed;
+                    break;
+                } catch (RuntimeException parseErr) {
+                    // 兜底全量解析仍失败——记录并走重试（strictSuffix）或最终抛出
+                    lastParseErr = parseErr;
+                    log.warn("第 {} 轮用例整段解析失败(第{}次尝试)，{}",
+                            round, attempt, attempt == 1 ? "将用严格 JSON 提示重试" : "重试仍失败");
+                }
+            } else {
+                // caseCb 为 null（非流式场景）
+                try {
+                    String response = llmService.chat(buildPrdDrivenPrompt(params), attemptPrompt,
+                            resolveTemperature(params));
+                    String json = extractJsonArray(response);
+                    parsedThisRound = parseTestCases(json, null);
+                    break;
+                } catch (GenerationCancelledException gce) {
+                    throw gce;
+                } catch (RuntimeException parseErr) {
+                    lastParseErr = parseErr;
+                    log.warn("非流式第 {} 轮解析失败(第{}次尝试)，{}",
+                            round, attempt, attempt == 1 ? "将用严格 JSON 提示重试" : "重试仍失败");
+                }
             }
-            return roundCases;
         }
-        // caseCb 为 null（非流式场景）：原有逻辑
-        String response = llmService.chat(buildPrdDrivenPrompt(params), userPrompt, resolveTemperature(params));
-        String json = extractJsonArray(response);
-        return parseTestCases(json, null);
+        if (parsedThisRound != null) {
+            return parsedThisRound;
+        }
+        throw (lastParseErr != null) ? lastParseErr
+                : new RuntimeException("Failed to parse LLM response");
     }
 
     // v7.11(G21): componentIds/dependencyIds 不参与收敛判定——用例侧 coverageRefs
@@ -2736,6 +3628,51 @@ public class TestGeneratorAgent {
           }
     }
 
+    // v12.23: 被测站『真实页面事实』注入。读 classpath page-reality/{appId}.json（每个被测站一份），
+    // 解析后以 pageReality 键放入生成 context（context 全量 JSON 序列化进 <context>，天然随行下发）。
+    // 文件缺失/解析失败仅记录并跳过——不影响非 litemall 被测站与既有无 pageReality 的生成路径。
+    private void injectPageReality(Map<String, Object> context) {
+        String appId = pageRealityApp == null || pageRealityApp.isBlank() ? null : pageRealityApp.trim();
+        if (appId == null) return;
+        Object cached = pageRealityCache;
+        if (cached == null) {
+            synchronized (this) {
+                cached = pageRealityCache;
+                if (cached == null) {
+                    cached = loadPageReality(appId);   // 可能仍为 null(未启用/加载失败)
+                    pageRealityCache = cached;
+                }
+            }
+        }
+        if (cached != null) {
+            context.put("pageReality", cached);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object loadPageReality(String appId) {
+        String path = "page-reality/" + appId + ".json";
+        try {
+            ClassPathResource res = new ClassPathResource(path);
+            if (!res.exists()) {
+                log.info("[pageReality] {} 不存在，跳过真实页面事实注入(不影响生成)", path);
+                return null;
+            }
+            JsonNode root = objectMapper.readTree(res.getInputStream());
+            if (root != null && root.isObject()) {
+                ObjectNode on = (ObjectNode) root;
+                on.remove("_meta");   // 元信息不随行下发，省 token
+                Map<String, Object> map = objectMapper.convertValue(on, Map.class);
+                log.info("[pageReality] 已加载 {} (含 {} 个页面事实)", path,
+                        map.containsKey("pages") && map.get("pages") instanceof List<?> l ? l.size() : 0);
+                return map;
+            }
+        } catch (Exception e) {
+            log.warn("[pageReality] 加载 {} 失败: {}", path, e.getMessage());
+        }
+        return null;
+    }
+
     /** 范围切片中的路由形页面目标（以 / 开头）；无路由形条目返回 null（=不过滤） */
     private Set<String> scopeRoutePaths(ScopeSlicingService.ScopeSlice slice) {
         if (slice == null || slice.isEmpty() || slice.targetPageRefs().isEmpty()) {
@@ -2805,6 +3742,50 @@ public class TestGeneratorAgent {
                         || (fr.getPageFlows() != null && !fr.getPageFlows().isEmpty()));
     }
 
+    /**
+     * v12.21(B): 三级容错解析——标准 → 宽松(字段名无引号/单引号/尾随逗号/注释) → 正则补引号。
+     * 任一成功返回 JsonNode；全部失败返回 null（由调用方决定抛错或跳过）。
+     * 目的：模型在长上下文(如第 N 轮补齐)下偶发输出非标 JSON 时，尽量救回而非整批失败。
+     */
+    private JsonNode parseJsonLenient(String json) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readTree(json);
+        } catch (Exception ignore1) {
+            // fall through to lenient
+        }
+        try {
+            return lenientMapper.readTree(json);
+        } catch (Exception ignore2) {
+            // fall through to regex repair
+        }
+        String repaired = repairUnquotedKeys(json);
+        if (repaired != null) {
+            try {
+                return objectMapper.readTree(repaired);
+            } catch (Exception ignore3) {
+                // give up
+            }
+        }
+        return null;
+    }
+
+    /**
+     * v12.21(B): 给裸字段名补双引号——{title:"x"} → {"title":"x"}。
+     * 仅在 lenient 仍失败时调用（多数情况 lenient 的 ALLOW_UNQUOTED_FIELD_NAMES 已能处理裸字段名）。
+     * 正则只命中"结构符({或,) 后紧跟未加引号标识符 且其后为 :"的形态，即确定是字段名；
+     * 已加引号 key("key":) 不命中，布尔/数字等无冒号的值不命中，不会误伤字符串内容。
+     */
+    private String repairUnquotedKeys(String json) {
+        if (json == null || json.isEmpty()) {
+            return null;
+        }
+        String out = json.replaceAll("([{,])[ \\t\\r\\n]*([A-Za-z_$][A-Za-z0-9_$-]*)[ \\t\\r\\n]*(:)", "$1 \"$2\"$3");
+        return out.equals(json) ? null : out;
+    }
+
     private List<TestCase> parseTestCases(String json) {
         return parseTestCases(json, null);
     }
@@ -2824,8 +3805,16 @@ public class TestGeneratorAgent {
         try {
             array = objectMapper.readTree(json);
         } catch (Exception e) {
-            log.error("Failed to parse LLM test case response: {}", e.getMessage());
-            throw new RuntimeException("Failed to parse LLM response", e);
+            // v12.21(B): 标准解析失败时尝试宽松/正则修复兜底——mimo-v2.5 长上下文偶发
+            // 输出字段名无引号的非标 JSON（{title:".."}），宽松 mapper / 补引号后多能救回，
+            // 避免整批生成失败。仍失败才向上抛错（触发调用方重试逻辑）。
+            log.warn("LLM test case response 标准解析失败({})，尝试宽松/补引号兜底...", e.getMessage());
+            JsonNode lenient = parseJsonLenient(json);
+            if (lenient == null) {
+                log.error("Failed to parse LLM test case response: {}", e.getMessage());
+                throw new RuntimeException("Failed to parse LLM response", e);
+            }
+            array = lenient;
         }
         if (array == null || !array.isArray()) {
             log.error("LLM test case response is not a JSON array");
