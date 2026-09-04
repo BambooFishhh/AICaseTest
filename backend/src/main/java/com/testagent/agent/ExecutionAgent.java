@@ -349,6 +349,16 @@ public class ExecutionAgent {
                 boolean effective = askLlmIfEffective(statusBefore, statusAfter, action);
                 touchHeartbeat(executionId);  // v7.0(E8): 生效判断调用后补心跳
 
+                // v13.12: checkbox 点击且 DOM 确认 toggle 生效（aria-checked 翻转）→ 直接判生效，
+                // 跳过下方"未生效→视觉兜底"。原因：checkbox 勾选不改变 URL/页面文本，LLM 视觉比较
+                // 看不到差异会误判"未生效"→升级视觉点击→坐标(如 62,150)误点足迹行跳商品页（实测 TC-1367）。
+                // MCP 坐标点击已内部校验 aria-checked 翻转，此信号比 LLM 视觉比较更可靠。
+                if (!effective && isCheckboxAction(action) && playwrightSkill.isLastClickCheckboxToggled()) {
+                    log.info("[checkbox] DOM 坐标点击已确认勾选状态翻转，判生效（跳过 LLM 视觉比较与视觉兜底）: {}",
+                            action);
+                    effective = true;
+                }
+
                 if (!effective) {
                     // 兜底：LLM 决策是否用 DOM 重试
                     Map<String, Object> fallback = askLlmForFallback(action, statusAfter);
@@ -970,6 +980,16 @@ public class ExecutionAgent {
         return !before.getOrDefault("url", "").equals(after.getOrDefault("url", ""))
                 || !before.getOrDefault("title", "").equals(after.getOrDefault("title", ""))
                 || !before.getOrDefault("textSnippet", "").equals(after.getOrDefault("textSnippet", ""));
+    }
+
+    /** v13.12: 判断操作是否为 checkbox/勾选/开关类语义（全选/勾选X/取消勾选/复选框/选中X）。 */
+    private boolean isCheckboxAction(String action) {
+        if (action == null) {
+            return false;
+        }
+        return action.contains("全选") || action.contains("勾选")
+                || action.contains("复选框") || action.contains("选中")
+                || action.contains("checkbox") || action.contains("取消勾选");
     }
 
     private String snippet(Map<String, String> status) {

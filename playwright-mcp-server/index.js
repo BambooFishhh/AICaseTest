@@ -130,6 +130,77 @@ async function clickWithFallback(page, selector, timeout = 6000) {
   throw lastErr || new Error(`click failed: ${selector}`)
 }
 
+// v13.12(checkbox 坐标点击兜底): vant 等组件库的 checkbox/switch 其 change 事件只绑在
+// 自定义 icon 上，Playwright page.click() 的 actionability 命中点对这类组件不生效
+// （实测点击后 aria-checked 仍为 false）。此兜底改为真实鼠标坐标点击 icon
+// （page.mouse.click 实测可正确触发勾选）。
+async function tryCheckboxCoordinateClick(page, selector) {
+  try {
+    // 定位到 checkbox 容器元素本身（可 evaluate 读状态），而非仅坐标
+    const cbLoc = await resolveCheckboxLocator(page, selector)
+    if (!cbLoc) return null
+    // 点击前读"该元素"勾选状态（用 locator 读，避免扫全页第一个误读）
+    const beforeChecked = await cbLoc.getAttribute('aria-checked')
+    // 等可能遮住 click 的瞬时 vant 动画/toast 散去（真实长执行里点击瞬间常被过渡遮罩挡住，
+    // 导致 mouse.click 落在遮罩上不触发 change——probe 短会话稳定后才点故能勾上）
+    await page.waitForTimeout(400)
+    const box = await cbLoc.boundingBox({ timeout: 3000 }).catch(() => null)
+    if (!box) return null
+    const x = Math.round(box.x + Math.min(9, box.width * 0.5))
+    const y = Math.round(box.y + box.height / 2)
+    // 点击 + 校验翻转，最多重试 2 次（每次间隔等动画）
+    let afterChecked = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await page.mouse.click(x, y)
+      await page.waitForTimeout(400)
+      afterChecked = await cbLoc.getAttribute('aria-checked')
+      if (afterChecked !== null && beforeChecked !== afterChecked) break
+    }
+    return { x, y, target: selector, checkedBefore: beforeChecked === 'true', checkedAfter: afterChecked === 'true' }
+  } catch (e) {
+    return null
+  }
+}
+
+// v13.12: 解析目标选择器命中的 checkbox 容器 locator（可精确读其 aria-checked）
+async function resolveCheckboxLocator(page, selector) {
+  const candidates = [
+    `${selector} >> xpath=ancestor::*[contains(@class,'van-checkbox') or @role='checkbox'][1]`,
+    `${selector} >> role=checkbox`,
+    `${selector} .van-checkbox`,
+    `${selector} >> xpath=ancestor-or-self::*[contains(@class,'van-checkbox') or @role='checkbox'][1]`,
+  ]
+  for (const c of candidates) {
+    try {
+      const loc = page.locator(c).first()
+      if (await loc.count() > 0) return loc
+    } catch (e) { /* 试下一候选 */ }
+  }
+  return null
+}
+
+// v13.12: 判断目标选择器解析到的元素是否属 vant checkbox 家族（决定是否跳过 page.click 走坐标）
+async function probeCheckboxCandidate(page, selector) {
+  try {
+    const checks = [
+      `${selector} >> role=checkbox`,
+      `${selector} >> xpath=ancestor::*[contains(@class,'van-checkbox') or @role='checkbox'][1]`,
+      `${selector} .van-checkbox`,
+      `${selector} .van-switch`,
+    ]
+    for (const c of checks) {
+      try {
+        if (await page.locator(c).first().count() > 0) return true
+      } catch (e) { /* 忽略 */ }
+    }
+    if (String(selector).includes('.van-checkbox') || String(selector).includes('role=checkbox')
+        || String(selector).includes('checkbox')) return true
+    return false
+  } catch (e) {
+    return false
+  }
+}
+
 async function fillWithFallback(page, selector, value, timeout = 6000) {
   const candidates = selectorCandidates(selector)
   let lastErr = null
@@ -400,12 +471,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { page } = getSession(sid);
         const pos = await markSelector(page, args.selector)
         await page.waitForTimeout(500)
-        // v12.17(P1): 走候选回退（visible=true 落空时退回裸选择器 + 一次重试）
-        // v12.18(P0): 10s→6s，最坏路径 ~26s，避免并发下顶到客户端 60s 超时
-        await clickWithFallback(page, args.selector, 6000);
+        let clickedSel = null, clickedPos = pos || { x: 0, y: 0 }, checkedAfter = null
+        // v13.12: vant checkbox/switch 等自定义组件，其 change 只绑在 icon 上，page.click
+        // 会"静默成功但不生效"（实测 aria-checked 不变）。若目标可解析为 checkbox 家族
+        // 则直接走坐标点击（唯一可靠路径），跳过 page.click。
+        const cbAhead = await probeCheckboxCandidate(page, args.selector)
+        if (cbAhead) {
+          const cbPos = await tryCheckboxCoordinateClick(page, args.selector)
+          if (cbPos) {
+            clickedSel = 'checkbox-coordinate@' + cbPos.target
+            clickedPos = { x: cbPos.x, y: cbPos.y }
+            checkedAfter = cbPos.checkedAfter
+          }
+        }
+        if (!clickedSel) {
+          try {
+            clickedSel = await clickWithFallback(page, args.selector, 6000);
+          } catch (clickErr) {
+            // 兜底：page.click 抛异常时也试一次 checkbox 坐标点击
+            const cbPos = await tryCheckboxCoordinateClick(page, args.selector)
+            if (cbPos) {
+              clickedSel = 'checkbox-coordinate@' + cbPos.target
+              clickedPos = { x: cbPos.x, y: cbPos.y }
+              checkedAfter = cbPos.checkedAfter
+            } else {
+              throw clickErr
+            }
+          }
+        }
         await page.waitForTimeout(1000);
-        const clicked = pos || { x: 0, y: 0 };
-        return { content: [{ type: 'text', text: JSON.stringify({ clicked: args.selector, x: clicked.x, y: clicked.y }) }] };
+        const resp = { clicked: clickedSel, x: clickedPos.x, y: clickedPos.y }
+        if (checkedAfter !== null) resp.checkboxChecked = checkedAfter
+        return { content: [{ type: 'text', text: JSON.stringify(resp) }] };
       }
 
       case 'browser_fill': {

@@ -40,6 +40,9 @@ public class PlaywrightRecordSkill {
 
     private static final Logger log = LoggerFactory.getLogger(PlaywrightRecordSkill.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
+    // v13.12: 最近一次 dom_click 是否命中了 checkbox 且成功 toggle（aria-checked 翻转）——
+    // ExecutionAgent 据此对 checkbox 步骤直接判生效，避免 LLM 视觉比较误判后触发视觉兜底误跳
+    private volatile boolean lastClickCheckboxToggled = false;
 
     @Autowired
     private McpClientManager mcpClientManager;
@@ -241,8 +244,14 @@ public class PlaywrightRecordSkill {
             String response = mcpClientManager.callTool("playwright", "browser_dom_click",
                     Map.of("session_id", sessionId, "selector", cssSelector));
             int[] position = parseClickPosition(response);
-            log.info("DOM 点击完成: {}={}, position={}", selectorType, selectorValue,
-                    position == null ? "unknown" : position[0] + "," + position[1]);
+            // v13.12: 解析 checkbox 勾选状态——坐标点击若命中 vant checkbox 会返回 checkboxChecked
+            // （true=已勾选/false=已取消勾选）；非 checkbox 点击无此字段。ExecutionAgent 据此
+            // 判断 checkbox 步骤是否真生效（aria-checked 翻转），避免 LLM 视觉误判后视觉兜底误跳
+            Boolean cb = parseCheckboxChecked(response);
+            lastClickCheckboxToggled = Boolean.TRUE.equals(cb);
+            log.info("DOM 点击完成: {}={}, position={}, checkboxToggled={}", selectorType, selectorValue,
+                    position == null ? "unknown" : position[0] + "," + position[1],
+                    lastClickCheckboxToggled);
             return position;
         } catch (Exception e) {
             log.error("DOM 点击失败: {}={} selector={}, error={}", selectorType, selectorValue,
@@ -251,6 +260,27 @@ public class PlaywrightRecordSkill {
             throw new RuntimeException("DOM 点击失败: " + selectorType + "=" + selectorValue
                     + " selector=" + cssSelector + "（" + e.getMessage() + "）", e);
         }
+    }
+
+    /** v13.12: 解析 browser_dom_click 返回的 checkbox 勾选状态（响应含 checkboxChecked 字段才返回 true/false，否则 null） */
+    private Boolean parseCheckboxChecked(String response) {
+        try {
+            if (response == null || response.isBlank()) {
+                return null;
+            }
+            JsonNode node = objectMapper.readTree(response);
+            if (node.isObject() && node.hasNonNull("checkboxChecked")) {
+                return node.path("checkboxChecked").asBoolean(false);
+            }
+        } catch (Exception e) {
+            log.debug("checkbox 状态解析失败: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /** v13.12: 最近一次 dom_click 是否命中了 checkbox 且成功 toggle（勾选/取消勾选）。非 checkbox 点击返回 false。 */
+    public boolean isLastClickCheckboxToggled() {
+        return lastClickCheckboxToggled;
     }
 
     /** v9.12: 浏览器后退（history back）——"返回上一页"类步骤的确定性执行 */
