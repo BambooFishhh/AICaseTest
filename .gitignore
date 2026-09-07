@@ -47,3 +47,10 @@ certs/
 
 # vP2: 本地备份产物
 backups/
+
+# 本地/生成内容（2026-09-07：未跟踪项忽略，不入库）
+.mvn-litemall/
+.workbuddy/
+projects/
+eval/results/
+项目理解计划_4天.md
