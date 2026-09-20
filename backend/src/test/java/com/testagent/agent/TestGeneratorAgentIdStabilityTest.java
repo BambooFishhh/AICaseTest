@@ -2,6 +2,7 @@ package com.testagent.agent;
 
 import com.testagent.dto.PrdAnalysisResult;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -104,8 +105,18 @@ class TestGeneratorAgentIdStabilityTest {
         assertEquals(1, requirements.size(), "同内容重复需求应合并为一条");
     }
 
+    /**
+     * RAG 切片并入 checklist 时，其 id 应为「rag- + 内容 hash」形态。
+     *
+     * <p>v13.21(CI 修复): 显式开启 {@code ragChecklistMerge}——本用例测的是
+     * <b>并入逻辑本身</b>（id 稳定性），与开关的默认值无关。此前用例直接
+     * {@code new TestGeneratorAgent()} 绕过 Spring，读到的是字段的 Java 初值；
+     * v13.16 把初值由 true 改为 false 后该用例即失败——测试不该被可配置默认值绑架。
+     * 默认关闭这一行为由 {@code buildCoverageChecklist} 的开关分支保证，不在本用例断言。
+     */
     @Test
     void ragSliceIdIsContentHashForm() {
+        ReflectionTestUtils.setField(agent, "ragChecklistMerge", true);
         PrdAnalysisResult prd = new PrdAnalysisResult();
         prd.setRequirements(new ArrayList<>());
         prd.setRagContexts(List.of("订单支付：用户在订单页点击支付按钮后跳转支付渠道"));

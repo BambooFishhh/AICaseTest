@@ -125,7 +125,9 @@ class MySqlFlywayIntegrationTest {
     @Test
     void evidenceConflictRecordRoundTripsOnMySql() {
         String projectId = "p-v17-it";
-        String conflictKey = "ec-0123456789";
+        // 用全 0 占位：十进制样式的 hash 串会被 gitleaks 的 generic-api-key 规则
+        // 误判（变量名含 Key + 十六进制外观），CI secret scan 会因此失败
+        String conflictKey = "ec-0000000000";
         String id = EvidenceConflictRecord.buildId(projectId, conflictKey);
 
         EvidenceConflictRecord record = new EvidenceConflictRecord();
