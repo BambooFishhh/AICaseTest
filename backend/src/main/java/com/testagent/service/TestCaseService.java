@@ -843,11 +843,12 @@ public class TestCaseService {
 
     public TestCaseListResponse listTestCases(String projectId, int page, int pageSize,
                                                String type, String module, String keyword,
-                                               String reviewStatus, String executionStatus) {
+                                               String reviewStatus, String executionStatus,
+                                               String verdict) {
         projectAccessService.assertViewAccess(projectId);
         // vP5: 分页下推数据库，避免大项目全量载入内存；筛选使用 Specification 落到 SQL
         Specification<TestCase> spec = buildTestCaseSpec(
-                projectId, type, module, keyword, reviewStatus, executionStatus);
+                projectId, type, module, keyword, reviewStatus, executionStatus, verdict);
         Page<TestCase> pageResult = testCaseRepository.findAll(spec,
                 PageRequest.of(Math.max(0, page - 1), Math.max(1, pageSize)));
         List<TestCaseDTO> items = pageResult.getContent().stream()
@@ -869,7 +870,7 @@ public class TestCaseService {
 
     private Specification<TestCase> buildTestCaseSpec(String projectId, String type, String module,
                                                       String keyword, String reviewStatus,
-                                                      String executionStatus) {
+                                                      String executionStatus, String verdict) {
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
             predicates.add(cb.equal(root.get("projectId"), projectId));
@@ -892,6 +893,11 @@ public class TestCaseService {
             if (reviewStatus != null && !reviewStatus.isBlank()) {
                 predicates.add(cb.equal(
                         cb.coalesce(root.get("reviewStatus"), "draft"), reviewStatus));
+            }
+            // v13.18(证据权威判定): 按生成期裁决标记筛用例——人工裁决后筛出这批待复核/重生成。
+            // 不做 coalesce 兜底：verdict 为 null 表示"生成时无待裁决冲突"，语义上不该被任何值命中。
+            if (verdict != null && !verdict.isBlank()) {
+                predicates.add(cb.equal(root.get("verdict"), verdict));
             }
             return cb.and(predicates.toArray(new Predicate[0]));
         };
@@ -1630,7 +1636,6 @@ public class TestCaseService {
         // v8.3: 单一口径=已确认本期范围；无范围返回引导态（rates=0 + scoped=false）
         ScopeSlicingService.ScopeSlice slice = scopeSlicingService.loadForGeneration(projectId);
         coverage.put("scoped", !slice.isEmpty());
-
         // 状态转换覆盖率：分母 = 范围内各 SM 的本期目标转换（归一化键与切片分类同源）
         Set<String> totalTransitions = new HashSet<>();
         if (!slice.isEmpty()) {
@@ -1726,7 +1731,52 @@ public class TestCaseService {
         }
         coverage.put("typeDistribution", typeDist);
 
+        // v13.15(P1-B): 可执行性维度——从静态字段启发式判断"断言能否被 UI 验证"，
+        // 对应 ExecutionAssert 三层断言/UiLanguageLinter 的 UI 违规信号；不改任何生成/执行行为，纯聚合展示。
+        coverage.put("executability", computeExecutability(allTestCases));
+
         return coverage;
+    }
+
+    /**
+     * v13.15(P1-B): 静态可执行性启发式（不真跑）。
+     * 一条用例被判定"断言可被 UI 验证"(uiVerifiable)需同时满足：
+     * ① 无 UI 语言违规（executionHints.uiLanguageViolations 为空，即未被 UiLanguageLinter 标为"接口码/机器常量/数量写死"等）；且
+     * ② 至少一条 expectedResults 含可见引号文案锚点或中文页面现象描述（ExecutionAssert.hasQuotedAnchor 语义），
+     *    避免纯接口码断言在 UI 执行层落 skipped/无法验证。
+     * 输出 uiRisk 计数与占比，便于评审端定位"空有覆盖但跑不出可验证断言"的用例。
+     */
+    private Map<String, Object> computeExecutability(List<TestCase> cases) {
+        int total = 0;
+        int uiVerifiable = 0;
+        int uiRisk = 0;
+        for (TestCase tc : cases) {
+            total++;
+            Map<String, Object> hints = JsonHelper.parseMap(tc.getExecutionHints());
+            Object violObj = hints.get("uiLanguageViolations");
+            boolean hasUiViolation = violObj instanceof List && !((List<?>) violObj).isEmpty();
+            boolean hasObservableExpected = false;
+            for (String er : JsonHelper.parseListString(tc.getExpectedResults())) {
+                if (er != null && !er.isBlank()
+                        && (ExecutionAssert.hasQuotedAnchor(er)
+                        || java.util.regex.Pattern.compile("[\\u4e00-\\u9fa5]{2,}").matcher(er).find())) {
+                    hasObservableExpected = true;
+                    break;
+                }
+            }
+            if (!hasUiViolation && hasObservableExpected) {
+                uiVerifiable++;
+            } else {
+                uiRisk++;
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("total", total);
+        out.put("uiVerifiable", uiVerifiable);
+        out.put("uiRisk", uiRisk);
+        out.put("uiVerifiableRate", total == 0 ? 0.0 : (double) uiVerifiable / total);
+        out.put("note", "静态启发式：无 uiLanguageViolations 且含可观测中文/引号锚点断言≈可被 UI 验证；仅供参考不替代真跑");
+        return out;
     }
 
     private Set<String> parseCoverageRefTransitions(TestCase tc) {

@@ -72,4 +72,24 @@ private Integer projectSeq;
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+
+    /**
+     * v13.18(证据权威判定): 生成期待裁决快照。
+     *
+     * <p>本轮对账存在 {@code authority=human} 的冲突时，该批用例整体标为 {@code pending}；
+     * 为空表示生成时不存在待裁决冲突（冲突裁决后重生成会自然清除）。
+     *
+     * <p>注意与"执行结果"区分：执行断言的三值（passed/failed/skipped）存在执行记录上，
+     * 本字段只承载证据链裁决状态（pending / prd_authoritative / code_authoritative / deprecated）。
+     */
+    @Column(name = "verdict", length = 24)
+    private String verdict;
+
+    /** v13.18: 关联的冲突 key 集合（逗号分隔；项目级快照，非逐条关联） */
+    @Column(name = "conflict_ref", length = 512)
+    private String conflictRef;
+
+    /** v13.18: 关联冲突的维度集合（逗号分隔） */
+    @Column(name = "dimension", length = 64)
+    private String dimension;
 }

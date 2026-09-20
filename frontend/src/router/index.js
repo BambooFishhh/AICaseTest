@@ -79,6 +79,12 @@ const routes = [
     meta: { title: '状态机覆盖图', breadcrumb: ['项目列表', '项目详情', '状态机覆盖图'] }
   },
   {
+    path: '/projects/:id/evidence-conflicts',
+    name: 'EvidenceConflicts',
+    component: () => import('@/views/EvidenceConflicts.vue'),
+    meta: { title: '证据冲突裁决', breadcrumb: ['项目列表', '项目详情', '证据冲突裁决'] }
+  },
+  {
     path: '/projects/:id/mindmap',
     name: 'MindMapPreview',
     component: () => import('@/views/MindMapPreview.vue'),

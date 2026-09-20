@@ -145,7 +145,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   FolderOpened, Setting, Fold, Expand, DataAnalysis, View, Document, Clock, Share, Picture,
-  Sunny, Moon, ArrowDown, Connection, Cpu
+  Sunny, Moon, ArrowDown, Connection, Cpu, WarningFilled
 } from '@element-plus/icons-vue'
 // v3.18: 版本号动态化
 import pkg from '../package.json'
@@ -307,6 +307,7 @@ const projectSubNav = computed(() => {
     { path: `/projects/${id}/executions`, label: '执行历史', icon: Clock },
     { path: `/projects/${id}/analysis`, label: '代码分析', icon: DataAnalysis },
     { path: `/projects/${id}/state-machines`, label: '状态机覆盖', icon: Share },
+    { path: `/projects/${id}/evidence-conflicts`, label: '证据冲突', icon: WarningFilled },
     { path: `/projects/${id}/mindmap`, label: '脑图预览', icon: Picture }
   ]
 })

@@ -54,6 +54,15 @@ public class TestCaseDTO {
 
     private Double confidence;
 
+    // v13.18(证据权威判定): 生成期待裁决溯源——null 表示生成时不存在待裁决冲突
+    private String verdict;
+
+    /** 关联的冲突 key 集合（逗号分隔，项目级快照） */
+    private String conflictRef;
+
+    /** 关联冲突的维度集合（逗号分隔） */
+    private String dimension;
+
     private LocalDateTime createdAt;
 
     public static TestCaseDTO from(TestCase entity) {
@@ -82,6 +91,9 @@ public class TestCaseDTO {
                 .qualityScore(entity.getQualityScore())
                 .source(entity.getSource())
                 .confidence(entity.getConfidence())
+                .verdict(entity.getVerdict())
+                .conflictRef(entity.getConflictRef())
+                .dimension(entity.getDimension())
                 .createdAt(entity.getCreatedAt())
                 .build();
     }

@@ -187,6 +187,19 @@
           <el-option label="失败" value="failed" />
           <el-option label="已跳过" value="skipped" />
         </el-select>
+        <!-- v13.18: 证据裁决标记筛选——筛出在存在待裁决冲突时生成的用例，供人工复核/重生成 -->
+        <el-select
+          v-model="filters.verdict"
+          placeholder="证据裁决筛选"
+          clearable
+          size="default"
+          @change="handleFilter"
+        >
+          <el-option label="待复核" value="pending" />
+          <el-option label="已裁决·PRD" value="prd_authoritative" />
+          <el-option label="已裁决·代码" value="code_authoritative" />
+          <el-option label="已裁决·废弃" value="deprecated" />
+        </el-select>
         <el-input
           v-model="filters.keyword"
           placeholder="搜索用例标题/模块"
@@ -429,6 +442,16 @@
               <span class="module-count">{{ row.count }}</span>
             </span>
             <span v-else class="case-title">{{ row.title }}</span>
+            <!-- v13.18: 生成时存在待裁决冲突的用例标记出来，裁决后可筛回复核/重生成 -->
+            <el-tag
+              v-if="!row.isModule && row.verdict === 'pending'"
+              size="small"
+              type="warning"
+              effect="light"
+              class="verdict-tag"
+            >
+              待复核
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column v-if="columnSettings.type" label="类型" width="70">
@@ -1110,7 +1133,7 @@ const page = ref(1)
 const pageSize = ref(20)
 
 const filters = reactive({
-  module: '', type: '', priority: '', keyword: '', reviewStatus: '', executionStatus: ''
+  module: '', type: '', priority: '', keyword: '', reviewStatus: '', executionStatus: '', verdict: ''
 })
 // v3.18: 筛选条件持久化
 const FILTER_KEY = 'tcl-filters'
@@ -1476,6 +1499,8 @@ async function loadList() {
     if (filters.keyword) params.keyword = filters.keyword
     if (filters.reviewStatus) params.reviewStatus = filters.reviewStatus
     if (filters.executionStatus) params.executionStatus = filters.executionStatus
+    // v13.18: verdict 为 null 表示"生成时无待裁决冲突"，故仅在选中时下传
+    if (filters.verdict) params.verdict = filters.verdict
     const res = await listTestCases(projectId, params)
     const data = res.data || {}
     testCases.value = data.testCases || []

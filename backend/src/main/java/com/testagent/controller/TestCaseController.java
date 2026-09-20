@@ -61,9 +61,10 @@ public class TestCaseController {
             @RequestParam(required = false) String module,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String reviewStatus,
-            @RequestParam(required = false) String executionStatus) {
+            @RequestParam(required = false) String executionStatus,
+            @RequestParam(required = false) String verdict) {
         return ApiResponse.success(testCaseService.listTestCases(
-                projectId, page, pageSize, type, module, keyword, reviewStatus, executionStatus));
+                projectId, page, pageSize, type, module, keyword, reviewStatus, executionStatus, verdict));
     }
 
     // v5.4: 语义搜索用例

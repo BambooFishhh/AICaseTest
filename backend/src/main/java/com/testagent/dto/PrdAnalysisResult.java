@@ -31,8 +31,10 @@ public class PrdAnalysisResult {
 
     // v7.10(C2): 证据链对账——需求资料晚于代码分析/状态机生成（代码上下文可能过期）
     private boolean evidenceStale;
-    // v7.10(C2): 证据链对账——PRD 状态流在代码状态机中无对应状态的冲突项（每条一句人读说明）
+    // v7.10(C2): 证据链对账——冲突项的人读摘要（v13.17 起由 evidenceConflicts 派生，保留供 prompt 注入兼容）
     private List<String> evidenceInconsistencies;
+    // v13.17: 结构化冲突项——承载维度/方向/需求状态/权威归属，支撑细粒度裁决与规则回写
+    private List<EvidenceConflict> evidenceConflicts;
 
     public boolean isEmpty() {
         return (modules == null || modules.isEmpty())
