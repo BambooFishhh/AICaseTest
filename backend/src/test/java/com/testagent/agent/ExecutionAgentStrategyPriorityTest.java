@@ -18,9 +18,13 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * v9.8: 点击策略 DOM 优先测试——步骤自带 uiSelector 时优先 dom_click，
- * 视觉定位坐标易漂移（litemall 足迹/收藏页勾选/全选/信息区域点击误导航商品详情），
- * 仅无选择器时回退 visual_click；LLM 即使返回 visual_click 也被硬约束改判 dom_click。
+ * v13.22: 点击策略**视觉优先**测试——MCP 视觉定位命中即 visual_click，
+ * 未命中才回落 DOM 选择器。取代 v9.8 的 DOM 优先。
+ *
+ * <p>视觉漂移的兜底不落在本层：改由步骤 6 的降级链承担——点击未生效时
+ * {@code askLlmForFallback} 判降级 dom_click（该函数只产出 dom_click/skip，
+ * LLM 未配置/返空/异常时一律默认 dom_click）。故本层不再有
+ * "带选择器就强制改判 DOM" 的硬约束，否则新策略会被它完全抵消。
  */
 class ExecutionAgentStrategyPriorityTest {
 
@@ -61,8 +65,8 @@ class ExecutionAgentStrategyPriorityTest {
 
     @SuppressWarnings("unchecked")
     @Test
-    void domSelectorPresentPrefersDomClickEvenWhenVisualFound() throws Exception {
-        // 未配置 LLM 的默认策略：视觉已找到元素但步骤带 uiSelector → 必须 dom_click（防坐标漂移）
+    void visualFoundPrefersVisualClickEvenWhenSelectorPresent() throws Exception {
+        // 视觉已命中 → 视觉优先；即使步骤带 uiSelector 也不再改判 DOM
         LlmService llmService = mock(LlmService.class);
         when(llmService.isConfigured()).thenReturn(false);
         ExecutionAgent agent = agent(llmService);
@@ -71,23 +75,28 @@ class ExecutionAgentStrategyPriorityTest {
                 "{\"type\":\"ui_action\",\"action\":\"勾选第一条足迹的复选框\",\"target\":\"复选框\","
                         + "\"uiSelector\":{\"type\":\"css\",\"value\":\".fp-item .van-checkbox\"}}");
 
-        assertEquals("dom_click", decision.get("strategy"),
-                "v9.8: 有 DOM 选择器时优先 dom_click，杜绝视觉坐标漂移点错子元素");
-        assertEquals(".fp-item .van-checkbox", decision.get("selectorValue"));
+        assertEquals("visual_click", decision.get("strategy"),
+                "v13.22: 视觉定位命中时优先 visual_click（DOM 选择器存在也不改判）");
+        assertEquals(Integer.valueOf(100), decision.get("x"));
+        assertEquals(Integer.valueOf(200), decision.get("y"));
     }
 
     @SuppressWarnings("unchecked")
     @Test
-    void noSelectorButVisualFoundUsesVisualClick() throws Exception {
+    void visualNotFoundButSelectorPresentUsesDomClick() throws Exception {
+        // 视觉未命中 → 回落 DOM 选择器
         LlmService llmService = mock(LlmService.class);
         when(llmService.isConfigured()).thenReturn(false);
         ExecutionAgent agent = agent(llmService);
 
-        Map<String, Object> decision = invokeDefaultStrategy(agent, true,
-                "{\"type\":\"ui_action\",\"action\":\"点击信息区域\",\"target\":\"足迹商品项\"}");
+        Map<String, Object> decision = invokeDefaultStrategy(agent, false,
+                "{\"type\":\"ui_action\",\"action\":\"勾选第一条足迹的复选框\",\"target\":\"复选框\","
+                        + "\"uiSelector\":{\"type\":\"css\",\"value\":\".fp-item .van-checkbox\"}}");
 
-        assertEquals("visual_click", decision.get("strategy"),
-                "无 DOM 选择器时回退视觉点击");
+        assertEquals("dom_click", decision.get("strategy"),
+                "视觉未命中时应回落 dom_click");
+        assertEquals(".fp-item .van-checkbox", decision.get("selectorValue"));
+        assertEquals("css", decision.get("selectorType"));
     }
 
     @SuppressWarnings("unchecked")
@@ -105,8 +114,9 @@ class ExecutionAgentStrategyPriorityTest {
 
     @SuppressWarnings("unchecked")
     @Test
-    void llmVisualClickOverriddenToDomClickWhenSelectorPresent() throws Exception {
-        // LLM 决策返回 visual_click，但步骤带 uiSelector → 硬约束改判 dom_click
+    void llmVisualClickIsNotOverriddenToDomClick() throws Exception {
+        // v13.22: 原 v9.8 硬约束已移除——LLM 的 visual_click 决策不再被改判 dom_click。
+        // 这条用例正是防回退的哨兵：若有人把硬约束加回来，新策略会被静默抵消。
         LlmService llmService = mock(LlmService.class);
         when(llmService.isConfigured()).thenReturn(true);
         Map<String, Object> llmDecision = new LinkedHashMap<>();
@@ -123,9 +133,9 @@ class ExecutionAgentStrategyPriorityTest {
         LocateResult result = locateResult(true);
         Map<String, Object> decision = invokeStrategy(agent, "askLlmForStrategy", step, result, "点击【全选】复选框");
 
-        assertEquals("dom_click", decision.get("strategy"),
-                "v9.8: LLM 返回 visual_click 但有 DOM 选择器 → 改判 dom_click 防视觉漂移");
-        assertEquals("text", decision.get("selectorType"));
-        assertEquals("全选", decision.get("selectorValue"));
+        assertEquals("visual_click", decision.get("strategy"),
+                "v13.22: LLM 返回 visual_click 不再被硬约束改判为 dom_click");
+        assertEquals(Integer.valueOf(10), decision.get("x"));
+        assertEquals(Integer.valueOf(20), decision.get("y"));
     }
 }

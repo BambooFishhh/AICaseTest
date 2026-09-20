@@ -832,12 +832,11 @@ public class ExecutionAgent {
 
     /**
      * LLM 决策执行策略。
-     * 未配置 LLM 时按 MCP 结果直接决策：
-     *   有 uiSelector → dom_click（坐标精确，视觉模型坐标易漂移点错子元素）；
-     *   无 uiSelector 且 found → visual_click；否则 skip。
-     * v9.8: 策略改 DOM 优先——litemall 足迹/收藏页实测，视觉点击坐标漂移导致
-     * 勾选复选框误导航商品详情、点信息区域点中复选框未生效；DOM 点击命中元素
-     * 中心点无漂移，视觉仅作 DOM 失败/缺失时的兜底。
+     * v13.22: 策略改**视觉优先**——MCP 视觉定位命中即 visual_click，未命中才回落 DOM 选择器。
+     * 视觉漂移的兜底不再依赖"带选择器就强制改判 DOM"，而是靠步骤 6 的降级链：
+     * 点击未生效时 askLlmForFallback 判降级 dom_click（该函数只产出 dom_click/skip，
+     * 且 LLM 未配置/返空/异常时一律默认 dom_click），故视觉优先不是单行道。
+     * 未配置 LLM 时由 {@link #defaultStrategy} 按同一优先级决策。
      */
     private Map<String, Object> askLlmForStrategy(String action, String target, JsonNode step, LocateResult locateResult) {
         Map<String, Object> decision = new LinkedHashMap<>();
@@ -856,8 +855,8 @@ public class ExecutionAgent {
                     + "{\"strategy\": \"visual_click|dom_click|skip\", \"reason\": \"...\", \"x\": 0, \"y\": 0, "
                     + "\"selectorType\": \"\", \"selectorValue\": \"\"}\n"
                     + "决策规则：\n"
-                    + "1. 备用DOM选择器非空 → 优先 dom_click（坐标精确无漂移；失败会自动视觉兜底）\n"
-                    + "2. found=true 且备用DOM选择器为空 → visual_click（用 MCP 返回的坐标）\n"
+                    + "1. found=true → 优先 visual_click（用 MCP 返回的坐标）\n"
+                    + "2. found=false 且备用DOM选择器非空 → dom_click（视觉未命中时回落选择器）\n"
                     + "3. 仅当 found=false 且备用DOM选择器为空，或页面明确不存在该元素时才 skip\n"
                     + "4. reason 必须说明具体原因，skip 时尤其要说清为什么";
             String userPrompt = "步骤: " + action
@@ -871,17 +870,9 @@ public class ExecutionAgent {
                 log.warn("LLM strategy decision empty, fallback to default");
                 return defaultStrategy(locateResult, step);
             }
-            // v9.8: 硬约束——只要步骤带可用 uiSelector，即使 LLM 返回 visual_click 也改判 dom_click，
-            // 杜绝视觉坐标漂移（勾选/全选/列表项点击误导航商品详情）
-            if ("visual_click".equals(String.valueOf(llmDecision.get("strategy")))) {
-                JsonNode selector = step.path("uiSelector");
-                if (!selector.path("value").asText("").isEmpty()) {
-                    llmDecision.put("strategy", "dom_click");
-                    llmDecision.put("selectorType", selector.path("type").asText("css"));
-                    llmDecision.put("selectorValue", selector.path("value").asText(""));
-                    llmDecision.put("reason", "v9.8 DOM 优先：步骤自带选择器，改判 dom_click 防视觉漂移");
-                }
-            }
+            // v13.22: 原 v9.8「带选择器即强制改判 dom_click」的硬约束已移除——它与本次
+            // 视觉优先策略直接冲突（会把 LLM 的 visual_click 强制改回 DOM，使新策略完全失效）。
+            // 视觉漂移改由步骤 6 的降级链兜住：未生效时经 askLlmForFallback 降级 dom_click。
             return llmDecision;
         } catch (Exception e) {
             log.warn("askLlmForStrategy failed, fallback to default: {}", e.getMessage());
@@ -904,25 +895,26 @@ public class ExecutionAgent {
 
     /**
      * LLM 未配置/异常时的默认策略。
-     * v9.8: DOM 优先——有 uiSelector 先 dom_click（视觉坐标易漂移），无选择器才 visual。
+     * v13.22: 视觉优先——MCP 视觉定位命中即 visual_click；未命中才回落 DOM 选择器。
+     * 视觉点击未生效时由步骤 6 的降级链自动转 dom_click（见 askLlmForFallback）。
      */
     private Map<String, Object> defaultStrategy(LocateResult locateResult, JsonNode step) {
         Map<String, Object> decision = new LinkedHashMap<>();
         JsonNode selector = step.path("uiSelector");
         String selValue = selector.path("value").asText("");
-        if (!selValue.isEmpty()) {
-            decision.put("strategy", "dom_click");
-            decision.put("selectorType", selector.path("type").asText("css"));
-            decision.put("selectorValue", selValue);
-            decision.put("reason", "v9.8 DOM 优先：步骤自带选择器，优先 DOM 点击防视觉漂移");
-        } else if (locateResult.isFound()) {
+        if (locateResult.isFound()) {
             decision.put("strategy", "visual_click");
             decision.put("x", locateResult.getClickX());
             decision.put("y", locateResult.getClickY());
-            decision.put("reason", "无 DOM 选择器，MCP 找到元素，视觉点击");
+            decision.put("reason", "v13.22 视觉优先：MCP 已定位，优先视觉点击");
+        } else if (!selValue.isEmpty()) {
+            decision.put("strategy", "dom_click");
+            decision.put("selectorType", selector.path("type").asText("css"));
+            decision.put("selectorValue", selValue);
+            decision.put("reason", "视觉未命中，回落 DOM 选择器点击");
         } else {
             decision.put("strategy", "skip");
-            decision.put("reason", "MCP 未找到且无 DOM 选择器");
+            decision.put("reason", "视觉未命中且无 DOM 选择器");
         }
         return decision;
     }
