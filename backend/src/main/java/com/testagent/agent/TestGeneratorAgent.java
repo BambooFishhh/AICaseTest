@@ -942,6 +942,30 @@ public class TestGeneratorAgent {
         // 为空 = PRD 未描述任何状态 → 调用方跳过过滤（证据缺失 ≠ 冲突）。
         Set<String> prdStates = collectPrdStates(prdResult);
         boolean prdStatesAvailable = !prdStates.isEmpty();
+        // v13.21(修复 v13.20 的参照系错位): transitions 的 from/to 是「规范 code」（英文枚举，
+        // 见 StateMachineAgent.validateTransitions 的归一化），而 PRD 侧 states 是中文 name——
+        // 直接比对两边都对不上，会把**有 PRD 依据**的转换一并误排除（实测：中文 PRD + 英文 code
+        // 时 transitionIds 被清空，状态流转的缺口驱动失效）。
+        // 故先用 stateMachines 的 code<->name 映射，把「已被 PRD 描述的状态」的 code 并入池子，
+        // 使英文端点可被识别为「有依据」。未被 PRD 描述的状态不会被并入，其转换仍被排除。
+        if (prdStatesAvailable && stateMachines != null) {
+            for (StateMachine sm : stateMachines) {
+                for (Map<String, Object> s : JsonHelper.parseListMap(sm.getStates())) {
+                    String stateCode = s.get("code") == null ? "" : String.valueOf(s.get("code"));
+                    String stateName = s.get("name") == null ? "" : String.valueOf(s.get("name"));
+                    String codeKey = normalizeStateName(stateCode);
+                    String nameKey = normalizeStateName(stateName);
+                    if (prdStates.contains(nameKey) || prdStates.contains(codeKey)) {
+                        if (!codeKey.isBlank()) {
+                            prdStates.add(codeKey);
+                        }
+                        if (!nameKey.isBlank()) {
+                            prdStates.add(nameKey);
+                        }
+                    }
+                }
+            }
+        }
 
         List<Map<String, Object>> transitions = new ArrayList<>();
         if (stateMachines != null) {

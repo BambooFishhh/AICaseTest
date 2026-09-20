@@ -73,6 +73,46 @@ class TestGeneratorAgentChecklistPrdScopeTest {
         return sm;
     }
 
+    /**
+     * 真实形态的状态机：states 带 {code(英文枚举), name(中文)}，transitions 的 from/to 用 code。
+     * v13.21: 只有带 states 才能建立 code&lt;-&gt;name 映射——此前 helper 不带 states，
+     * 掩盖了「英文端点 vs 中文 PRD」的参照系错位。
+     */
+    private StateMachine stateMachineWithStates(String statesJson, String transitionsJson) {
+        StateMachine sm = stateMachine(transitionsJson);
+        sm.setStates(statesJson);
+        return sm;
+    }
+
+    @Test
+    void realShapedTransitionEndpointsAreStillMatchedAgainstPrdChineseStates() {
+        // 真实形态：StateMachineAgent.validateTransitions 把 transitions 的 from/to
+        // 归一化为「规范 code」（英文枚举，见该类 L184 注释与 L200-212），而 PRD 侧
+        // states 的 name 是中文。二者参照系不同，需经 code<->name 映射才能对齐。
+        PrdAnalysisResult prd = prdWithFlows(flow("订单流转", List.of("待支付", "已支付")));
+        StateMachine sm = stateMachineWithStates(
+                "[{\"code\":\"PENDING_PAYMENT\",\"name\":\"待支付\"},{\"code\":\"PAID\",\"name\":\"已支付\"}]",
+                "[{\"from\":\"PENDING_PAYMENT\",\"to\":\"PAID\"}]");
+
+        List<Map<String, Object>> items = transitions(prd, List.of(sm));
+
+        assertEquals(1, items.size(),
+                "有 PRD 依据的转换不应因『PRD 用中文 name、transitions 用英文 code』被误排除");
+    }
+
+    @Test
+    void realShapedCodeOnlyTransitionIsStillExcluded() {
+        // 反向验证：PRD 未描述的状态，其 code/name 都不该被并入池子 → 转换仍被排除。
+        // 防止 code<->name 映射把「无依据」的转换一并放行（过度放宽）。
+        PrdAnalysisResult prd = prdWithFlows(flow("订单流转", List.of("待支付", "已支付")));
+        StateMachine sm = stateMachineWithStates(
+                "[{\"code\":\"INIT\",\"name\":\"初始\"},{\"code\":\"DELETED\",\"name\":\"已删除\"}]",
+                "[{\"from\":\"INIT\",\"to\":\"DELETED\"}]");
+
+        assertEquals(0, transitions(prd, List.of(sm)).size(),
+                "PRD 未描述的状态，其转换仍应被排除");
+    }
+
     @Test
     void codeOnlyTransitionIsExcludedFromChecklist() {
         PrdAnalysisResult prd = prdWithFlows(flow("订单流转", List.of("待支付", "已支付", "已取消")));
